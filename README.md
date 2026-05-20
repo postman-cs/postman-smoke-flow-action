@@ -38,7 +38,7 @@ jobs:
           workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
           spec-id: ${{ steps.bootstrap.outputs.spec-id }}
           smoke-collection-id: ${{ steps.bootstrap.outputs.smoke-collection-id }}
-          flow-path: .cse-buddy/flows/core-payments/flow.yaml
+          flow-path: .postman-api-launchpad/flows/core-payments/flow.yaml
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
 
       - id: repo_sync
