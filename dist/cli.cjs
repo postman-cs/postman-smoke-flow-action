@@ -27550,8 +27550,42 @@ function setNestedValue(root, dottedKey, value) {
 function getVariableBindings(step) {
   return step.bindings.filter((binding) => binding.source !== "example");
 }
+function getBindingByFieldKey(step) {
+  return new Map(step.bindings.map((binding) => [binding.fieldKey, binding]));
+}
+function decodeQueryKey(key) {
+  try {
+    return decodeURIComponent(key.replace(/\+/g, " "));
+  } catch {
+    return key;
+  }
+}
+function updateRawUrlQuery(rawUrl, step) {
+  const bindingByFieldKey = getBindingByFieldKey(step);
+  const [withoutHash, hash = ""] = rawUrl.split("#", 2);
+  const queryIndex = withoutHash.indexOf("?");
+  if (queryIndex === -1) {
+    return rawUrl;
+  }
+  const base = withoutHash.slice(0, queryIndex);
+  const queryString = withoutHash.slice(queryIndex + 1);
+  const nextQuery = queryString.split("&").filter(Boolean).flatMap((entry) => {
+    const [rawKey = "", ...rawValueParts] = entry.split("=");
+    const binding = bindingByFieldKey.get(decodeQueryKey(rawKey));
+    if (!binding) {
+      return [];
+    }
+    if (binding.source === "example") {
+      return [entry];
+    }
+    return [`${rawKey}={{${binding.fieldKey}}}`];
+  }).join("&");
+  const nextWithoutHash = nextQuery ? `${base}?${nextQuery}` : base;
+  return hash ? `${nextWithoutHash}#${hash}` : nextWithoutHash;
+}
 function updateRequestUrl(request, step) {
   const variableBindings = getVariableBindings(step);
+  const bindingByFieldKey = getBindingByFieldKey(step);
   const url = request.url;
   if (typeof url === "string") {
     let next = url;
@@ -27559,7 +27593,7 @@ function updateRequestUrl(request, step) {
       next = next.replace(new RegExp(`\\{${binding.fieldKey}\\}`, "g"), `{{${binding.fieldKey}}}`);
       next = next.replace(new RegExp(`:${binding.fieldKey}(?=[/?&#]|$)`, "g"), `{{${binding.fieldKey}}}`);
     }
-    request.url = next;
+    request.url = updateRawUrlQuery(next, step);
     return;
   }
   const urlRecord = asRecord2(url);
@@ -27572,7 +27606,7 @@ function updateRequestUrl(request, step) {
       nextRaw = nextRaw.replace(new RegExp(`\\{${binding.fieldKey}\\}`, "g"), `{{${binding.fieldKey}}}`);
       nextRaw = nextRaw.replace(new RegExp(`:${binding.fieldKey}(?=[/?&#]|$)`, "g"), `{{${binding.fieldKey}}}`);
     }
-    urlRecord.raw = nextRaw;
+    urlRecord.raw = updateRawUrlQuery(nextRaw, step);
   }
   if (Array.isArray(urlRecord.variable)) {
     urlRecord.variable = urlRecord.variable.map((entry) => {
@@ -27585,13 +27619,17 @@ function updateRequestUrl(request, step) {
     });
   }
   if (Array.isArray(urlRecord.query)) {
-    urlRecord.query = urlRecord.query.map((entry) => {
+    urlRecord.query = urlRecord.query.flatMap((entry) => {
       const query = asRecord2(entry) ?? {};
       const key = typeof query.key === "string" ? query.key : "";
-      if (variableBindings.some((binding) => binding.fieldKey === key)) {
+      const binding = bindingByFieldKey.get(key);
+      if (!binding) {
+        return [];
+      }
+      if (binding.source !== "example") {
         query.value = `{{${key}}}`;
       }
-      return query;
+      return [query];
     });
   }
 }

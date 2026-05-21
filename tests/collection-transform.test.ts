@@ -140,4 +140,111 @@ describe('collection transform', () => {
     expect(requestBody).not.toContain('{{customer.customerNumber}}');
     expect(prerequest).not.toContain('customer.customerNumber');
   });
+
+  it('removes generated query params that are not selected in flow bindings', () => {
+    const providerFlow: FlowDefinition = {
+      name: 'Providers happy path',
+      type: 'smoke',
+      steps: [
+        {
+          stepKey: 'search-providers-1',
+          operationId: 'searchProviders',
+          bindings: [
+            { fieldKey: 'source', source: 'literal', value: 'kyruus' },
+            { fieldKey: 'telehealth', source: 'literal', value: 'true' },
+            { fieldKey: 'location-lat', source: 'literal', value: '33.28516' },
+            { fieldKey: 'location-lon', source: 'literal', value: '-111.857176' },
+            { fieldKey: 'distance', source: 'literal', value: '5' }
+          ],
+          extract: []
+        }
+      ]
+    };
+
+    const generatedCollection = {
+      info: { name: '[Smoke][Temp] Providers API' },
+      item: []
+    };
+    const resolvedRequests: ResolvedRequest[] = [
+      {
+        step: providerFlow.steps[0]!,
+        item: {
+          name: 'searchProviders',
+          request: {
+            method: 'GET',
+            url: {
+              raw:
+                '{{baseUrl}}/v1/providers?provider-id=prov-elena-martinez&location-lat={{location-lat}}&location-lon={{location-lon}}&distance={{distance}}&telehealth={{telehealth}}&accepting-new-patients=true&page-size=25&source={{source}}',
+              host: ['{{baseUrl}}'],
+              path: ['v1', 'providers'],
+              query: [
+                { key: 'provider-id', value: 'prov-elena-martinez' },
+                { key: 'location-lat', value: '{{location-lat}}' },
+                { key: 'location-lon', value: '{{location-lon}}' },
+                { key: 'distance', value: '{{distance}}' },
+                { key: 'telehealth', value: '{{telehealth}}' },
+                { key: 'accepting-new-patients', value: 'true' },
+                { key: 'page-size', value: '25' },
+                { key: 'source', value: '{{source}}' }
+              ]
+            }
+          }
+        }
+      }
+    ];
+
+    const result = buildCuratedSmokeCollection(generatedCollection, providerFlow, resolvedRequests);
+    const items = result.collection.item as Array<Record<string, unknown>>;
+    const request = (items[1] as Record<string, unknown>).request as Record<string, unknown>;
+    const url = request.url as Record<string, unknown>;
+    const query = url.query as Array<Record<string, unknown>>;
+
+    expect(url.raw).toBe(
+      '{{baseUrl}}/v1/providers?location-lat={{location-lat}}&location-lon={{location-lon}}&distance={{distance}}&telehealth={{telehealth}}&source={{source}}'
+    );
+    expect(query.map((entry) => entry.key)).toEqual(['location-lat', 'location-lon', 'distance', 'telehealth', 'source']);
+    expect(JSON.stringify(url)).not.toContain('provider-id');
+    expect(JSON.stringify(url)).not.toContain('accepting-new-patients');
+    expect(JSON.stringify(url)).not.toContain('page-size');
+  });
+
+  it('preserves selected source=example query params while pruning unselected params', () => {
+    const exampleFlow: FlowDefinition = {
+      name: 'Providers happy path',
+      type: 'smoke',
+      steps: [
+        {
+          stepKey: 'alternate-providers-1',
+          operationId: 'listAlternateProviders',
+          bindings: [
+            { fieldKey: 'providerId', source: 'example' },
+            { fieldKey: 'use-care-team', source: 'example' }
+          ],
+          extract: []
+        }
+      ]
+    };
+
+    const result = buildCuratedSmokeCollection(
+      { info: { name: '[Smoke][Temp] Providers API' }, item: [] },
+      exampleFlow,
+      [
+        {
+          step: exampleFlow.steps[0]!,
+          item: {
+            name: 'listAlternateProviders',
+            request: {
+              method: 'GET',
+              url: '{{baseUrl}}/v1/providers/{providerId}/alternates?providerId=prov-123&use-care-team=true&use-location=true'
+            }
+          }
+        }
+      ]
+    );
+
+    const items = result.collection.item as Array<Record<string, unknown>>;
+    const request = (items[1] as Record<string, unknown>).request as Record<string, unknown>;
+
+    expect(request.url).toBe('{{baseUrl}}/v1/providers/{providerId}/alternates?providerId=prov-123&use-care-team=true');
+  });
 });
