@@ -191,17 +191,40 @@ function applyFlowScripts(item: JsonRecord, step: FlowStep): void {
   (item.event as JsonRecord[]).push(createPreRequestEvent(step), createTestEvent(step));
 }
 
-function upsertHeader(request: JsonRecord, key: string, value: string): void {
+function removeHeader(request: JsonRecord, key: string): void {
   const headers = Array.isArray(request.header)
     ? request.header
         .map((entry) => asRecord(entry))
         .filter((entry): entry is JsonRecord => Boolean(entry))
     : [];
 
-  request.header = [
-    ...headers.filter((entry) => typeof entry.key !== 'string' || entry.key.toLowerCase() !== key.toLowerCase()),
-    { key, value }
-  ];
+  request.header = headers.filter((entry) => typeof entry.key !== 'string' || entry.key.toLowerCase() !== key.toLowerCase());
+}
+
+function getAuthVariableNames(authConfig: SmokeAuthConfig): Required<NonNullable<SmokeAuthConfig['variables']>> {
+  return {
+    tokenUrl: authConfig.variables?.tokenUrl || 'auth_token_url',
+    scope: authConfig.variables?.scope || 'auth_scope',
+    clientId: authConfig.variables?.clientId || 'auth_client_id',
+    clientSecret: authConfig.variables?.clientSecret || 'auth_client_secret',
+    accessToken: authConfig.variables?.accessToken || 'access_token',
+    expiresAt: authConfig.variables?.expiresAt || 'access_token_expires_at'
+  };
+}
+
+function setRequestBearerAuth(request: JsonRecord, authConfig: SmokeAuthConfig): void {
+  const variables = getAuthVariableNames(authConfig);
+  request.auth = {
+    type: 'bearer',
+    bearer: [
+      {
+        key: 'token',
+        value: `{{${variables.accessToken}}}`,
+        type: 'string'
+      }
+    ]
+  };
+  removeHeader(request, authConfig.apply?.header || 'Authorization');
 }
 
 function applyAuthToRequest(request: JsonRecord, authConfig: SmokeAuthConfig | undefined): void {
@@ -209,11 +232,35 @@ function applyAuthToRequest(request: JsonRecord, authConfig: SmokeAuthConfig | u
     return;
   }
 
-  upsertHeader(
-    request,
-    authConfig.apply?.header || 'Authorization',
-    authConfig.apply?.value || 'Bearer {{access_token}}'
-  );
+  setRequestBearerAuth(request, authConfig);
+}
+
+function upsertCollectionVariable(collection: JsonRecord, key: string, value = ''): void {
+  const variables = Array.isArray(collection.variable)
+    ? collection.variable
+        .map((entry) => asRecord(entry))
+        .filter((entry): entry is JsonRecord => Boolean(entry))
+    : [];
+  const existing = variables.find((entry) => entry.key === key);
+  if (existing) {
+    if (typeof existing.value !== 'string') {
+      existing.value = value;
+    }
+  } else {
+    variables.push({ key, value, type: 'string' });
+  }
+  collection.variable = variables;
+}
+
+function seedOAuthCollectionVariables(collection: JsonRecord, authConfig: SmokeAuthConfig): void {
+  const variables = getAuthVariableNames(authConfig);
+  const tokenUrlValue = authConfig.tokenUrl.includes('{{') ? '' : authConfig.tokenUrl;
+  upsertCollectionVariable(collection, variables.tokenUrl, tokenUrlValue);
+  upsertCollectionVariable(collection, variables.scope);
+  upsertCollectionVariable(collection, variables.clientId);
+  upsertCollectionVariable(collection, variables.clientSecret);
+  upsertCollectionVariable(collection, variables.accessToken);
+  upsertCollectionVariable(collection, variables.expiresAt);
 }
 
 function applyCollectionAuth(collection: JsonRecord, authConfig: SmokeAuthConfig | undefined): void {
@@ -221,6 +268,7 @@ function applyCollectionAuth(collection: JsonRecord, authConfig: SmokeAuthConfig
     return;
   }
 
+  seedOAuthCollectionVariables(collection, authConfig);
   const existingEvents = Array.isArray(collection.event) ? collection.event : [];
   collection.event = [
     ...existingEvents

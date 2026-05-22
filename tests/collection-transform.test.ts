@@ -248,7 +248,7 @@ describe('collection transform', () => {
     expect(request.url).toBe('{{baseUrl}}/v1/providers/{providerId}/alternates?providerId=prov-123&use-care-team=true');
   });
 
-  it('adds optional OAuth token caching and bearer headers without serializing secrets', () => {
+  it('adds optional OAuth token caching, placeholder variables, and bearer auth without serializing secrets', () => {
     const result = buildCuratedSmokeCollection(
       { info: { name: '[Smoke][Temp] Payments API' }, item: [] },
       flow,
@@ -294,17 +294,29 @@ describe('collection transform', () => {
 
     const collectionText = JSON.stringify(result.collection);
     const events = result.collection.event as Array<Record<string, unknown>>;
+    const variables = result.collection.variable as Array<Record<string, unknown>>;
     const items = result.collection.item as Array<Record<string, unknown>>;
     const request = (items[1] as Record<string, unknown>).request as Record<string, unknown>;
     const headers = request.header as Array<Record<string, unknown>>;
 
     expect(events).toHaveLength(1);
+    expect(variables.map((variable) => variable.key)).toEqual([
+      'auth_token_url',
+      'auth_scope',
+      'auth_client_id',
+      'auth_client_secret',
+      'access_token',
+      'access_token_expires_at'
+    ]);
+    expect(variables.find((variable) => variable.key === 'auth_client_secret')?.value).toBe('');
     expect(collectionText).toContain('pm.variables.set(accessTokenVariable, accessToken)');
     expect(collectionText).toContain('pm.variables.set(expiresAtVariable');
     expect(collectionText).not.toContain('pm.environment.set');
-    expect(headers.filter((header) => header.key === 'Authorization')).toEqual([
-      { key: 'Authorization', value: 'Bearer {{access_token}}' }
-    ]);
+    expect(headers.filter((header) => header.key === 'Authorization')).toEqual([]);
+    expect(request.auth).toEqual({
+      type: 'bearer',
+      bearer: [{ key: 'token', value: '{{access_token}}', type: 'string' }]
+    });
     expect(collectionText).not.toContain('super-secret');
     expect(collectionText).not.toContain('real-access-token');
   });

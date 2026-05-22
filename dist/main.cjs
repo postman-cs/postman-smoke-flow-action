@@ -27743,27 +27743,67 @@ function applyFlowScripts(item, step) {
   item.event = existingEvents.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)).filter((entry) => entry.listen !== "prerequest" && entry.listen !== "test");
   item.event.push(createPreRequestEvent(step), createTestEvent(step));
 }
-function upsertHeader(request, key, value) {
+function removeHeader(request, key) {
   const headers = Array.isArray(request.header) ? request.header.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)) : [];
-  request.header = [
-    ...headers.filter((entry) => typeof entry.key !== "string" || entry.key.toLowerCase() !== key.toLowerCase()),
-    { key, value }
-  ];
+  request.header = headers.filter((entry) => typeof entry.key !== "string" || entry.key.toLowerCase() !== key.toLowerCase());
+}
+function getAuthVariableNames2(authConfig) {
+  return {
+    tokenUrl: authConfig.variables?.tokenUrl || "auth_token_url",
+    scope: authConfig.variables?.scope || "auth_scope",
+    clientId: authConfig.variables?.clientId || "auth_client_id",
+    clientSecret: authConfig.variables?.clientSecret || "auth_client_secret",
+    accessToken: authConfig.variables?.accessToken || "access_token",
+    expiresAt: authConfig.variables?.expiresAt || "access_token_expires_at"
+  };
+}
+function setRequestBearerAuth(request, authConfig) {
+  const variables = getAuthVariableNames2(authConfig);
+  request.auth = {
+    type: "bearer",
+    bearer: [
+      {
+        key: "token",
+        value: `{{${variables.accessToken}}}`,
+        type: "string"
+      }
+    ]
+  };
+  removeHeader(request, authConfig.apply?.header || "Authorization");
 }
 function applyAuthToRequest(request, authConfig) {
   if (!authConfig?.enabled) {
     return;
   }
-  upsertHeader(
-    request,
-    authConfig.apply?.header || "Authorization",
-    authConfig.apply?.value || "Bearer {{access_token}}"
-  );
+  setRequestBearerAuth(request, authConfig);
+}
+function upsertCollectionVariable(collection, key, value = "") {
+  const variables = Array.isArray(collection.variable) ? collection.variable.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)) : [];
+  const existing = variables.find((entry) => entry.key === key);
+  if (existing) {
+    if (typeof existing.value !== "string") {
+      existing.value = value;
+    }
+  } else {
+    variables.push({ key, value, type: "string" });
+  }
+  collection.variable = variables;
+}
+function seedOAuthCollectionVariables(collection, authConfig) {
+  const variables = getAuthVariableNames2(authConfig);
+  const tokenUrlValue = authConfig.tokenUrl.includes("{{") ? "" : authConfig.tokenUrl;
+  upsertCollectionVariable(collection, variables.tokenUrl, tokenUrlValue);
+  upsertCollectionVariable(collection, variables.scope);
+  upsertCollectionVariable(collection, variables.clientId);
+  upsertCollectionVariable(collection, variables.clientSecret);
+  upsertCollectionVariable(collection, variables.accessToken);
+  upsertCollectionVariable(collection, variables.expiresAt);
 }
 function applyCollectionAuth(collection, authConfig) {
   if (!authConfig?.enabled) {
     return;
   }
+  seedOAuthCollectionVariables(collection, authConfig);
   const existingEvents = Array.isArray(collection.event) ? collection.event : [];
   collection.event = [
     ...existingEvents.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)),
