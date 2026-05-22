@@ -11,6 +11,13 @@ describe('readActionInputs', () => {
       INPUT_SMOKE_COLLECTION_ID: 'col-123',
       INPUT_FLOW_PATH: '.postman-api-launchpad/flows/remote-pos/flow.yaml',
       INPUT_POSTMAN_API_KEY: 'pmak-test',
+      INPUT_AUTH_CONFIG_JSON: JSON.stringify({
+        enabled: true,
+        type: 'oauth2',
+        grantType: 'client_credentials',
+        tokenUrl: '{{auth_token_url}}',
+        clientAuthentication: 'body'
+      }),
       INPUT_COLLECTION_SYNC_MODE: 'refresh',
       INPUT_FAIL_ON_FLOW_WARNING: 'false',
       INPUT_KEEP_TEMP_COLLECTION_ON_FAILURE: 'false',
@@ -23,5 +30,7 @@ describe('readActionInputs', () => {
     expect(inputs.smokeCollectionId).toBe('col-123');
     expect(inputs.flowPath).toBe('.postman-api-launchpad/flows/remote-pos/flow.yaml');
     expect(inputs.postmanApiKey).toBe('pmak-test');
+    expect(inputs.authConfig?.enabled).toBe(true);
+    expect(inputs.authConfig?.tokenUrl).toBe('{{auth_token_url}}');
   });
 });

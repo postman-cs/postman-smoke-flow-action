@@ -44,6 +44,7 @@ export type ActionInputs = {
   smokeCollectionId: string;
   flowPath: string;
   postmanApiKey: string;
+  authConfig?: SmokeAuthConfig;
   specPath?: string;
   debugDumpPath?: string;
   collectionSyncMode: 'refresh' | 'version';
@@ -51,6 +52,32 @@ export type ActionInputs = {
   failOnFlowWarning: boolean;
   keepTempCollectionOnFailure: boolean;
   tempCollectionPrefix: string;
+};
+
+export type SmokeAuthConfig = {
+  enabled: boolean;
+  type: 'oauth2';
+  grantType: 'client_credentials';
+  tokenUrl: string;
+  clientAuthentication: 'body';
+  request?: {
+    contentType?: 'application/x-www-form-urlencoded';
+  };
+  variables?: {
+    tokenUrl?: string;
+    scope?: string;
+    clientId?: string;
+    clientSecret?: string;
+    accessToken?: string;
+    expiresAt?: string;
+  };
+  cache?: {
+    refreshSkewSeconds?: number;
+  };
+  apply?: {
+    header?: string;
+    value?: string;
+  };
 };
 
 export type FlowWarning = {

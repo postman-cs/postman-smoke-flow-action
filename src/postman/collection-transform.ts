@@ -1,5 +1,11 @@
-import type { FlowBinding, FlowDefinition, FlowStep, ResolvedRequest } from '../types.js';
-import { createPreRequestEvent, createSecretsResolverItem, createTestEvent, countAssertionsForStep } from './scripts.js';
+import type { FlowBinding, FlowDefinition, FlowStep, ResolvedRequest, SmokeAuthConfig } from '../types.js';
+import {
+  createOAuthPreRequestEvent,
+  createPreRequestEvent,
+  createSecretsResolverItem,
+  createTestEvent,
+  countAssertionsForStep
+} from './scripts.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -185,13 +191,101 @@ function applyFlowScripts(item: JsonRecord, step: FlowStep): void {
   (item.event as JsonRecord[]).push(createPreRequestEvent(step), createTestEvent(step));
 }
 
-function curateRequestItem(resolved: ResolvedRequest): JsonRecord {
+function removeHeader(request: JsonRecord, key: string): void {
+  const headers = Array.isArray(request.header)
+    ? request.header
+        .map((entry) => asRecord(entry))
+        .filter((entry): entry is JsonRecord => Boolean(entry))
+    : [];
+
+  request.header = headers.filter((entry) => typeof entry.key !== 'string' || entry.key.toLowerCase() !== key.toLowerCase());
+}
+
+function getAuthVariableNames(authConfig: SmokeAuthConfig): Required<NonNullable<SmokeAuthConfig['variables']>> {
+  return {
+    tokenUrl: authConfig.variables?.tokenUrl || 'auth_token_url',
+    scope: authConfig.variables?.scope || 'auth_scope',
+    clientId: authConfig.variables?.clientId || 'auth_client_id',
+    clientSecret: authConfig.variables?.clientSecret || 'auth_client_secret',
+    accessToken: authConfig.variables?.accessToken || 'access_token',
+    expiresAt: authConfig.variables?.expiresAt || 'access_token_expires_at'
+  };
+}
+
+function setRequestBearerAuth(request: JsonRecord, authConfig: SmokeAuthConfig): void {
+  const variables = getAuthVariableNames(authConfig);
+  request.auth = {
+    type: 'bearer',
+    bearer: [
+      {
+        key: 'token',
+        value: `{{${variables.accessToken}}}`,
+        type: 'string'
+      }
+    ]
+  };
+  removeHeader(request, authConfig.apply?.header || 'Authorization');
+}
+
+function applyAuthToRequest(request: JsonRecord, authConfig: SmokeAuthConfig | undefined): void {
+  if (!authConfig?.enabled) {
+    return;
+  }
+
+  setRequestBearerAuth(request, authConfig);
+}
+
+function upsertCollectionVariable(collection: JsonRecord, key: string, value = ''): void {
+  const variables = Array.isArray(collection.variable)
+    ? collection.variable
+        .map((entry) => asRecord(entry))
+        .filter((entry): entry is JsonRecord => Boolean(entry))
+    : [];
+  const existing = variables.find((entry) => entry.key === key);
+  if (existing) {
+    if (typeof existing.value !== 'string') {
+      existing.value = value;
+    }
+  } else {
+    variables.push({ key, value, type: 'string' });
+  }
+  collection.variable = variables;
+}
+
+function seedOAuthCollectionVariables(collection: JsonRecord, authConfig: SmokeAuthConfig): void {
+  const variables = getAuthVariableNames(authConfig);
+  const tokenUrlValue = authConfig.tokenUrl.includes('{{') ? '' : authConfig.tokenUrl;
+  upsertCollectionVariable(collection, variables.tokenUrl, tokenUrlValue);
+  upsertCollectionVariable(collection, variables.scope);
+  upsertCollectionVariable(collection, variables.clientId);
+  upsertCollectionVariable(collection, variables.clientSecret);
+  upsertCollectionVariable(collection, variables.accessToken);
+  upsertCollectionVariable(collection, variables.expiresAt);
+}
+
+function applyCollectionAuth(collection: JsonRecord, authConfig: SmokeAuthConfig | undefined): void {
+  if (!authConfig?.enabled) {
+    return;
+  }
+
+  seedOAuthCollectionVariables(collection, authConfig);
+  const existingEvents = Array.isArray(collection.event) ? collection.event : [];
+  collection.event = [
+    ...existingEvents
+      .map((entry) => asRecord(entry))
+      .filter((entry): entry is JsonRecord => Boolean(entry)),
+    createOAuthPreRequestEvent(authConfig)
+  ];
+}
+
+function curateRequestItem(resolved: ResolvedRequest, authConfig?: SmokeAuthConfig): JsonRecord {
   const item = structuredClone(resolved.item);
   item.name = resolved.step.name?.trim() || resolved.step.operationId;
   const request = asRecord(item.request);
   if (request) {
     updateRequestUrl(request, resolved.step);
     updateRequestBody(request, resolved.step);
+    applyAuthToRequest(request, authConfig);
   }
   applyFlowScripts(item, resolved.step);
   return item;
@@ -200,14 +294,16 @@ function curateRequestItem(resolved: ResolvedRequest): JsonRecord {
 export function buildCuratedSmokeCollection(
   generatedCollection: JsonRecord,
   flow: FlowDefinition,
-  resolvedRequests: ResolvedRequest[]
+  resolvedRequests: ResolvedRequest[],
+  authConfig?: SmokeAuthConfig
 ): { collection: JsonRecord; bindingCount: number; extractCount: number; assertionCount: number } {
   const collection = sanitizeForCollectionUpdate(structuredClone(generatedCollection)) as JsonRecord;
   const info = asRecord(collection.info);
   if (info) {
     info.name = `[Smoke] ${flow.name}`;
   }
-  collection.item = [createSecretsResolverItem(), ...resolvedRequests.map(curateRequestItem)];
+  applyCollectionAuth(collection, authConfig);
+  collection.item = [createSecretsResolverItem(), ...resolvedRequests.map((request) => curateRequestItem(request, authConfig))];
   const sanitizedCollection = sanitizeForCollectionUpdate(collection) as JsonRecord;
 
   const bindingCount = flow.steps.reduce((sum, step) => sum + step.bindings.length, 0);

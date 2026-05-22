@@ -1,4 +1,4 @@
-import type { FlowBinding, FlowExtract, FlowStep } from '../types.js';
+import type { FlowBinding, FlowExtract, FlowStep, SmokeAuthConfig } from '../types.js';
 
 function quote(value: string): string {
   return JSON.stringify(value);
@@ -99,6 +99,91 @@ export function createPreRequestEvent(step: FlowStep): Record<string, unknown> {
     script: {
       type: 'text/javascript',
       exec: buildPreRequestScript(step)
+    }
+  };
+}
+
+function getAuthVariableNames(authConfig: SmokeAuthConfig): Required<NonNullable<SmokeAuthConfig['variables']>> {
+  return {
+    tokenUrl: authConfig.variables?.tokenUrl || 'auth_token_url',
+    scope: authConfig.variables?.scope || 'auth_scope',
+    clientId: authConfig.variables?.clientId || 'auth_client_id',
+    clientSecret: authConfig.variables?.clientSecret || 'auth_client_secret',
+    accessToken: authConfig.variables?.accessToken || 'access_token',
+    expiresAt: authConfig.variables?.expiresAt || 'access_token_expires_at'
+  };
+}
+
+export function buildOAuthPreRequestScript(authConfig: SmokeAuthConfig): string[] {
+  const variables = getAuthVariableNames(authConfig);
+  const refreshSkewSeconds = authConfig.cache?.refreshSkewSeconds ?? 60;
+  const tokenUrlTemplate = authConfig.tokenUrl || `{{${variables.tokenUrl}}}`;
+  const contentType = authConfig.request?.contentType || 'application/x-www-form-urlencoded';
+
+  return [
+    '// [Smoke Flow] Auto-generated OAuth2 client-credentials token cache.',
+    `const accessTokenVariable = ${quote(variables.accessToken)};`,
+    `const expiresAtVariable = ${quote(variables.expiresAt)};`,
+    `const refreshSkewMs = ${Math.max(0, refreshSkewSeconds)} * 1000;`,
+    "const cachedToken = pm.variables.get(accessTokenVariable);",
+    "const cachedExpiresAt = Number(pm.variables.get(expiresAtVariable) || '0');",
+    'if (cachedToken && cachedExpiresAt && Date.now() < cachedExpiresAt - refreshSkewMs) {',
+    '  return;',
+    '}',
+    '',
+    `const tokenUrl = pm.variables.replaceIn(${quote(tokenUrlTemplate)});`,
+    `const clientId = pm.variables.get(${quote(variables.clientId)});`,
+    `const clientSecret = pm.variables.get(${quote(variables.clientSecret)});`,
+    `const scope = pm.variables.get(${quote(variables.scope)}) || '';`,
+    "if (!tokenUrl || tokenUrl.includes('{{')) {",
+    "  throw new Error('Smoke OAuth is enabled, but auth_token_url is missing.');",
+    '}',
+    'if (!clientId || !clientSecret) {',
+    "  throw new Error('Smoke OAuth is enabled, but client credentials were not provided at runtime.');",
+    '}',
+    '',
+    'const tokenBody = {',
+    "  grant_type: 'client_credentials',",
+    '  client_id: clientId,',
+    '  client_secret: clientSecret',
+    '};',
+    'if (scope) {',
+    '  tokenBody.scope = scope;',
+    '}',
+    '',
+    'pm.sendRequest({',
+    '  url: tokenUrl,',
+    "  method: 'POST',",
+    `  header: { 'Content-Type': ${quote(contentType)} },`,
+    '  body: {',
+    "    mode: 'urlencoded',",
+    '    urlencoded: Object.entries(tokenBody).map(([key, value]) => ({ key, value: String(value) }))',
+    '  }',
+    '}, function (error, response) {',
+    '  if (error) {',
+    "    throw new Error('Smoke OAuth token request failed.');",
+    '  }',
+    '  if (!response || response.code < 200 || response.code >= 300) {',
+    "    throw new Error('Smoke OAuth token request returned a non-success status.');",
+    '  }',
+    '  const json = response.json();',
+    '  const accessToken = json && json.access_token;',
+    '  if (!accessToken) {',
+    "    throw new Error('Smoke OAuth token response did not include access_token.');",
+    '  }',
+    "  const expiresInSeconds = Number(json.expires_in || '300');",
+    '  pm.variables.set(accessTokenVariable, accessToken);',
+    '  pm.variables.set(expiresAtVariable, String(Date.now() + expiresInSeconds * 1000));',
+    '});'
+  ];
+}
+
+export function createOAuthPreRequestEvent(authConfig: SmokeAuthConfig): Record<string, unknown> {
+  return {
+    listen: 'prerequest',
+    script: {
+      type: 'text/javascript',
+      exec: buildOAuthPreRequestScript(authConfig)
     }
   };
 }

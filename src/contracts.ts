@@ -6,6 +6,7 @@ export const openAlphaActionContract = {
     'smoke-collection-id': { required: true },
     'flow-path': { required: true },
     'postman-api-key': { required: true },
+    'auth-config-json': { required: false },
     'spec-path': { required: false },
     'debug-dump-path': { required: false },
     'collection-sync-mode': { required: false, default: 'refresh' },

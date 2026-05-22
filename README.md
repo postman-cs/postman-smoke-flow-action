@@ -12,6 +12,7 @@ It:
 - generates a temporary Smoke collection from the current spec
 - reshapes that generated collection to match the curated flow
 - injects prerequest and test scripts from bindings and extracts
+- optionally adds Smoke-only OAuth2 client-credentials token acquisition
 - updates the canonical Smoke collection in place
 - deletes the temporary collection
 
@@ -64,6 +65,7 @@ jobs:
 | `smoke-collection-id` | | Canonical Smoke collection ID to refresh in place. |
 | `flow-path` | | Repo-root-relative path to the curated `flow.yaml`. |
 | `postman-api-key` | | Required Postman API key. |
+| `auth-config-json` | | Optional Smoke-only OAuth2 client-credentials config. If omitted or disabled, behavior is unchanged. |
 | `spec-path` | | Optional local spec path for validation/debugging. |
 | `collection-sync-mode` | `refresh` | Refresh is the supported v1 mode. |
 | `postman-access-token` | | Reserved for future internal integrations. |
@@ -114,9 +116,39 @@ flows:
         extract: []
 ```
 
+## Optional Smoke OAuth
+
+`auth-config-json` enables collection-level token acquisition for protected Smoke collections. V1 supports `oauth2` with the `client_credentials` grant and `clientAuthentication: body`.
+
+The generated collection:
+
+- adds a collection-level pre-request script
+- caches `access_token` and `access_token_expires_at` with `pm.variables.set()`
+- applies `Authorization: Bearer {{access_token}}` to Smoke requests
+- does not write runtime tokens or client secrets back to Postman environments
+
+Example:
+
+```yaml
+with:
+  auth-config-json: '{"enabled":true,"type":"oauth2","grantType":"client_credentials","tokenUrl":"{{auth_token_url}}","clientAuthentication":"body","variables":{"tokenUrl":"auth_token_url","scope":"auth_scope","clientId":"auth_client_id","clientSecret":"auth_client_secret","accessToken":"access_token","expiresAt":"access_token_expires_at"}}'
+```
+
+Runtime values should be injected by the caller, for example:
+
+```sh
+postman collection run "$POSTMAN_SMOKE_COLLECTION_UID" \
+  -e "$POSTMAN_ENVIRONMENT_UID" \
+  --env-var "auth_token_url=https://login.example.com/oauth2/token" \
+  --env-var "auth_scope=api://service/.default" \
+  --env-var "auth_client_id=${AUTH_CLIENT_ID}" \
+  --env-var "auth_client_secret=${AUTH_CLIENT_SECRET}"
+```
+
 ## Notes
 
 - The action first tries to resolve each flow step by matching the generated request name or description to the step `operationId`.
 - If `spec-path` is provided, it can also fall back to matching by request method plus normalized path shape from the OpenAPI document.
 - In v1, one `flow.yaml` maps to one curated Smoke collection journey.
 - This action intentionally does not mutate baseline or contract collections.
+- OAuth support is optional and Smoke-only; contract collection auth is intentionally deferred.

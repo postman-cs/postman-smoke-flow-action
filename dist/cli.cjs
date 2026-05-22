@@ -27130,6 +27130,7 @@ var openAlphaActionContract = {
     "smoke-collection-id": { required: true },
     "flow-path": { required: true },
     "postman-api-key": { required: true },
+    "auth-config-json": { required: false },
     "spec-path": { required: false },
     "debug-dump-path": { required: false },
     "collection-sync-mode": { required: false, default: "refresh" },
@@ -27458,6 +27459,87 @@ function createPreRequestEvent(step) {
     }
   };
 }
+function getAuthVariableNames(authConfig) {
+  return {
+    tokenUrl: authConfig.variables?.tokenUrl || "auth_token_url",
+    scope: authConfig.variables?.scope || "auth_scope",
+    clientId: authConfig.variables?.clientId || "auth_client_id",
+    clientSecret: authConfig.variables?.clientSecret || "auth_client_secret",
+    accessToken: authConfig.variables?.accessToken || "access_token",
+    expiresAt: authConfig.variables?.expiresAt || "access_token_expires_at"
+  };
+}
+function buildOAuthPreRequestScript(authConfig) {
+  const variables = getAuthVariableNames(authConfig);
+  const refreshSkewSeconds = authConfig.cache?.refreshSkewSeconds ?? 60;
+  const tokenUrlTemplate = authConfig.tokenUrl || `{{${variables.tokenUrl}}}`;
+  const contentType = authConfig.request?.contentType || "application/x-www-form-urlencoded";
+  return [
+    "// [Smoke Flow] Auto-generated OAuth2 client-credentials token cache.",
+    `const accessTokenVariable = ${quote(variables.accessToken)};`,
+    `const expiresAtVariable = ${quote(variables.expiresAt)};`,
+    `const refreshSkewMs = ${Math.max(0, refreshSkewSeconds)} * 1000;`,
+    "const cachedToken = pm.variables.get(accessTokenVariable);",
+    "const cachedExpiresAt = Number(pm.variables.get(expiresAtVariable) || '0');",
+    "if (cachedToken && cachedExpiresAt && Date.now() < cachedExpiresAt - refreshSkewMs) {",
+    "  return;",
+    "}",
+    "",
+    `const tokenUrl = pm.variables.replaceIn(${quote(tokenUrlTemplate)});`,
+    `const clientId = pm.variables.get(${quote(variables.clientId)});`,
+    `const clientSecret = pm.variables.get(${quote(variables.clientSecret)});`,
+    `const scope = pm.variables.get(${quote(variables.scope)}) || '';`,
+    "if (!tokenUrl || tokenUrl.includes('{{')) {",
+    "  throw new Error('Smoke OAuth is enabled, but auth_token_url is missing.');",
+    "}",
+    "if (!clientId || !clientSecret) {",
+    "  throw new Error('Smoke OAuth is enabled, but client credentials were not provided at runtime.');",
+    "}",
+    "",
+    "const tokenBody = {",
+    "  grant_type: 'client_credentials',",
+    "  client_id: clientId,",
+    "  client_secret: clientSecret",
+    "};",
+    "if (scope) {",
+    "  tokenBody.scope = scope;",
+    "}",
+    "",
+    "pm.sendRequest({",
+    "  url: tokenUrl,",
+    "  method: 'POST',",
+    `  header: { 'Content-Type': ${quote(contentType)} },`,
+    "  body: {",
+    "    mode: 'urlencoded',",
+    "    urlencoded: Object.entries(tokenBody).map(([key, value]) => ({ key, value: String(value) }))",
+    "  }",
+    "}, function (error, response) {",
+    "  if (error) {",
+    "    throw new Error('Smoke OAuth token request failed.');",
+    "  }",
+    "  if (!response || response.code < 200 || response.code >= 300) {",
+    "    throw new Error('Smoke OAuth token request returned a non-success status.');",
+    "  }",
+    "  const json = response.json();",
+    "  const accessToken = json && json.access_token;",
+    "  if (!accessToken) {",
+    "    throw new Error('Smoke OAuth token response did not include access_token.');",
+    "  }",
+    "  const expiresInSeconds = Number(json.expires_in || '300');",
+    "  pm.variables.set(accessTokenVariable, accessToken);",
+    "  pm.variables.set(expiresAtVariable, String(Date.now() + expiresInSeconds * 1000));",
+    "});"
+  ];
+}
+function createOAuthPreRequestEvent(authConfig) {
+  return {
+    listen: "prerequest",
+    script: {
+      type: "text/javascript",
+      exec: buildOAuthPreRequestScript(authConfig)
+    }
+  };
+}
 function createSecretsResolverItem() {
   return {
     name: "00 - Resolve Secrets",
@@ -27659,24 +27741,93 @@ function applyFlowScripts(item, step) {
   item.event = existingEvents.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)).filter((entry) => entry.listen !== "prerequest" && entry.listen !== "test");
   item.event.push(createPreRequestEvent(step), createTestEvent(step));
 }
-function curateRequestItem(resolved) {
+function removeHeader(request, key) {
+  const headers = Array.isArray(request.header) ? request.header.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)) : [];
+  request.header = headers.filter((entry) => typeof entry.key !== "string" || entry.key.toLowerCase() !== key.toLowerCase());
+}
+function getAuthVariableNames2(authConfig) {
+  return {
+    tokenUrl: authConfig.variables?.tokenUrl || "auth_token_url",
+    scope: authConfig.variables?.scope || "auth_scope",
+    clientId: authConfig.variables?.clientId || "auth_client_id",
+    clientSecret: authConfig.variables?.clientSecret || "auth_client_secret",
+    accessToken: authConfig.variables?.accessToken || "access_token",
+    expiresAt: authConfig.variables?.expiresAt || "access_token_expires_at"
+  };
+}
+function setRequestBearerAuth(request, authConfig) {
+  const variables = getAuthVariableNames2(authConfig);
+  request.auth = {
+    type: "bearer",
+    bearer: [
+      {
+        key: "token",
+        value: `{{${variables.accessToken}}}`,
+        type: "string"
+      }
+    ]
+  };
+  removeHeader(request, authConfig.apply?.header || "Authorization");
+}
+function applyAuthToRequest(request, authConfig) {
+  if (!authConfig?.enabled) {
+    return;
+  }
+  setRequestBearerAuth(request, authConfig);
+}
+function upsertCollectionVariable(collection, key, value = "") {
+  const variables = Array.isArray(collection.variable) ? collection.variable.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)) : [];
+  const existing = variables.find((entry) => entry.key === key);
+  if (existing) {
+    if (typeof existing.value !== "string") {
+      existing.value = value;
+    }
+  } else {
+    variables.push({ key, value, type: "string" });
+  }
+  collection.variable = variables;
+}
+function seedOAuthCollectionVariables(collection, authConfig) {
+  const variables = getAuthVariableNames2(authConfig);
+  const tokenUrlValue = authConfig.tokenUrl.includes("{{") ? "" : authConfig.tokenUrl;
+  upsertCollectionVariable(collection, variables.tokenUrl, tokenUrlValue);
+  upsertCollectionVariable(collection, variables.scope);
+  upsertCollectionVariable(collection, variables.clientId);
+  upsertCollectionVariable(collection, variables.clientSecret);
+  upsertCollectionVariable(collection, variables.accessToken);
+  upsertCollectionVariable(collection, variables.expiresAt);
+}
+function applyCollectionAuth(collection, authConfig) {
+  if (!authConfig?.enabled) {
+    return;
+  }
+  seedOAuthCollectionVariables(collection, authConfig);
+  const existingEvents = Array.isArray(collection.event) ? collection.event : [];
+  collection.event = [
+    ...existingEvents.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)),
+    createOAuthPreRequestEvent(authConfig)
+  ];
+}
+function curateRequestItem(resolved, authConfig) {
   const item = structuredClone(resolved.item);
   item.name = resolved.step.name?.trim() || resolved.step.operationId;
   const request = asRecord2(item.request);
   if (request) {
     updateRequestUrl(request, resolved.step);
     updateRequestBody(request, resolved.step);
+    applyAuthToRequest(request, authConfig);
   }
   applyFlowScripts(item, resolved.step);
   return item;
 }
-function buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests) {
+function buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests, authConfig) {
   const collection = sanitizeForCollectionUpdate(structuredClone(generatedCollection));
   const info = asRecord2(collection.info);
   if (info) {
     info.name = `[Smoke] ${flow.name}`;
   }
-  collection.item = [createSecretsResolverItem(), ...resolvedRequests.map(curateRequestItem)];
+  applyCollectionAuth(collection, authConfig);
+  collection.item = [createSecretsResolverItem(), ...resolvedRequests.map((request) => curateRequestItem(request, authConfig))];
   const sanitizedCollection = sanitizeForCollectionUpdate(collection);
   const bindingCount = flow.steps.reduce((sum, step) => sum + step.bindings.length, 0);
   const extractCount = flow.steps.reduce((sum, step) => sum + step.extract.length, 0);
@@ -27837,6 +27988,39 @@ function getInput(name, env) {
   const legacyEnvName = `INPUT_${name.replace(/ /g, "_").replace(/-/g, "_").toUpperCase()}`;
   return String(env[canonicalEnvName] ?? env[legacyEnvName] ?? "").trim();
 }
+function isRecord(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+function parseAuthConfig(value) {
+  if (!value.trim()) {
+    return void 0;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new Error(`Invalid auth-config-json: ${summarizeError(error)}`);
+  }
+  if (!isRecord(parsed)) {
+    throw new Error("Invalid auth-config-json: expected a JSON object.");
+  }
+  if (parsed.enabled !== true) {
+    return void 0;
+  }
+  if (parsed.type !== "oauth2") {
+    throw new Error("Invalid auth-config-json: only type=oauth2 is supported.");
+  }
+  if (parsed.grantType !== "client_credentials") {
+    throw new Error("Invalid auth-config-json: only grantType=client_credentials is supported.");
+  }
+  if (parsed.clientAuthentication !== "body") {
+    throw new Error("Invalid auth-config-json: only clientAuthentication=body is supported.");
+  }
+  if (typeof parsed.tokenUrl !== "string" || !parsed.tokenUrl.trim()) {
+    throw new Error("Invalid auth-config-json: tokenUrl is required.");
+  }
+  return parsed;
+}
 function readActionInputs(env = process.env) {
   return {
     projectName: getInput("project-name", env),
@@ -27845,6 +28029,7 @@ function readActionInputs(env = process.env) {
     smokeCollectionId: getInput("smoke-collection-id", env),
     flowPath: getInput("flow-path", env),
     postmanApiKey: getInput("postman-api-key", env),
+    authConfig: parseAuthConfig(getInput("auth-config-json", env)),
     specPath: getInput("spec-path", env) || void 0,
     debugDumpPath: getInput("debug-dump-path", env) || void 0,
     collectionSyncMode: getInput("collection-sync-mode", env) || "refresh",
@@ -27905,7 +28090,7 @@ async function runSmokeFlow(inputs, dependencies) {
     dependencies.core.info(`Generated temporary Smoke collection ${tempCollectionId}`);
     const generatedCollection = await dependencies.postman.getCollection(tempCollectionId);
     const resolvedRequests = resolveFlowRequests(flow, generatedCollection, inputs.specPath);
-    const transformed = buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests);
+    const transformed = buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests, inputs.authConfig);
     writeDebugDump(inputs.debugDumpPath, transformed.collection, dependencies.core);
     await dependencies.postman.updateCollection(inputs.smokeCollectionId, transformed.collection);
     dependencies.core.info(`Updated canonical Smoke collection ${inputs.smokeCollectionId} from curated flow.`);

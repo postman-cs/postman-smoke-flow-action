@@ -7,7 +7,7 @@ import { loadFlowManifest } from './flow/parser.js';
 import { resolveFlowRequests } from './flow/resolver.js';
 import { validateFlowManifest } from './flow/validator.js';
 import { summarizeError } from './lib/logging.js';
-import type { ActionInputs, ActionOutputs, CoreLike, FlowApplySummary } from './types.js';
+import type { ActionInputs, ActionOutputs, CoreLike, FlowApplySummary, SmokeAuthConfig } from './types.js';
 import { buildCuratedSmokeCollection } from './postman/collection-transform.js';
 import { PostmanSmokeClient } from './postman/postman-smoke-client.js';
 
@@ -29,6 +29,45 @@ function getInput(name: string, env: NodeJS.ProcessEnv): string {
   return String(env[canonicalEnvName] ?? env[legacyEnvName] ?? '').trim();
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function parseAuthConfig(value: string): SmokeAuthConfig | undefined {
+  if (!value.trim()) {
+    return undefined;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new Error(`Invalid auth-config-json: ${summarizeError(error)}`);
+  }
+
+  if (!isRecord(parsed)) {
+    throw new Error('Invalid auth-config-json: expected a JSON object.');
+  }
+
+  if (parsed.enabled !== true) {
+    return undefined;
+  }
+  if (parsed.type !== 'oauth2') {
+    throw new Error('Invalid auth-config-json: only type=oauth2 is supported.');
+  }
+  if (parsed.grantType !== 'client_credentials') {
+    throw new Error('Invalid auth-config-json: only grantType=client_credentials is supported.');
+  }
+  if (parsed.clientAuthentication !== 'body') {
+    throw new Error('Invalid auth-config-json: only clientAuthentication=body is supported.');
+  }
+  if (typeof parsed.tokenUrl !== 'string' || !parsed.tokenUrl.trim()) {
+    throw new Error('Invalid auth-config-json: tokenUrl is required.');
+  }
+
+  return parsed as SmokeAuthConfig;
+}
+
 export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionInputs {
   return {
     projectName: getInput('project-name', env),
@@ -37,6 +76,7 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
     smokeCollectionId: getInput('smoke-collection-id', env),
     flowPath: getInput('flow-path', env),
     postmanApiKey: getInput('postman-api-key', env),
+    authConfig: parseAuthConfig(getInput('auth-config-json', env)),
     specPath: getInput('spec-path', env) || undefined,
     debugDumpPath: getInput('debug-dump-path', env) || undefined,
     collectionSyncMode: (getInput('collection-sync-mode', env) || 'refresh') as 'refresh' | 'version',
@@ -109,7 +149,7 @@ export async function runSmokeFlow(
 
     const generatedCollection = await dependencies.postman.getCollection(tempCollectionId);
     const resolvedRequests = resolveFlowRequests(flow, generatedCollection, inputs.specPath);
-    const transformed = buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests);
+    const transformed = buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests, inputs.authConfig);
     writeDebugDump(inputs.debugDumpPath, transformed.collection, dependencies.core);
     await dependencies.postman.updateCollection(inputs.smokeCollectionId, transformed.collection);
     dependencies.core.info(`Updated canonical Smoke collection ${inputs.smokeCollectionId} from curated flow.`);

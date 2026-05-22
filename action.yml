@@ -19,6 +19,9 @@ inputs:
   postman-api-key:
     description: Postman API key used for collection generation and mutation.
     required: true
+  auth-config-json:
+    description: Optional JSON config for Smoke collection OAuth2 client-credentials token acquisition.
+    required: false
   spec-path:
     description: Optional repo-root-relative path to the local OpenAPI spec for validation and debug context.
     required: false
