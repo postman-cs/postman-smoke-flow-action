@@ -12,7 +12,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "npm run typecheck && rm -rf dist && esbuild src/main.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/main.cjs && esbuild src/cli.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/cli.cjs",
+    "build": "npm run typecheck && rm -rf dist && esbuild src/main.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/main.cjs && esbuild src/cli.ts --bundle --platform=node --target=node24 --format=cjs --banner:js='#!/usr/bin/env node' --outfile=dist/cli.cjs",
     "check:dist": "npm run build && git diff --exit-code -- dist",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json"
