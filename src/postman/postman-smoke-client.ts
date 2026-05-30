@@ -64,7 +64,7 @@ export class PostmanSmokeClient {
       }
     };
 
-    let generationResponse: JsonRecord | null = null;
+    let generationResponse: JsonRecord | null | undefined;
     const maxLockedRetries = 5;
 
     for (let lockedAttempt = 0; ; lockedAttempt += 1) {

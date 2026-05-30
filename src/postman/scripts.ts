@@ -1,4 +1,4 @@
-import type { FlowBinding, FlowExtract, FlowStep, SmokeAuthConfig } from '../types.js';
+import type { FlowStep, SmokeAuthConfig } from '../types.js';
 
 function quote(value: string): string {
   return JSON.stringify(value);

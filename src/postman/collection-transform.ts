@@ -73,6 +73,10 @@ function decodeQueryKey(key: string): string {
   }
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function updateRawUrlQuery(rawUrl: string, step: FlowStep): string {
   const bindingByFieldKey = getBindingByFieldKey(step);
   const [withoutHash, hash = ''] = rawUrl.split('#', 2);
@@ -87,7 +91,7 @@ function updateRawUrlQuery(rawUrl: string, step: FlowStep): string {
     .split('&')
     .filter(Boolean)
     .flatMap((entry) => {
-      const [rawKey = '', ...rawValueParts] = entry.split('=');
+      const rawKey = entry.split('=', 1)[0] ?? '';
       const binding = bindingByFieldKey.get(decodeQueryKey(rawKey));
       if (!binding) {
         return [];
@@ -176,7 +180,8 @@ function updateRequestBody(request: JsonRecord, step: FlowStep): void {
     raw = JSON.stringify(json, null, 2);
   } catch {
     for (const binding of variableBindings) {
-      raw = raw.replace(new RegExp(`\"${binding.fieldKey}\"\\s*:\\s*\"[^\"]*\"`, 'g'), `"${binding.fieldKey}": "{{${binding.fieldKey}}}"`);
+      const fieldPattern = escapeRegExp(binding.fieldKey);
+      raw = raw.replace(new RegExp(`"${fieldPattern}"\\s*:\\s*"[^"]*"`, 'g'), `"${binding.fieldKey}": "{{${binding.fieldKey}}}"`);
     }
   }
   body.raw = raw;
@@ -295,7 +300,8 @@ export function buildCuratedSmokeCollection(
   generatedCollection: JsonRecord,
   flow: FlowDefinition,
   resolvedRequests: ResolvedRequest[],
-  authConfig?: SmokeAuthConfig
+  authConfig?: SmokeAuthConfig,
+  secretsResolverEnabled = true
 ): { collection: JsonRecord; bindingCount: number; extractCount: number; assertionCount: number } {
   const collection = sanitizeForCollectionUpdate(structuredClone(generatedCollection)) as JsonRecord;
   const info = asRecord(collection.info);
@@ -303,7 +309,8 @@ export function buildCuratedSmokeCollection(
     info.name = `[Smoke] ${flow.name}`;
   }
   applyCollectionAuth(collection, authConfig);
-  collection.item = [createSecretsResolverItem(), ...resolvedRequests.map((request) => curateRequestItem(request, authConfig))];
+  const requestItems = resolvedRequests.map((request) => curateRequestItem(request, authConfig));
+  collection.item = secretsResolverEnabled ? [createSecretsResolverItem(), ...requestItems] : requestItems;
   const sanitizedCollection = sanitizeForCollectionUpdate(collection) as JsonRecord;
 
   const bindingCount = flow.steps.reduce((sum, step) => sum + step.bindings.length, 0);

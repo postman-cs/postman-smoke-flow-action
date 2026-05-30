@@ -1,18 +1,7 @@
+import { applyArgsToEnv } from './lib/cli-args.js';
 import { summarizeError } from './lib/logging.js';
 import { readActionInputs, runAction } from './index.js';
 import type { CoreLike } from './types.js';
-
-function applyArgsToEnv(argv: string[], env: NodeJS.ProcessEnv): void {
-  for (let index = 2; index < argv.length; index += 2) {
-    const key = argv[index];
-    const value = argv[index + 1];
-    if (!key?.startsWith('--')) {
-      continue;
-    }
-    const inputName = key.slice(2);
-    env[`INPUT_${inputName.replace(/-/g, '_').toUpperCase()}`] = value ?? '';
-  }
-}
 
 const outputs: Record<string, string> = {};
 

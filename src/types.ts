@@ -45,6 +45,7 @@ export type ActionInputs = {
   flowPath: string;
   postmanApiKey: string;
   authConfig?: SmokeAuthConfig;
+  secretsResolverEnabled: boolean;
   specPath?: string;
   debugDumpPath?: string;
   collectionSyncMode: 'refresh' | 'version';

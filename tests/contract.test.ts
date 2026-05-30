@@ -14,8 +14,16 @@ type ActionManifest = {
   outputs: Record<string, { description?: string }>;
 };
 
+type PackageJson = {
+  scripts: Record<string, string>;
+};
+
 function loadManifest(): ActionManifest {
   return parse(readFileSync(path.join(repoRoot, 'action.yml'), 'utf8')) as ActionManifest;
+}
+
+function loadPackageJson(): PackageJson {
+  return JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8')) as PackageJson;
 }
 
 describe('postman-smoke-flow-action contract', () => {
@@ -24,6 +32,7 @@ describe('postman-smoke-flow-action contract', () => {
     expect(manifest.name).toBe('postman-smoke-flow-action');
     expect(manifest.inputs['flow-path']?.required).toBe(true);
     expect(manifest.inputs['smoke-collection-id']?.required).toBe(true);
+    expect(manifest.inputs['secrets-resolver-enabled']?.default).toBe('true');
   });
 
   it('defines the expected primary outputs', () => {
@@ -39,5 +48,17 @@ describe('postman-smoke-flow-action contract', () => {
       'applied-extract-count',
       'assertion-count'
     ]);
+  });
+
+  it('exposes the standard validation scripts used by sibling actions', () => {
+    const packageJson = loadPackageJson();
+    expect(packageJson.scripts).toMatchObject({
+      build: expect.any(String),
+      'check:dist': expect.any(String),
+      lint: 'eslint .',
+      'lint:fix': 'eslint . --fix',
+      test: 'vitest run',
+      typecheck: 'tsc --noEmit -p tsconfig.json'
+    });
   });
 });

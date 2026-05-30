@@ -55,6 +55,37 @@ jobs:
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
 ```
 
+## CLI Usage (Non-GitHub CI)
+
+The npm package also ships a `postman-smoke-flow` binary for GitLab CI, Bitbucket Pipelines, Azure DevOps, Jenkins, and local validation jobs.
+
+```sh
+npm install -g @postman-cse/onboarding-smoke-flow
+
+postman-smoke-flow \
+  --project-name core-payments \
+  --workspace-id "$POSTMAN_WORKSPACE_ID" \
+  --spec-id "$POSTMAN_SPEC_ID" \
+  --smoke-collection-id "$POSTMAN_SMOKE_COLLECTION_ID" \
+  --flow-path .postman-api-launchpad/flows/core-payments/flow.yaml \
+  --spec-path api/openapi.yaml \
+  --postman-api-key "$POSTMAN_API_KEY"
+```
+
+Every action input is available as the same kebab-case CLI flag. The CLI writes the action outputs as JSON to stdout and writes logs to stderr, so other CI systems can capture IDs without GitHub Actions output files.
+
+For one-off runs without a global install:
+
+```sh
+npx --package @postman-cse/onboarding-smoke-flow postman-smoke-flow \
+  --project-name core-payments \
+  --workspace-id "$POSTMAN_WORKSPACE_ID" \
+  --spec-id "$POSTMAN_SPEC_ID" \
+  --smoke-collection-id "$POSTMAN_SMOKE_COLLECTION_ID" \
+  --flow-path .postman-api-launchpad/flows/core-payments/flow.yaml \
+  --postman-api-key "$POSTMAN_API_KEY"
+```
+
 ## Inputs
 
 | Input | Default | Notes |
@@ -66,6 +97,7 @@ jobs:
 | `flow-path` | | Repo-root-relative path to the curated `flow.yaml`. |
 | `postman-api-key` | | Required Postman API key. |
 | `auth-config-json` | | Optional Smoke-only OAuth2 client-credentials config. If omitted or disabled, behavior is unchanged. |
+| `secrets-resolver-enabled` | `true` | Include the legacy AWS Secrets Manager resolver request before Smoke steps. Set to `false` to opt out. |
 | `spec-path` | | Optional local spec path for validation/debugging. |
 | `collection-sync-mode` | `refresh` | Refresh is the supported v1 mode. |
 | `postman-access-token` | | Reserved for future internal integrations. |
@@ -152,3 +184,22 @@ postman collection run "$POSTMAN_SMOKE_COLLECTION_UID" \
 - In v1, one `flow.yaml` maps to one curated Smoke collection journey.
 - This action intentionally does not mutate baseline or contract collections.
 - OAuth support is optional and Smoke-only; contract collection auth is intentionally deferred.
+
+## Local development
+
+```sh
+npm ci
+npm run lint
+npm test
+npm run typecheck
+npm run build
+npm run check:dist
+```
+
+`npm run build` produces the committed `dist/main.cjs` action bundle used by `action.yml` and `dist/cli.cjs` for the portable CLI.
+
+## Open-Alpha Release Strategy
+
+- Publish immutable `v0.x.y` tags for releases.
+- Keep the rolling `v0` tag aligned to the latest open-alpha release.
+- Run CI before tagging so lint, tests, typecheck, bundle integrity, and actionlint all pass.

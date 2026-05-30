@@ -47,6 +47,7 @@ function createInputs(tempDir: string): ActionInputs {
     smokeCollectionId: 'col-smoke',
     flowPath: 'flow.yaml',
     postmanApiKey: 'PMAK-123',
+    secretsResolverEnabled: true,
     specPath: 'openapi.yaml',
     collectionSyncMode: 'refresh',
     failOnFlowWarning: false,
@@ -93,6 +94,38 @@ describe('runSmokeFlow', () => {
       expect(postman.generateCollection).toHaveBeenCalledOnce();
       expect(postman.updateCollection).toHaveBeenCalledOnce();
       expect(postman.deleteCollection).toHaveBeenCalledWith('temp-123');
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects unsupported non-refresh collection sync modes before calling Postman', async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-'));
+    const previousCwd = process.cwd();
+    process.chdir(tempDir);
+
+    const core: CoreLike = {
+      setOutput: vi.fn(),
+      info: vi.fn(),
+      warning: vi.fn(),
+      setFailed: vi.fn()
+    };
+
+    const postman = {
+      generateCollection: vi.fn(),
+      getCollection: vi.fn(),
+      updateCollection: vi.fn(),
+      deleteCollection: vi.fn()
+    };
+
+    try {
+      await expect(runSmokeFlow({
+        ...createInputs(tempDir),
+        collectionSyncMode: 'version'
+      }, { core, postman })).rejects.toThrow('collection-sync-mode=refresh is the only supported mode');
+      expect(postman.generateCollection).not.toHaveBeenCalled();
+      expect(postman.updateCollection).not.toHaveBeenCalled();
     } finally {
       process.chdir(previousCwd);
       rmSync(tempDir, { recursive: true, force: true });
