@@ -1,4 +1,4 @@
-import core from '@actions/core';
+import * as core from '@actions/core';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -42,7 +42,7 @@ function parseAuthConfig(value: string): SmokeAuthConfig | undefined {
   try {
     parsed = JSON.parse(value);
   } catch (error) {
-    throw new Error(`Invalid auth-config-json: ${summarizeError(error)}`);
+    throw new Error(`Invalid auth-config-json: ${summarizeError(error)}`, { cause: error });
   }
 
   if (!isRecord(parsed)) {
@@ -77,6 +77,7 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
     flowPath: getInput('flow-path', env),
     postmanApiKey: getInput('postman-api-key', env),
     authConfig: parseAuthConfig(getInput('auth-config-json', env)),
+    secretsResolverEnabled: parseBooleanInput(getInput('secrets-resolver-enabled', env), true),
     specPath: getInput('spec-path', env) || undefined,
     debugDumpPath: getInput('debug-dump-path', env) || undefined,
     collectionSyncMode: (getInput('collection-sync-mode', env) || 'refresh') as 'refresh' | 'version',
@@ -131,6 +132,9 @@ export async function runSmokeFlow(
   dependencies: SmokeFlowDependencies
 ): Promise<ActionOutputs> {
   ensureRequiredInputs(inputs);
+  if (inputs.collectionSyncMode !== 'refresh') {
+    throw new Error(`collection-sync-mode=refresh is the only supported mode for postman-smoke-flow-action; received ${inputs.collectionSyncMode}.`);
+  }
 
   const manifest = loadFlowManifest(inputs.flowPath);
   const { flow, warnings } = validateFlowManifest(manifest);
@@ -149,7 +153,13 @@ export async function runSmokeFlow(
 
     const generatedCollection = await dependencies.postman.getCollection(tempCollectionId);
     const resolvedRequests = resolveFlowRequests(flow, generatedCollection, inputs.specPath);
-    const transformed = buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests, inputs.authConfig);
+    const transformed = buildCuratedSmokeCollection(
+      generatedCollection,
+      flow,
+      resolvedRequests,
+      inputs.authConfig,
+      inputs.secretsResolverEnabled
+    );
     writeDebugDump(inputs.debugDumpPath, transformed.collection, dependencies.core);
     await dependencies.postman.updateCollection(inputs.smokeCollectionId, transformed.collection);
     dependencies.core.info(`Updated canonical Smoke collection ${inputs.smokeCollectionId} from curated flow.`);

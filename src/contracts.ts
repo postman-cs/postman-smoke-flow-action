@@ -7,6 +7,7 @@ export const openAlphaActionContract = {
     'flow-path': { required: true },
     'postman-api-key': { required: true },
     'auth-config-json': { required: false },
+    'secrets-resolver-enabled': { required: false, default: 'true' },
     'spec-path': { required: false },
     'debug-dump-path': { required: false },
     'collection-sync-mode': { required: false, default: 'refresh' },

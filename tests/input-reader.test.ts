@@ -19,6 +19,7 @@ describe('readActionInputs', () => {
         clientAuthentication: 'body'
       }),
       INPUT_COLLECTION_SYNC_MODE: 'refresh',
+      INPUT_SECRETS_RESOLVER_ENABLED: 'false',
       INPUT_FAIL_ON_FLOW_WARNING: 'false',
       INPUT_KEEP_TEMP_COLLECTION_ON_FAILURE: 'false',
       INPUT_TEMP_COLLECTION_PREFIX: '[Smoke][Temp]'
@@ -32,5 +33,12 @@ describe('readActionInputs', () => {
     expect(inputs.postmanApiKey).toBe('pmak-test');
     expect(inputs.authConfig?.enabled).toBe(true);
     expect(inputs.authConfig?.tokenUrl).toBe('{{auth_token_url}}');
+    expect(inputs.secretsResolverEnabled).toBe(false);
+  });
+
+  it('keeps the legacy secrets resolver enabled by default for existing callers', () => {
+    const inputs = readActionInputs({} as NodeJS.ProcessEnv);
+
+    expect(inputs.secretsResolverEnabled).toBe(true);
   });
 });

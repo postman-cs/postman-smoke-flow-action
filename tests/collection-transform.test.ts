@@ -79,6 +79,7 @@ describe('collection transform', () => {
     expect((result.collection.info as Record<string, unknown>)._postman_id).toBeUndefined();
     expect((result.collection as Record<string, unknown>).uid).toBeUndefined();
     expect((result.collection as Record<string, unknown>).response).toBeUndefined();
+    expect(items).toHaveLength(3);
     expect(items[0]?.name).toBe('00 - Resolve Secrets');
     expect(items[2]?.request).toBeDefined();
     expect((items[1] as Record<string, unknown>).id).toBeUndefined();
@@ -89,6 +90,31 @@ describe('collection transform', () => {
     expect((items[2] as Record<string, unknown>).response).toBeUndefined();
     expect(JSON.stringify(items[2])).toContain('{{paymentId}}');
     expect(JSON.stringify(items[1])).toContain('Extract createPayment.paymentId');
+  });
+
+  it('omits the legacy AWS secrets resolver only when explicitly opted out', () => {
+    const result = buildCuratedSmokeCollection(
+      { info: { name: '[Smoke][Temp] Payments API' }, item: [] },
+      flow,
+      [
+        {
+          step: flow.steps[0]!,
+          item: {
+            name: 'createPayment',
+            request: {
+              method: 'POST',
+              url: 'https://api.example.com/payments'
+            }
+          }
+        }
+      ],
+      undefined,
+      false
+    );
+    const items = result.collection.item as Array<Record<string, unknown>>;
+
+    expect(items).toHaveLength(1);
+    expect(items.map((item) => item.name)).not.toContain('00 - Resolve Secrets');
   });
 
   it('preserves generated example values for source=example bindings', () => {

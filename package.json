@@ -14,6 +14,8 @@
   "scripts": {
     "build": "npm run typecheck && rm -rf dist && esbuild src/main.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/main.cjs && esbuild src/cli.ts --bundle --platform=node --target=node24 --format=cjs --banner:js='#!/usr/bin/env node' --outfile=dist/cli.cjs",
     "check:dist": "npm run build && git diff --exit-code -- dist",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
@@ -29,14 +31,26 @@
     "@actions/core": "^1.11.1",
     "yaml": "^2.8.2"
   },
+  "overrides": {
+    "undici": "^6.24.0",
+    "picomatch": ">=4.0.4"
+  },
   "devDependencies": {
+    "@commitlint/cli": "^20.5.3",
+    "@commitlint/config-conventional": "^20.5.3",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^25.3.5",
     "esbuild": "^0.27.3",
+    "eslint": "^10.4.1",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.60.0",
     "vitest": "^4.0.18"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/postman-cs/postman-smoke-flow-action"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }
