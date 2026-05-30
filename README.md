@@ -1,6 +1,6 @@
 # postman-smoke-flow-action
 
-Public open-alpha GitHub Action that applies a curated `flow.yaml` to the canonical Postman Smoke collection produced by bootstrap.
+Public customer preview GitHub Action that applies a curated `flow.yaml` to the canonical Postman Smoke collection produced by bootstrap.
 
 ## Purpose
 
@@ -198,8 +198,8 @@ npm run check:dist
 
 `npm run build` produces the committed `dist/main.cjs` action bundle used by `action.yml` and `dist/cli.cjs` for the portable CLI.
 
-## Open-Alpha Release Strategy
+## Customer Preview Release Strategy
 
 - Publish immutable `v0.x.y` tags for releases.
-- Keep the rolling `v0` tag aligned to the latest open-alpha release.
+- Keep the rolling `v0` tag aligned to the latest customer preview release.
 - Run CI before tagging so lint, tests, typecheck, bundle integrity, and actionlint all pass.

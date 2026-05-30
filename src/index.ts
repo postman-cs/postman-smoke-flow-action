@@ -2,7 +2,7 @@ import * as core from '@actions/core';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { openAlphaActionContract } from './contracts.js';
+import { customerPreviewActionContract } from './contracts.js';
 import { loadFlowManifest } from './flow/parser.js';
 import { resolveFlowRequests } from './flow/resolver.js';
 import { validateFlowManifest } from './flow/validator.js';
@@ -102,7 +102,7 @@ function writeDebugDump(debugDumpPath: string | undefined, collection: unknown, 
 }
 
 function ensureRequiredInputs(inputs: ActionInputs): void {
-  for (const [name, details] of Object.entries(openAlphaActionContract.inputs)) {
+  for (const [name, details] of Object.entries(customerPreviewActionContract.inputs)) {
     if (details.required) {
       const camel = name.replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase());
       const value = inputs[camel as keyof ActionInputs];

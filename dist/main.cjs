@@ -28275,7 +28275,7 @@ var import_node_fs3 = require("node:fs");
 var import_node_path2 = __toESM(require("node:path"), 1);
 
 // src/contracts.ts
-var openAlphaActionContract = {
+var customerPreviewActionContract = {
   inputs: {
     "project-name": { required: true },
     "workspace-id": { required: true },
@@ -29215,7 +29215,7 @@ function writeDebugDump(debugDumpPath, collection, actionCore) {
   actionCore.info(`Wrote transformed collection debug dump to ${resolvedPath}`);
 }
 function ensureRequiredInputs(inputs) {
-  for (const [name, details] of Object.entries(openAlphaActionContract.inputs)) {
+  for (const [name, details] of Object.entries(customerPreviewActionContract.inputs)) {
     if (details.required) {
       const camel = name.replace(/-([a-z])/g, (_match, letter) => letter.toUpperCase());
       const value = inputs[camel];

@@ -1,4 +1,4 @@
-export const openAlphaActionContract = {
+export const customerPreviewActionContract = {
   inputs: {
     'project-name': { required: true },
     'workspace-id': { required: true },

@@ -1,5 +1,5 @@
 name: postman-smoke-flow-action
-description: Public open-alpha GitHub Action that applies a curated flow.yaml to the canonical Smoke collection.
+description: Public customer preview GitHub Action that applies a curated flow.yaml to the canonical Smoke collection.
 inputs:
   project-name:
     description: Service project name used for temporary smoke collection naming.
