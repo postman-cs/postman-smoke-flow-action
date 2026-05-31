@@ -35,9 +35,21 @@ $(go env GOPATH)/bin/actionlint
 
 - [ ] `actionlint` passes locally.
 - [ ] `npm run lint`, `npm test`, `npm run typecheck`, and `npm run check:dist` pass locally.
+- [ ] The `Live E2E` PR check passes; PRs should not be approved or merged until the correlated `postman-actions-e2e` run succeeds.
 - [ ] Changes are focused and address a single concern.
 - [ ] README inputs/outputs tables match `action.yml`.
 - [ ] Behavior changes are reflected in `README.md`.
+
+## PR E2E Gate
+
+Every pull request targeting `main` runs the central live e2e suite before
+approval or merge. The PR workflow dispatches `postman-cs/postman-actions-e2e`
+with the PR head SHA pinned for `postman-smoke-flow-action`, waits for the
+correlated run to succeed, and reports that result as the `Live E2E` check.
+
+Because the suite runs action code with internal sandbox credentials, the PR
+branch must live in this repository. Fork-based PRs cannot receive those secrets;
+push the branch to this repo to run the required merge gate.
 
 ## Release Gate
 
