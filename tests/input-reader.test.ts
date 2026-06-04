@@ -41,4 +41,24 @@ describe('readActionInputs', () => {
 
     expect(inputs.secretsResolverEnabled).toBe(true);
   });
+
+  it('treats missing flow-path as undefined for auth-only Smoke updates', () => {
+    const inputs = readActionInputs({
+      INPUT_PROJECT_NAME: 'providers-process-api',
+      INPUT_WORKSPACE_ID: 'ws-123',
+      INPUT_SPEC_ID: 'spec-123',
+      INPUT_SMOKE_COLLECTION_ID: 'col-123',
+      INPUT_POSTMAN_API_KEY: 'pmak-test',
+      INPUT_AUTH_CONFIG_JSON: JSON.stringify({
+        enabled: true,
+        type: 'oauth2',
+        grantType: 'client_credentials',
+        tokenUrl: '{{auth_token_url}}',
+        clientAuthentication: 'body'
+      })
+    } as NodeJS.ProcessEnv);
+
+    expect(inputs.flowPath).toBeUndefined();
+    expect(inputs.authConfig?.enabled).toBe(true);
+  });
 });

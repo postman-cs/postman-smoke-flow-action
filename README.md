@@ -1,12 +1,12 @@
 # postman-smoke-flow-action
 
-Public customer preview GitHub Action that applies a curated `flow.yaml` to the canonical Postman Smoke collection produced by bootstrap.
+Public customer preview GitHub Action that applies a curated `flow.yaml` or Smoke-only OAuth updates to the canonical Postman Smoke collection produced by bootstrap.
 
 ## Purpose
 
 This action is designed to be chained directly after `postman-bootstrap-action` and before `postman-repo-sync-action`.
 
-It:
+When `flow-path` is provided, it:
 
 - reads `flow.yaml`
 - generates a temporary Smoke collection from the current spec
@@ -15,6 +15,8 @@ It:
 - optionally adds Smoke-only OAuth2 client-credentials token acquisition
 - updates the canonical Smoke collection in place
 - deletes the temporary collection
+
+When `flow-path` is omitted and `auth-config-json` is enabled, it fetches the existing canonical Smoke collection and injects Smoke-only OAuth without recreating or reordering the collection.
 
 ## Usage
 
@@ -55,6 +57,20 @@ jobs:
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
 ```
 
+To inject OAuth into the existing Smoke collection before a `flow.yaml` exists, omit `flow-path` and pass `auth-config-json`:
+
+```yaml
+- id: smoke_flow
+  uses: postman-cs/postman-smoke-flow-action@v0
+  with:
+    project-name: core-payments
+    workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
+    spec-id: ${{ steps.bootstrap.outputs.spec-id }}
+    smoke-collection-id: ${{ steps.bootstrap.outputs.smoke-collection-id }}
+    postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+    auth-config-json: '{"enabled":true,"type":"oauth2","grantType":"client_credentials","tokenUrl":"{{auth_token_url}}","clientAuthentication":"body"}'
+```
+
 ## CLI Usage (Non-GitHub CI)
 
 The npm package also ships a `postman-smoke-flow` binary for GitLab CI, Bitbucket Pipelines, Azure DevOps, Jenkins, and local validation jobs.
@@ -69,6 +85,18 @@ postman-smoke-flow \
   --smoke-collection-id "$POSTMAN_SMOKE_COLLECTION_ID" \
   --flow-path .postman-api-launchpad/flows/core-payments/flow.yaml \
   --spec-path api/openapi.yaml \
+  --postman-api-key "$POSTMAN_API_KEY"
+```
+
+For OAuth-only updates before a flow manifest exists, omit `--flow-path`:
+
+```sh
+postman-smoke-flow \
+  --project-name core-payments \
+  --workspace-id "$POSTMAN_WORKSPACE_ID" \
+  --spec-id "$POSTMAN_SPEC_ID" \
+  --smoke-collection-id "$POSTMAN_SMOKE_COLLECTION_ID" \
+  --auth-config-json '{"enabled":true,"type":"oauth2","grantType":"client_credentials","tokenUrl":"{{auth_token_url}}","clientAuthentication":"body"}' \
   --postman-api-key "$POSTMAN_API_KEY"
 ```
 
@@ -94,7 +122,7 @@ npx --package @postman-cse/onboarding-smoke-flow postman-smoke-flow \
 | `workspace-id` | | Postman workspace ID from bootstrap. |
 | `spec-id` | | Postman spec ID from bootstrap. |
 | `smoke-collection-id` | | Canonical Smoke collection ID to refresh in place. |
-| `flow-path` | | Repo-root-relative path to the curated `flow.yaml`. |
+| `flow-path` | | Optional repo-root-relative path to the curated `flow.yaml`. If omitted, enabled OAuth config is applied to the existing Smoke collection without flow curation. |
 | `postman-api-key` | | Required Postman API key. |
 | `auth-config-json` | | Optional Smoke-only OAuth2 client-credentials config. If omitted or disabled, behavior is unchanged. |
 | `secrets-resolver-enabled` | `true` | Include the legacy AWS Secrets Manager resolver request before Smoke steps. Set to `false` to opt out. |
@@ -111,8 +139,8 @@ npx --package @postman-cse/onboarding-smoke-flow postman-smoke-flow \
 | --- | --- |
 | `smoke-collection-id` | Canonical Smoke collection ID after apply. |
 | `flow-apply-status` | `success`, `failed`, or `skipped`. |
-| `flow-apply-summary-json` | JSON summary of resolved steps, bindings, extracts, assertions, and warnings. |
-| `temporary-smoke-collection-id` | Temp collection used during refresh. |
+| `flow-apply-summary-json` | JSON summary of resolved steps, bindings, extracts, assertions, OAuth application, and warnings. |
+| `temporary-smoke-collection-id` | Temp collection used during flow refresh. Empty when running OAuth-only mode. |
 | `flow-step-count` | Number of flow steps. |
 | `resolved-operation-count` | Number of resolved requests. |
 | `applied-binding-count` | Number of bindings applied. |
@@ -150,9 +178,9 @@ flows:
 
 ## Optional Smoke OAuth
 
-`auth-config-json` enables collection-level token acquisition for protected Smoke collections. V1 supports `oauth2` with the `client_credentials` grant and `clientAuthentication: body`.
+`auth-config-json` enables collection-level token acquisition for protected Smoke collections. V1 supports `oauth2` with the `client_credentials` grant and `clientAuthentication: body`. This can be used with or without `flow-path`.
 
-The generated collection:
+The Smoke collection:
 
 - adds a collection-level pre-request script
 - caches `access_token` and `access_token_expires_at` with `pm.variables.set()`
@@ -182,6 +210,8 @@ postman collection run "$POSTMAN_SMOKE_COLLECTION_UID" \
 - The action first tries to resolve each flow step by matching the generated request name or description to the step `operationId`.
 - If `spec-path` is provided, it can also fall back to matching by request method plus normalized path shape from the OpenAPI document.
 - In v1, one `flow.yaml` maps to one curated Smoke collection journey.
+- If `flow-path` is omitted, the action does not generate a temporary collection, apply flow scripts, or reorder existing Smoke requests.
+- If `flow-path` is provided but the file is missing, the action fails because the caller explicitly requested flow mode.
 - This action intentionally does not mutate baseline or contract collections.
 - OAuth support is optional and Smoke-only; contract collection auth is intentionally deferred.
 

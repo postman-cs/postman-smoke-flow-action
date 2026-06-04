@@ -8,7 +8,7 @@ import { resolveFlowRequests } from './flow/resolver.js';
 import { validateFlowManifest } from './flow/validator.js';
 import { summarizeError } from './lib/logging.js';
 import type { ActionInputs, ActionOutputs, CoreLike, FlowApplySummary, SmokeAuthConfig } from './types.js';
-import { buildCuratedSmokeCollection } from './postman/collection-transform.js';
+import { applySmokeCollectionAuth, buildCuratedSmokeCollection } from './postman/collection-transform.js';
 import { PostmanSmokeClient } from './postman/postman-smoke-client.js';
 
 type SmokeFlowDependencies = {
@@ -74,7 +74,7 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
     workspaceId: getInput('workspace-id', env),
     specId: getInput('spec-id', env),
     smokeCollectionId: getInput('smoke-collection-id', env),
-    flowPath: getInput('flow-path', env),
+    flowPath: getInput('flow-path', env) || undefined,
     postmanApiKey: getInput('postman-api-key', env),
     authConfig: parseAuthConfig(getInput('auth-config-json', env)),
     secretsResolverEnabled: parseBooleanInput(getInput('secrets-resolver-enabled', env), true),
@@ -127,6 +127,50 @@ function createOutputs(summary: FlowApplySummary): ActionOutputs {
   };
 }
 
+async function runWithoutFlowManifest(
+  inputs: ActionInputs,
+  dependencies: SmokeFlowDependencies
+): Promise<ActionOutputs> {
+  if (!inputs.authConfig?.enabled) {
+    dependencies.core.info('No flow-path or enabled auth-config-json was provided; skipping Smoke collection update.');
+    return createOutputs({
+      flowName: '',
+      status: 'skipped',
+      canonicalSmokeCollectionId: inputs.smokeCollectionId,
+      authApplied: false,
+      authRequestCount: 0,
+      stepCount: 0,
+      resolvedOperationCount: 0,
+      appliedBindingCount: 0,
+      appliedExtractCount: 0,
+      assertionCount: 0,
+      warnings: []
+    });
+  }
+
+  const existingCollection = await dependencies.postman.getCollection(inputs.smokeCollectionId);
+  const transformed = applySmokeCollectionAuth(existingCollection, inputs.authConfig);
+  writeDebugDump(inputs.debugDumpPath, transformed.collection, dependencies.core);
+  await dependencies.postman.updateCollection(inputs.smokeCollectionId, transformed.collection);
+  dependencies.core.info(
+    `Updated canonical Smoke collection ${inputs.smokeCollectionId} with Smoke OAuth auth on ${transformed.authRequestCount} request(s).`
+  );
+
+  return createOutputs({
+    flowName: '',
+    status: 'skipped',
+    canonicalSmokeCollectionId: inputs.smokeCollectionId,
+    authApplied: true,
+    authRequestCount: transformed.authRequestCount,
+    stepCount: 0,
+    resolvedOperationCount: 0,
+    appliedBindingCount: 0,
+    appliedExtractCount: 0,
+    assertionCount: 0,
+    warnings: ['flow-path was not provided; applied OAuth to the existing Smoke collection without flow curation.']
+  });
+}
+
 export async function runSmokeFlow(
   inputs: ActionInputs,
   dependencies: SmokeFlowDependencies
@@ -136,7 +180,12 @@ export async function runSmokeFlow(
     throw new Error(`collection-sync-mode=refresh is the only supported mode for postman-smoke-flow-action; received ${inputs.collectionSyncMode}.`);
   }
 
-  const manifest = loadFlowManifest(inputs.flowPath);
+  const flowPath = inputs.flowPath?.trim();
+  if (!flowPath) {
+    return runWithoutFlowManifest(inputs, dependencies);
+  }
+
+  const manifest = loadFlowManifest(flowPath);
   const { flow, warnings } = validateFlowManifest(manifest);
   const flowName = flow.name;
   warnings.forEach((warning) => dependencies.core.warning(warning.message));
@@ -169,6 +218,7 @@ export async function runSmokeFlow(
       status: 'success',
       temporaryCollectionId: tempCollectionId,
       canonicalSmokeCollectionId: inputs.smokeCollectionId,
+      authApplied: Boolean(inputs.authConfig?.enabled),
       stepCount: flow.steps.length,
       resolvedOperationCount: resolvedRequests.length,
       appliedBindingCount: transformed.bindingCount,
@@ -185,6 +235,7 @@ export async function runSmokeFlow(
       status: 'failed',
       temporaryCollectionId: tempCollectionId || undefined,
       canonicalSmokeCollectionId: inputs.smokeCollectionId,
+      authApplied: Boolean(inputs.authConfig?.enabled),
       stepCount: 0,
       resolvedOperationCount: 0,
       appliedBindingCount: 0,

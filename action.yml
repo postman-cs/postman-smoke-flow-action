@@ -1,5 +1,5 @@
 name: postman-smoke-flow-action
-description: Public customer preview GitHub Action that applies a curated flow.yaml to the canonical Smoke collection.
+description: Public customer preview GitHub Action that applies a curated flow.yaml or Smoke-only auth updates to the canonical Smoke collection.
 inputs:
   project-name:
     description: Service project name used for temporary smoke collection naming.
@@ -14,8 +14,8 @@ inputs:
     description: Canonical Smoke collection ID to refresh in place.
     required: true
   flow-path:
-    description: Repo-root-relative path to the curated flow.yaml manifest.
-    required: true
+    description: Optional repo-root-relative path to the curated flow.yaml manifest. When omitted, OAuth config can still be applied to the existing Smoke collection.
+    required: false
   postman-api-key:
     description: Postman API key used for collection generation and mutation.
     required: true

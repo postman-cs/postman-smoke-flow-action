@@ -4,7 +4,7 @@ export const customerPreviewActionContract = {
     'workspace-id': { required: true },
     'spec-id': { required: true },
     'smoke-collection-id': { required: true },
-    'flow-path': { required: true },
+    'flow-path': { required: false },
     'postman-api-key': { required: true },
     'auth-config-json': { required: false },
     'secrets-resolver-enabled': { required: false, default: 'true' },

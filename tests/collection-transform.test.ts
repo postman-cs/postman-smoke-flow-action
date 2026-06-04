@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildCuratedSmokeCollection } from '../src/postman/collection-transform.js';
-import type { FlowDefinition, ResolvedRequest } from '../src/types.js';
+import { applySmokeCollectionAuth, buildCuratedSmokeCollection } from '../src/postman/collection-transform.js';
+import type { FlowDefinition, ResolvedRequest, SmokeAuthConfig } from '../src/types.js';
 
 const flow: FlowDefinition = {
   name: 'Payments API happy path',
@@ -27,6 +27,32 @@ const flow: FlowDefinition = {
       extract: []
     }
   ]
+};
+
+const oauthConfig: SmokeAuthConfig = {
+  enabled: true,
+  type: 'oauth2',
+  grantType: 'client_credentials',
+  tokenUrl: '{{auth_token_url}}',
+  clientAuthentication: 'body',
+  request: {
+    contentType: 'application/x-www-form-urlencoded'
+  },
+  variables: {
+    tokenUrl: 'auth_token_url',
+    scope: 'auth_scope',
+    clientId: 'auth_client_id',
+    clientSecret: 'auth_client_secret',
+    accessToken: 'access_token',
+    expiresAt: 'access_token_expires_at'
+  },
+  cache: {
+    refreshSkewSeconds: 60
+  },
+  apply: {
+    header: 'Authorization',
+    value: 'Bearer {{access_token}}'
+  }
 };
 
 describe('collection transform', () => {
@@ -291,31 +317,7 @@ describe('collection transform', () => {
           }
         }
       ],
-      {
-        enabled: true,
-        type: 'oauth2',
-        grantType: 'client_credentials',
-        tokenUrl: '{{auth_token_url}}',
-        clientAuthentication: 'body',
-        request: {
-          contentType: 'application/x-www-form-urlencoded'
-        },
-        variables: {
-          tokenUrl: 'auth_token_url',
-          scope: 'auth_scope',
-          clientId: 'auth_client_id',
-          clientSecret: 'auth_client_secret',
-          accessToken: 'access_token',
-          expiresAt: 'access_token_expires_at'
-        },
-        cache: {
-          refreshSkewSeconds: 60
-        },
-        apply: {
-          header: 'Authorization',
-          value: 'Bearer {{access_token}}'
-        }
-      }
+      oauthConfig
     );
 
     const collectionText = JSON.stringify(result.collection);
@@ -345,5 +347,90 @@ describe('collection transform', () => {
     });
     expect(collectionText).not.toContain('super-secret');
     expect(collectionText).not.toContain('real-access-token');
+  });
+
+  it('applies OAuth to an existing Smoke collection idempotently without changing item order', () => {
+    const existingCollection = {
+      info: { name: '[Smoke] Providers API', _postman_id: 'info-123' },
+      uid: '54270406-collection-uid-123',
+      event: [
+        {
+          listen: 'prerequest',
+          script: {
+            type: 'text/javascript',
+            exec: ['// Existing manual collection script']
+          }
+        },
+        {
+          listen: 'prerequest',
+          script: {
+            type: 'text/javascript',
+            exec: ['// [Smoke Flow] Auto-generated OAuth2 client-credentials token cache.', '// old generated script']
+          }
+        }
+      ],
+      item: [
+        {
+          name: '00 - Resolve Secrets',
+          request: {
+            auth: { type: 'awsv4' },
+            method: 'POST',
+            url: 'https://secretsmanager.us-west-2.amazonaws.com'
+          }
+        },
+        {
+          name: 'Providers',
+          item: [
+            {
+              name: 'searchProviders',
+              request: {
+                method: 'GET',
+                header: [{ key: 'Authorization', value: 'Bearer old-token' }],
+                url: '{{baseUrl}}/v1/providers'
+              }
+            },
+            {
+              name: 'getProvider',
+              request: {
+                method: 'GET',
+                url: '{{baseUrl}}/v1/providers/{{providerId}}'
+              }
+            }
+          ]
+        }
+      ],
+      response: [{ id: 'resp-123' }]
+    };
+
+    const once = applySmokeCollectionAuth(existingCollection, oauthConfig);
+    const twice = applySmokeCollectionAuth(once.collection, oauthConfig);
+    const collectionText = JSON.stringify(twice.collection);
+    const events = twice.collection.event as Array<Record<string, unknown>>;
+    const items = twice.collection.item as Array<Record<string, unknown>>;
+    const folderItems = items[1]?.item as Array<Record<string, unknown>>;
+    const resolverRequest = items[0]?.request as Record<string, unknown>;
+    const firstSmokeRequest = folderItems[0]?.request as Record<string, unknown>;
+    const secondSmokeRequest = folderItems[1]?.request as Record<string, unknown>;
+
+    expect(twice.authRequestCount).toBe(2);
+    expect((twice.collection.info as Record<string, unknown>)._postman_id).toBeUndefined();
+    expect((twice.collection as Record<string, unknown>).uid).toBeUndefined();
+    expect((twice.collection as Record<string, unknown>).response).toBeUndefined();
+    expect(items.map((item) => item.name)).toEqual(['00 - Resolve Secrets', 'Providers']);
+    expect(folderItems.map((item) => item.name)).toEqual(['searchProviders', 'getProvider']);
+    expect(resolverRequest.auth).toEqual({ type: 'awsv4' });
+    expect(firstSmokeRequest.auth).toEqual({
+      type: 'bearer',
+      bearer: [{ key: 'token', value: '{{access_token}}', type: 'string' }]
+    });
+    expect(secondSmokeRequest.auth).toEqual({
+      type: 'bearer',
+      bearer: [{ key: 'token', value: '{{access_token}}', type: 'string' }]
+    });
+    expect(firstSmokeRequest.header).toEqual([]);
+    expect(events).toHaveLength(2);
+    expect(collectionText.match(/Auto-generated OAuth2 client-credentials token cache/g) ?? []).toHaveLength(1);
+    expect(collectionText).toContain('Existing manual collection script');
+    expect(collectionText).not.toContain('old generated script');
   });
 });

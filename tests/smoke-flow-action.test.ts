@@ -5,7 +5,23 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { runSmokeFlow } from '../src/index.js';
-import type { ActionInputs, CoreLike } from '../src/types.js';
+import type { ActionInputs, CoreLike, SmokeAuthConfig } from '../src/types.js';
+
+const oauthConfig: SmokeAuthConfig = {
+  enabled: true,
+  type: 'oauth2',
+  grantType: 'client_credentials',
+  tokenUrl: '{{auth_token_url}}',
+  clientAuthentication: 'body',
+  variables: {
+    tokenUrl: 'auth_token_url',
+    scope: 'auth_scope',
+    clientId: 'auth_client_id',
+    clientSecret: 'auth_client_secret',
+    accessToken: 'access_token',
+    expiresAt: 'access_token_expires_at'
+  }
+};
 
 function createInputs(tempDir: string): ActionInputs {
   writeFileSync(
@@ -126,6 +142,114 @@ describe('runSmokeFlow', () => {
       }, { core, postman })).rejects.toThrow('collection-sync-mode=refresh is the only supported mode');
       expect(postman.generateCollection).not.toHaveBeenCalled();
       expect(postman.updateCollection).not.toHaveBeenCalled();
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('applies OAuth to the existing Smoke collection when flow-path is omitted', async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-'));
+    const previousCwd = process.cwd();
+    process.chdir(tempDir);
+
+    const core: CoreLike = {
+      setOutput: vi.fn(),
+      info: vi.fn(),
+      warning: vi.fn(),
+      setFailed: vi.fn()
+    };
+
+    const postman = {
+      generateCollection: vi.fn(),
+      getCollection: vi.fn().mockResolvedValue({
+        info: { name: '[Smoke] payments' },
+        item: [
+          {
+            name: 'Payments',
+            item: [
+              {
+                name: 'createPayment',
+                request: {
+                  method: 'POST',
+                  header: [{ key: 'Authorization', value: 'Bearer old-token' }],
+                  url: 'https://api.example.com/payments'
+                }
+              }
+            ]
+          }
+        ]
+      }),
+      updateCollection: vi.fn().mockResolvedValue(undefined),
+      deleteCollection: vi.fn()
+    };
+
+    try {
+      const outputs = await runSmokeFlow({
+        ...createInputs(tempDir),
+        flowPath: undefined,
+        authConfig: oauthConfig
+      }, { core, postman });
+      const summary = JSON.parse(outputs['flow-apply-summary-json']) as Record<string, unknown>;
+      const updatedCollection = postman.updateCollection.mock.calls[0]?.[1] as Record<string, unknown>;
+      const items = updatedCollection.item as Array<Record<string, unknown>>;
+      const nestedItems = items[0]?.item as Array<Record<string, unknown>>;
+      const request = nestedItems[0]?.request as Record<string, unknown>;
+
+      expect(outputs['smoke-collection-id']).toBe('col-smoke');
+      expect(outputs['flow-apply-status']).toBe('skipped');
+      expect(outputs['temporary-smoke-collection-id']).toBe('');
+      expect(summary.authApplied).toBe(true);
+      expect(summary.authRequestCount).toBe(1);
+      expect(postman.generateCollection).not.toHaveBeenCalled();
+      expect(postman.getCollection).toHaveBeenCalledWith('col-smoke');
+      expect(postman.updateCollection).toHaveBeenCalledOnce();
+      expect(postman.deleteCollection).not.toHaveBeenCalled();
+      expect(request.auth).toEqual({
+        type: 'bearer',
+        bearer: [{ key: 'token', value: '{{access_token}}', type: 'string' }]
+      });
+      expect(request.header).toEqual([]);
+      expect(JSON.stringify(updatedCollection)).toContain('Auto-generated OAuth2 client-credentials token cache');
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips without Postman mutation when flow-path is omitted and OAuth is disabled', async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-'));
+    const previousCwd = process.cwd();
+    process.chdir(tempDir);
+
+    const core: CoreLike = {
+      setOutput: vi.fn(),
+      info: vi.fn(),
+      warning: vi.fn(),
+      setFailed: vi.fn()
+    };
+
+    const postman = {
+      generateCollection: vi.fn(),
+      getCollection: vi.fn(),
+      updateCollection: vi.fn(),
+      deleteCollection: vi.fn()
+    };
+
+    try {
+      const outputs = await runSmokeFlow({
+        ...createInputs(tempDir),
+        flowPath: undefined,
+        authConfig: undefined
+      }, { core, postman });
+      const summary = JSON.parse(outputs['flow-apply-summary-json']) as Record<string, unknown>;
+
+      expect(outputs['flow-apply-status']).toBe('skipped');
+      expect(summary.authApplied).toBe(false);
+      expect(postman.generateCollection).not.toHaveBeenCalled();
+      expect(postman.getCollection).not.toHaveBeenCalled();
+      expect(postman.updateCollection).not.toHaveBeenCalled();
+      expect(postman.deleteCollection).not.toHaveBeenCalled();
     } finally {
       process.chdir(previousCwd);
       rmSync(tempDir, { recursive: true, force: true });

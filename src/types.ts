@@ -42,7 +42,7 @@ export type ActionInputs = {
   workspaceId: string;
   specId: string;
   smokeCollectionId: string;
-  flowPath: string;
+  flowPath?: string;
   postmanApiKey: string;
   authConfig?: SmokeAuthConfig;
   secretsResolverEnabled: boolean;
@@ -95,6 +95,8 @@ export type FlowApplySummary = {
   status: 'success' | 'failed' | 'skipped';
   temporaryCollectionId?: string;
   canonicalSmokeCollectionId: string;
+  authApplied?: boolean;
+  authRequestCount?: number;
   stepCount: number;
   resolvedOperationCount: number;
   appliedBindingCount: number;

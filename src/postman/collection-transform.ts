@@ -9,6 +9,9 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 
+const GENERATED_OAUTH_EVENT_MARKER = '[Smoke Flow] Auto-generated OAuth2 client-credentials token cache';
+const LEGACY_SECRETS_RESOLVER_ITEM_NAME = '00 - Resolve Secrets';
+
 function asRecord(value: unknown): JsonRecord | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : null;
 }
@@ -232,12 +235,13 @@ function setRequestBearerAuth(request: JsonRecord, authConfig: SmokeAuthConfig):
   removeHeader(request, authConfig.apply?.header || 'Authorization');
 }
 
-function applyAuthToRequest(request: JsonRecord, authConfig: SmokeAuthConfig | undefined): void {
+function applyAuthToRequest(request: JsonRecord, authConfig: SmokeAuthConfig | undefined): boolean {
   if (!authConfig?.enabled) {
-    return;
+    return false;
   }
 
   setRequestBearerAuth(request, authConfig);
+  return true;
 }
 
 function upsertCollectionVariable(collection: JsonRecord, key: string, value = ''): void {
@@ -268,6 +272,22 @@ function seedOAuthCollectionVariables(collection: JsonRecord, authConfig: SmokeA
   upsertCollectionVariable(collection, variables.expiresAt);
 }
 
+function getScriptExecText(event: JsonRecord): string {
+  const script = asRecord(event.script);
+  const exec = script?.exec;
+  if (Array.isArray(exec)) {
+    return exec.map((line) => String(line)).join('\n');
+  }
+  if (typeof exec === 'string') {
+    return exec;
+  }
+  return '';
+}
+
+function isGeneratedOAuthEvent(event: JsonRecord): boolean {
+  return event.listen === 'prerequest' && getScriptExecText(event).includes(GENERATED_OAUTH_EVENT_MARKER);
+}
+
 function applyCollectionAuth(collection: JsonRecord, authConfig: SmokeAuthConfig | undefined): void {
   if (!authConfig?.enabled) {
     return;
@@ -278,9 +298,32 @@ function applyCollectionAuth(collection: JsonRecord, authConfig: SmokeAuthConfig
   collection.event = [
     ...existingEvents
       .map((entry) => asRecord(entry))
-      .filter((entry): entry is JsonRecord => Boolean(entry)),
+      .filter((entry): entry is JsonRecord => Boolean(entry))
+      .filter((entry) => !isGeneratedOAuthEvent(entry)),
     createOAuthPreRequestEvent(authConfig)
   ];
+}
+
+function applyAuthToCollectionItems(items: unknown, authConfig: SmokeAuthConfig): number {
+  if (!Array.isArray(items)) {
+    return 0;
+  }
+
+  return items.reduce((count, entry) => {
+    const item = asRecord(entry);
+    if (!item) {
+      return count;
+    }
+
+    let nextCount = count;
+    const request = asRecord(item.request);
+    const itemName = typeof item.name === 'string' ? item.name : '';
+    if (request && itemName !== LEGACY_SECRETS_RESOLVER_ITEM_NAME && applyAuthToRequest(request, authConfig)) {
+      nextCount += 1;
+    }
+
+    return nextCount + applyAuthToCollectionItems(item.item, authConfig);
+  }, 0);
 }
 
 function curateRequestItem(resolved: ResolvedRequest, authConfig?: SmokeAuthConfig): JsonRecord {
@@ -294,6 +337,19 @@ function curateRequestItem(resolved: ResolvedRequest, authConfig?: SmokeAuthConf
   }
   applyFlowScripts(item, resolved.step);
   return item;
+}
+
+export function applySmokeCollectionAuth(
+  existingCollection: JsonRecord,
+  authConfig: SmokeAuthConfig
+): { collection: JsonRecord; authRequestCount: number } {
+  const collection = sanitizeForCollectionUpdate(structuredClone(existingCollection)) as JsonRecord;
+  applyCollectionAuth(collection, authConfig);
+  const authRequestCount = applyAuthToCollectionItems(collection.item, authConfig);
+  return {
+    collection: sanitizeForCollectionUpdate(collection) as JsonRecord,
+    authRequestCount
+  };
 }
 
 export function buildCuratedSmokeCollection(
