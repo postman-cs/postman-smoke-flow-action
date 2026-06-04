@@ -8,13 +8,36 @@ import { resolveFlowRequests } from './flow/resolver.js';
 import { validateFlowManifest } from './flow/validator.js';
 import { summarizeError } from './lib/logging.js';
 import type { ActionInputs, ActionOutputs, CoreLike, FlowApplySummary, SmokeAuthConfig } from './types.js';
-import { applySmokeCollectionAuth, buildCuratedSmokeCollection } from './postman/collection-transform.js';
+import {
+  applySmokeCollectionAuth,
+  buildCuratedSmokeCollection,
+  verifyCuratedSmokeCollection,
+  verifySmokeCollectionAuth,
+  type CollectionVerification
+} from './postman/collection-transform.js';
 import { PostmanSmokeClient } from './postman/postman-smoke-client.js';
+
+type JsonRecord = Record<string, unknown>;
 
 type SmokeFlowDependencies = {
   core: CoreLike;
   postman: Pick<PostmanSmokeClient, 'generateCollection' | 'getCollection' | 'updateCollection' | 'deleteCollection'>;
+  sleep?: (ms: number) => Promise<void>;
 };
+
+const STABLE_COLLECTION_UPDATE_MAX_ATTEMPTS = 6;
+const STABLE_COLLECTION_UPDATE_VERIFY_COUNT = 3;
+const STABLE_COLLECTION_UPDATE_VERIFY_DELAY_MS = 5000;
+
+type CollectionTransformResult = {
+  collection: JsonRecord;
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 function parseBooleanInput(value: string | undefined, defaultValue: boolean): boolean {
   if (value === undefined || value === '') {
@@ -101,6 +124,89 @@ function writeDebugDump(debugDumpPath: string | undefined, collection: unknown, 
   actionCore.info(`Wrote transformed collection debug dump to ${resolvedPath}`);
 }
 
+async function verifyCanonicalCollectionIsStable(
+  collectionId: string,
+  dependencies: SmokeFlowDependencies,
+  verifyCollection: (collection: JsonRecord) => CollectionVerification
+): Promise<{ stable: boolean; latestCollection: JsonRecord; verification: CollectionVerification }> {
+  const sleepImpl = dependencies.sleep ?? sleep;
+  let latestCollection: JsonRecord | undefined;
+  let latestVerification: CollectionVerification = {
+    ok: false,
+    summary: 'collection was not verified'
+  };
+
+  for (let checkIndex = 0; checkIndex < STABLE_COLLECTION_UPDATE_VERIFY_COUNT; checkIndex += 1) {
+    await sleepImpl(STABLE_COLLECTION_UPDATE_VERIFY_DELAY_MS);
+    latestCollection = await dependencies.postman.getCollection(collectionId);
+    latestVerification = verifyCollection(latestCollection);
+    if (!latestVerification.ok) {
+      return {
+        stable: false,
+        latestCollection,
+        verification: latestVerification
+      };
+    }
+  }
+
+  if (!latestCollection) {
+    latestCollection = await dependencies.postman.getCollection(collectionId);
+    latestVerification = verifyCollection(latestCollection);
+  }
+
+  return {
+    stable: latestVerification.ok,
+    latestCollection,
+    verification: latestVerification
+  };
+}
+
+async function updateCanonicalCollectionUntilStable<T extends CollectionTransformResult>(options: {
+  inputs: ActionInputs;
+  dependencies: SmokeFlowDependencies;
+  initialSourceCollection: JsonRecord;
+  buildCollection: (sourceCollection: JsonRecord) => T;
+  verifyCollection: (collection: JsonRecord) => CollectionVerification;
+}): Promise<T> {
+  let sourceCollection = options.initialSourceCollection;
+  let latestVerification: CollectionVerification = {
+    ok: false,
+    summary: 'collection was not verified'
+  };
+
+  for (let attempt = 1; attempt <= STABLE_COLLECTION_UPDATE_MAX_ATTEMPTS; attempt += 1) {
+    const transformed = options.buildCollection(sourceCollection);
+    writeDebugDump(options.inputs.debugDumpPath, transformed.collection, options.dependencies.core);
+    await options.dependencies.postman.updateCollection(options.inputs.smokeCollectionId, transformed.collection);
+
+    const stability = await verifyCanonicalCollectionIsStable(
+      options.inputs.smokeCollectionId,
+      options.dependencies,
+      options.verifyCollection
+    );
+    latestVerification = stability.verification;
+    if (stability.stable) {
+      if (attempt > 1) {
+        options.dependencies.core.info(
+          `Canonical Smoke collection update persisted after ${attempt} attempt(s): ${latestVerification.summary}.`
+        );
+      }
+      return transformed;
+    }
+
+    sourceCollection = stability.latestCollection;
+    if (attempt < STABLE_COLLECTION_UPDATE_MAX_ATTEMPTS) {
+      options.dependencies.core.warning(
+        `Canonical Smoke collection update was not stable after attempt ${attempt}: ${latestVerification.summary}. Reapplying to the latest collection.`
+      );
+    }
+  }
+
+  throw new Error(
+    `Canonical Smoke collection update did not persist after ${STABLE_COLLECTION_UPDATE_MAX_ATTEMPTS} attempt(s): ${latestVerification.summary}.`
+  );
+}
+
 function ensureRequiredInputs(inputs: ActionInputs): void {
   for (const [name, details] of Object.entries(customerPreviewActionContract.inputs)) {
     if (details.required) {
@@ -149,11 +255,19 @@ async function runWithoutFlowManifest(
   }
 
   const existingCollection = await dependencies.postman.getCollection(inputs.smokeCollectionId);
-  const transformed = applySmokeCollectionAuth(existingCollection, inputs.authConfig, {
-    secretsResolverEnabled: inputs.secretsResolverEnabled
+  const transformed = await updateCanonicalCollectionUntilStable({
+    inputs,
+    dependencies,
+    initialSourceCollection: existingCollection,
+    buildCollection: (sourceCollection) =>
+      applySmokeCollectionAuth(sourceCollection, inputs.authConfig!, {
+        secretsResolverEnabled: inputs.secretsResolverEnabled
+      }),
+    verifyCollection: (collection) =>
+      verifySmokeCollectionAuth(collection, inputs.authConfig!, {
+        secretsResolverEnabled: inputs.secretsResolverEnabled
+      })
   });
-  writeDebugDump(inputs.debugDumpPath, transformed.collection, dependencies.core);
-  await dependencies.postman.updateCollection(inputs.smokeCollectionId, transformed.collection);
   dependencies.core.info(
     `Updated canonical Smoke collection ${inputs.smokeCollectionId} with Smoke OAuth auth on ${transformed.authRequestCount} request(s).`
   );
@@ -203,17 +317,28 @@ export async function runSmokeFlow(
     dependencies.core.info(`Generated temporary Smoke collection ${tempCollectionId}`);
 
     const generatedCollection = await dependencies.postman.getCollection(tempCollectionId);
-    const resolvedRequests = resolveFlowRequests(flow, generatedCollection, inputs.specPath);
-    const transformed = buildCuratedSmokeCollection(
-      generatedCollection,
-      flow,
-      resolvedRequests,
-      inputs.authConfig,
-      inputs.secretsResolverEnabled
-    );
-    writeDebugDump(inputs.debugDumpPath, transformed.collection, dependencies.core);
-    await dependencies.postman.updateCollection(inputs.smokeCollectionId, transformed.collection);
+    const transformed = await updateCanonicalCollectionUntilStable({
+      inputs,
+      dependencies,
+      initialSourceCollection: generatedCollection,
+      buildCollection: (sourceCollection) => {
+        const resolvedRequests = resolveFlowRequests(flow, sourceCollection, inputs.specPath);
+        return buildCuratedSmokeCollection(
+          sourceCollection,
+          flow,
+          resolvedRequests,
+          inputs.authConfig,
+          inputs.secretsResolverEnabled
+        );
+      },
+      verifyCollection: (collection) =>
+        verifyCuratedSmokeCollection(collection, flow, inputs.authConfig, {
+          secretsResolverEnabled: inputs.secretsResolverEnabled
+        })
+    });
     dependencies.core.info(`Updated canonical Smoke collection ${inputs.smokeCollectionId} from curated flow.`);
+
+    const resolvedRequests = resolveFlowRequests(flow, generatedCollection, inputs.specPath);
 
     const summary: FlowApplySummary = {
       flowName: flow.name,
