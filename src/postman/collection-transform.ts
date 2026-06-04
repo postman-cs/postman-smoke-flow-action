@@ -8,6 +8,10 @@ import {
 } from './scripts.js';
 
 type JsonRecord = Record<string, unknown>;
+export type CollectionVerification = {
+  ok: boolean;
+  summary: string;
+};
 
 const GENERATED_OAUTH_EVENT_MARKER = '[Smoke Flow] Auto-generated OAuth2 client-credentials token cache';
 const LEGACY_SECRETS_RESOLVER_ITEM_NAME = '00 - Resolve Secrets';
@@ -389,6 +393,164 @@ function removeSecretsResolverItems(items: unknown): unknown {
       const item = asRecord(entry);
       return !item || !isSecretsResolverItem(item);
     });
+}
+
+function containsSecretsResolverItem(items: unknown): boolean {
+  if (!Array.isArray(items)) {
+    return false;
+  }
+
+  return items.some((entry) => {
+    const item = asRecord(entry);
+    if (!item) {
+      return false;
+    }
+    return isSecretsResolverItem(item) || containsSecretsResolverItem(item.item);
+  });
+}
+
+function hasGeneratedOAuthEvent(collection: JsonRecord): boolean {
+  const events = Array.isArray(collection.event) ? collection.event : [];
+  return events
+    .map((entry) => asRecord(entry))
+    .filter((entry): entry is JsonRecord => Boolean(entry))
+    .some((entry) => isGeneratedOAuthEvent(entry));
+}
+
+function getCollectionVariableKeys(collection: JsonRecord): Set<string> {
+  const variables = Array.isArray(collection.variable) ? collection.variable : [];
+  return new Set(
+    variables
+      .map((entry) => asRecord(entry))
+      .filter((entry): entry is JsonRecord => Boolean(entry))
+      .map((entry) => String(entry.key ?? ''))
+      .filter(Boolean)
+  );
+}
+
+function requestUsesBearerAuth(request: JsonRecord, accessTokenVariable: string): boolean {
+  const auth = asRecord(request.auth);
+  if (!auth || auth.type !== 'bearer') {
+    return false;
+  }
+  const bearer = Array.isArray(auth.bearer) ? auth.bearer : [];
+  return bearer
+    .map((entry) => asRecord(entry))
+    .filter((entry): entry is JsonRecord => Boolean(entry))
+    .some((entry) => entry.key === 'token' && entry.value === `{{${accessTokenVariable}}}`);
+}
+
+function countBearerAuthRequests(items: unknown, authConfig: SmokeAuthConfig): number {
+  if (!Array.isArray(items)) {
+    return 0;
+  }
+
+  const variables = getAuthVariableNames(authConfig);
+  return items.reduce((count, entry) => {
+    const item = asRecord(entry);
+    if (!item) {
+      return count;
+    }
+
+    let nextCount = count;
+    const request = asRecord(item.request);
+    if (request && !isSecretsResolverItem(item) && requestUsesBearerAuth(request, variables.accessToken)) {
+      nextCount += 1;
+    }
+    return nextCount + countBearerAuthRequests(item.item, authConfig);
+  }, 0);
+}
+
+function getTopLevelItems(collection: JsonRecord): JsonRecord[] {
+  return Array.isArray(collection.item)
+    ? collection.item
+        .map((entry) => asRecord(entry))
+        .filter((entry): entry is JsonRecord => Boolean(entry))
+    : [];
+}
+
+function hasFlowRequestScripts(item: JsonRecord): boolean {
+  const events = Array.isArray(item.event)
+    ? item.event.map((entry) => asRecord(entry)).filter((entry): entry is JsonRecord => Boolean(entry))
+    : [];
+  return events.some((entry) => entry.listen === 'prerequest') && events.some((entry) => entry.listen === 'test');
+}
+
+export function verifySmokeCollectionAuth(
+  collection: JsonRecord,
+  authConfig: SmokeAuthConfig,
+  options: { secretsResolverEnabled?: boolean } = {}
+): CollectionVerification {
+  const variables = getAuthVariableNames(authConfig);
+  const variableKeys = getCollectionVariableKeys(collection);
+  const missingVariables = Object.values(variables).filter((variableName) => !variableKeys.has(variableName));
+  const bearerAuthRequestCount = countBearerAuthRequests(collection.item, authConfig);
+  const failures: string[] = [];
+
+  if (!hasGeneratedOAuthEvent(collection)) {
+    failures.push('missing generated OAuth pre-request script');
+  }
+  if (missingVariables.length > 0) {
+    failures.push(`missing OAuth collection variable(s): ${missingVariables.join(', ')}`);
+  }
+  if (bearerAuthRequestCount === 0) {
+    failures.push('no requests use generated bearer auth');
+  }
+  if (options.secretsResolverEnabled === false && containsSecretsResolverItem(collection.item)) {
+    failures.push('secrets resolver request is still present');
+  }
+
+  return {
+    ok: failures.length === 0,
+    summary: failures.length > 0 ? failures.join('; ') : `OAuth persisted on ${bearerAuthRequestCount} request(s)`
+  };
+}
+
+export function verifyCuratedSmokeCollection(
+  collection: JsonRecord,
+  flow: FlowDefinition,
+  authConfig: SmokeAuthConfig | undefined,
+  options: { secretsResolverEnabled?: boolean } = {}
+): CollectionVerification {
+  const topLevelItems = getTopLevelItems(collection);
+  const requestItems = topLevelItems.filter((item) => asRecord(item.request) && !isSecretsResolverItem(item));
+  const requestNames = requestItems.map((item) => String(item.name ?? ''));
+  const expectedRequestNames = flow.steps.map((step) => step.name?.trim() || step.operationId);
+  const missingRequests = expectedRequestNames.filter((name) => !requestNames.includes(name));
+  const requestsMissingScripts = requestItems
+    .filter((item) => expectedRequestNames.includes(String(item.name ?? '')) && !hasFlowRequestScripts(item))
+    .map((item) => String(item.name ?? ''));
+  const failures: string[] = [];
+
+  if (requestItems.length !== expectedRequestNames.length) {
+    failures.push(`expected ${expectedRequestNames.length} curated request(s), found ${requestItems.length}`);
+  }
+  if (missingRequests.length > 0) {
+    failures.push(`missing curated request(s): ${missingRequests.join(', ')}`);
+  }
+  if (requestsMissingScripts.length > 0) {
+    failures.push(`missing flow script(s): ${requestsMissingScripts.join(', ')}`);
+  }
+
+  const hasSecretsResolver = containsSecretsResolverItem(collection.item);
+  if (options.secretsResolverEnabled === false && hasSecretsResolver) {
+    failures.push('secrets resolver request is still present');
+  }
+  if (options.secretsResolverEnabled !== false && !hasSecretsResolver) {
+    failures.push('secrets resolver request is missing');
+  }
+
+  if (authConfig?.enabled) {
+    const authVerification = verifySmokeCollectionAuth(collection, authConfig, options);
+    if (!authVerification.ok) {
+      failures.push(authVerification.summary);
+    }
+  }
+
+  return {
+    ok: failures.length === 0,
+    summary: failures.length > 0 ? failures.join('; ') : `curated flow persisted with ${requestItems.length} request(s)`
+  };
 }
 
 function curateRequestItem(resolved: ResolvedRequest, authConfig?: SmokeAuthConfig): JsonRecord {

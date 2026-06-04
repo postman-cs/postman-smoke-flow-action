@@ -72,6 +72,58 @@ function createInputs(tempDir: string): ActionInputs {
   };
 }
 
+function clone<T>(value: T): T {
+  return structuredClone(value);
+}
+
+function createFlowPostmanMock(generatedCollection: Record<string, unknown>, options: { overwriteFirstUpdate?: boolean } = {}) {
+  let canonicalCollection = clone(generatedCollection);
+  let shouldOverwriteFirstUpdate = Boolean(options.overwriteFirstUpdate);
+
+  return {
+    generateCollection: vi.fn().mockResolvedValue('temp-123'),
+    getCollection: vi.fn(async (collectionId: string) =>
+      collectionId === 'temp-123' ? clone(generatedCollection) : clone(canonicalCollection)
+    ),
+    updateCollection: vi.fn(async (_collectionId: string, collection: Record<string, unknown>) => {
+      if (shouldOverwriteFirstUpdate) {
+        shouldOverwriteFirstUpdate = false;
+        canonicalCollection = clone(generatedCollection);
+        return;
+      }
+      canonicalCollection = clone(collection);
+    }),
+    deleteCollection: vi.fn().mockResolvedValue(undefined)
+  };
+}
+
+function createCanonicalPostmanMock(existingCollection: Record<string, unknown>, options: { overwriteFirstUpdate?: boolean } = {}) {
+  let canonicalCollection = clone(existingCollection);
+  let shouldOverwriteFirstUpdate = Boolean(options.overwriteFirstUpdate);
+
+  return {
+    generateCollection: vi.fn(),
+    getCollection: vi.fn(async () => clone(canonicalCollection)),
+    updateCollection: vi.fn(async (_collectionId: string, collection: Record<string, unknown>) => {
+      if (shouldOverwriteFirstUpdate) {
+        shouldOverwriteFirstUpdate = false;
+        canonicalCollection = clone(existingCollection);
+        return;
+      }
+      canonicalCollection = clone(collection);
+    }),
+    deleteCollection: vi.fn()
+  };
+}
+
+function createDependencies(core: CoreLike, postman: ReturnType<typeof createFlowPostmanMock> | ReturnType<typeof createCanonicalPostmanMock>) {
+  return {
+    core,
+    postman,
+    sleep: vi.fn().mockResolvedValue(undefined)
+  };
+}
+
 describe('runSmokeFlow', () => {
   it('generates a temp collection, refreshes the canonical smoke collection, and cleans up', async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-'));
@@ -85,26 +137,21 @@ describe('runSmokeFlow', () => {
       setFailed: vi.fn()
     };
 
-    const postman = {
-      generateCollection: vi.fn().mockResolvedValue('temp-123'),
-      getCollection: vi.fn().mockResolvedValue({
-        info: { name: '[Smoke][Temp] payments' },
-        item: [
-          {
-            name: 'createPayment',
-            request: {
-              method: 'POST',
-              url: 'https://api.example.com/payments'
-            }
+    const postman = createFlowPostmanMock({
+      info: { name: '[Smoke][Temp] payments' },
+      item: [
+        {
+          name: 'createPayment',
+          request: {
+            method: 'POST',
+            url: 'https://api.example.com/payments'
           }
-        ]
-      }),
-      updateCollection: vi.fn().mockResolvedValue(undefined),
-      deleteCollection: vi.fn().mockResolvedValue(undefined)
-    };
+        }
+      ]
+    });
 
     try {
-      const outputs = await runSmokeFlow(createInputs(tempDir), { core, postman });
+      const outputs = await runSmokeFlow(createInputs(tempDir), createDependencies(core, postman));
       expect(outputs['smoke-collection-id']).toBe('col-smoke');
       expect(outputs['flow-apply-status']).toBe('success');
       expect(postman.generateCollection).toHaveBeenCalledOnce();
@@ -160,36 +207,31 @@ describe('runSmokeFlow', () => {
       setFailed: vi.fn()
     };
 
-    const postman = {
-      generateCollection: vi.fn(),
-      getCollection: vi.fn().mockResolvedValue({
-        info: { name: '[Smoke] payments' },
-        item: [
-          {
-            name: 'Payments',
-            item: [
-              {
-                name: 'createPayment',
-                request: {
-                  method: 'POST',
-                  header: [{ key: 'Authorization', value: 'Bearer old-token' }],
-                  url: 'https://api.example.com/payments'
-                }
-              },
-              {
-                name: '00 - Resolve Secrets',
-                request: {
-                  method: 'POST',
-                  url: 'https://secretsmanager.us-west-2.amazonaws.com'
-                }
+    const postman = createCanonicalPostmanMock({
+      info: { name: '[Smoke] payments' },
+      item: [
+        {
+          name: 'Payments',
+          item: [
+            {
+              name: 'createPayment',
+              request: {
+                method: 'POST',
+                header: [{ key: 'Authorization', value: 'Bearer old-token' }],
+                url: 'https://api.example.com/payments'
               }
-            ]
-          }
-        ]
-      }),
-      updateCollection: vi.fn().mockResolvedValue(undefined),
-      deleteCollection: vi.fn()
-    };
+            },
+            {
+              name: '00 - Resolve Secrets',
+              request: {
+                method: 'POST',
+                url: 'https://secretsmanager.us-west-2.amazonaws.com'
+              }
+            }
+          ]
+        }
+      ]
+    });
 
     try {
       const outputs = await runSmokeFlow({
@@ -197,7 +239,7 @@ describe('runSmokeFlow', () => {
         flowPath: undefined,
         secretsResolverEnabled: false,
         authConfig: oauthConfig
-      }, { core, postman });
+      }, createDependencies(core, postman));
       const summary = JSON.parse(outputs['flow-apply-summary-json']) as Record<string, unknown>;
       const updatedCollection = postman.updateCollection.mock.calls[0]?.[1] as Record<string, unknown>;
       const items = updatedCollection.item as Array<Record<string, unknown>>;
@@ -220,6 +262,51 @@ describe('runSmokeFlow', () => {
       expect(request.header).toEqual([]);
       expect(JSON.stringify(updatedCollection)).toContain('Auto-generated OAuth2 client-credentials token cache');
       expect(JSON.stringify(updatedCollection)).not.toContain('00 - Resolve Secrets');
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reapplies OAuth when a pending linked sync overwrites the first auth-only update', async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-'));
+    const previousCwd = process.cwd();
+    process.chdir(tempDir);
+
+    const core: CoreLike = {
+      setOutput: vi.fn(),
+      info: vi.fn(),
+      warning: vi.fn(),
+      setFailed: vi.fn()
+    };
+
+    const postman = createCanonicalPostmanMock({
+      info: { name: '[Smoke] payments' },
+      item: [
+        {
+          name: 'createPayment',
+          request: {
+            method: 'POST',
+            header: [{ key: 'Authorization', value: 'Bearer old-token' }],
+            url: 'https://api.example.com/payments'
+          }
+        }
+      ]
+    }, { overwriteFirstUpdate: true });
+
+    try {
+      const outputs = await runSmokeFlow({
+        ...createInputs(tempDir),
+        flowPath: undefined,
+        authConfig: oauthConfig
+      }, createDependencies(core, postman));
+      const finalCollection = postman.updateCollection.mock.calls[1]?.[1] as Record<string, unknown>;
+
+      expect(outputs['flow-apply-status']).toBe('skipped');
+      expect(postman.updateCollection).toHaveBeenCalledTimes(2);
+      expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('Canonical Smoke collection update was not stable'));
+      expect(core.info).toHaveBeenCalledWith(expect.stringContaining('persisted after 2 attempt'));
+      expect(JSON.stringify(finalCollection)).toContain('Auto-generated OAuth2 client-credentials token cache');
     } finally {
       process.chdir(previousCwd);
       rmSync(tempDir, { recursive: true, force: true });
@@ -265,6 +352,51 @@ describe('runSmokeFlow', () => {
     }
   });
 
+  it('reapplies curated flow updates when a pending linked sync overwrites the first flow update', async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-'));
+    const previousCwd = process.cwd();
+    process.chdir(tempDir);
+
+    const core: CoreLike = {
+      setOutput: vi.fn(),
+      info: vi.fn(),
+      warning: vi.fn(),
+      setFailed: vi.fn()
+    };
+
+    const postman = createFlowPostmanMock({
+      info: { name: '[Smoke][Temp] payments' },
+      item: [
+        {
+          name: 'createPayment',
+          request: {
+            method: 'POST',
+            header: [{ key: 'Authorization', value: 'Bearer old-token' }],
+            url: 'https://api.example.com/payments'
+          }
+        }
+      ]
+    }, { overwriteFirstUpdate: true });
+
+    try {
+      const outputs = await runSmokeFlow({
+        ...createInputs(tempDir),
+        authConfig: oauthConfig
+      }, createDependencies(core, postman));
+      const finalCollection = postman.updateCollection.mock.calls[1]?.[1] as Record<string, unknown>;
+
+      expect(outputs['flow-apply-status']).toBe('success');
+      expect(postman.updateCollection).toHaveBeenCalledTimes(2);
+      expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('Canonical Smoke collection update was not stable'));
+      expect(core.info).toHaveBeenCalledWith(expect.stringContaining('persisted after 2 attempt'));
+      expect(JSON.stringify(finalCollection)).toContain('Auto-generated OAuth2 client-credentials token cache');
+      expect(JSON.stringify(finalCollection)).toContain('Extract createPayment.paymentId');
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('falls back to spec-path method and path matching when request names do not equal operationIds', async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-'));
     const previousCwd = process.cwd();
@@ -277,26 +409,21 @@ describe('runSmokeFlow', () => {
       setFailed: vi.fn()
     };
 
-    const postman = {
-      generateCollection: vi.fn().mockResolvedValue('temp-123'),
-      getCollection: vi.fn().mockResolvedValue({
-        info: { name: '[Smoke][Temp] payments' },
-        item: [
-          {
-            name: 'Create a payment',
-            request: {
-              method: 'POST',
-              url: 'https://api.example.com/payments'
-            }
+    const postman = createFlowPostmanMock({
+      info: { name: '[Smoke][Temp] payments' },
+      item: [
+        {
+          name: 'Create a payment',
+          request: {
+            method: 'POST',
+            url: 'https://api.example.com/payments'
           }
-        ]
-      }),
-      updateCollection: vi.fn().mockResolvedValue(undefined),
-      deleteCollection: vi.fn().mockResolvedValue(undefined)
-    };
+        }
+      ]
+    });
 
     try {
-      const outputs = await runSmokeFlow(createInputs(tempDir), { core, postman });
+      const outputs = await runSmokeFlow(createInputs(tempDir), createDependencies(core, postman));
       expect(outputs['smoke-collection-id']).toBe('col-smoke');
       expect(outputs['flow-apply-status']).toBe('success');
       expect(postman.updateCollection).toHaveBeenCalledOnce();
@@ -318,26 +445,21 @@ describe('runSmokeFlow', () => {
       setFailed: vi.fn()
     };
 
-    const postman = {
-      generateCollection: vi.fn().mockResolvedValue('temp-123'),
-      getCollection: vi.fn().mockResolvedValue({
-        info: { name: '[Smoke][Temp] payments' },
-        item: [
-          {
-            name: 'Create a payment',
-            request: {
-              method: 'POST',
-              url: 'https://api.example.com/payments?scenario={{scenario}}#example'
-            }
+    const postman = createFlowPostmanMock({
+      info: { name: '[Smoke][Temp] payments' },
+      item: [
+        {
+          name: 'Create a payment',
+          request: {
+            method: 'POST',
+            url: 'https://api.example.com/payments?scenario={{scenario}}#example'
           }
-        ]
-      }),
-      updateCollection: vi.fn().mockResolvedValue(undefined),
-      deleteCollection: vi.fn().mockResolvedValue(undefined)
-    };
+        }
+      ]
+    });
 
     try {
-      const outputs = await runSmokeFlow(createInputs(tempDir), { core, postman });
+      const outputs = await runSmokeFlow(createInputs(tempDir), createDependencies(core, postman));
       expect(outputs['smoke-collection-id']).toBe('col-smoke');
       expect(outputs['flow-apply-status']).toBe('success');
       expect(postman.updateCollection).toHaveBeenCalledOnce();
@@ -359,30 +481,25 @@ describe('runSmokeFlow', () => {
       setFailed: vi.fn()
     };
 
-    const postman = {
-      generateCollection: vi.fn().mockResolvedValue('temp-123'),
-      getCollection: vi.fn().mockResolvedValue({
-        info: { name: '[Smoke][Temp] payments' },
-        item: [
-          {
-            name: 'createPayment',
-            request: {
-              method: 'POST',
-              url: 'https://api.example.com/payments'
-            }
+    const postman = createFlowPostmanMock({
+      info: { name: '[Smoke][Temp] payments' },
+      item: [
+        {
+          name: 'createPayment',
+          request: {
+            method: 'POST',
+            url: 'https://api.example.com/payments'
           }
-        ]
-      }),
-      updateCollection: vi.fn().mockResolvedValue(undefined),
-      deleteCollection: vi.fn().mockResolvedValue(undefined)
-    };
+        }
+      ]
+    });
 
     try {
       const inputs = {
         ...createInputs(tempDir),
         debugDumpPath: '.debug/curated-smoke-collection.json'
       };
-      await runSmokeFlow(inputs, { core, postman });
+      await runSmokeFlow(inputs, createDependencies(core, postman));
       const dumpPath = path.join(tempDir, '.debug/curated-smoke-collection.json');
       expect(existsSync(dumpPath)).toBe(true);
       const dumpContent = JSON.parse(readFileSync(dumpPath, 'utf8')) as Record<string, unknown>;
