@@ -1,5 +1,9 @@
 name: postman-smoke-flow-action
-description: Public customer preview GitHub Action that applies a curated flow.yaml or Smoke-only auth updates to the canonical Smoke collection.
+description: Apply a curated flow.yaml or Smoke-only auth updates to the canonical Postman Smoke collection.
+author: Postman
+branding:
+  icon: zap
+  color: orange
 inputs:
   project-name:
     description: Service project name used for temporary smoke collection naming.
