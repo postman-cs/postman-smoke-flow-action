@@ -29235,6 +29235,18 @@ function buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests
   };
 }
 
+// src/lib/error-advice.ts
+function adviseFromSmokeClientStatus(status, collectionId, callContext) {
+  if (status === 401 || status === 403) {
+    const verb = callContext === "write" ? "writing" : "reading";
+    return `postman-api-key rejected ${verb} collection ${collectionId}; confirm the key's team owns this collection`;
+  }
+  if (status === 404) {
+    return `collection ${collectionId} not found for this key's team; a wrong-team key is the usual cause`;
+  }
+  return void 0;
+}
+
 // src/postman/postman-smoke-client.ts
 function sleep(ms) {
   return new Promise((resolve2) => {
@@ -29262,7 +29274,7 @@ var PostmanSmokeClient = class {
   baseUrl;
   fetchImpl;
   sleepImpl;
-  async request(path8, init = {}) {
+  async request(path8, init = {}, callContext, collectionId) {
     const url = path8.startsWith("http") ? path8 : `${this.baseUrl.replace(/\/+$/g, "")}${path8}`;
     const response = await this.fetchImpl(url, {
       ...init,
@@ -29273,7 +29285,14 @@ var PostmanSmokeClient = class {
       }
     });
     if (!response.ok) {
-      throw await HttpError.fromResponse(response, url, init.method ?? "GET");
+      const httpErr = await HttpError.fromResponse(response, url, init.method ?? "GET");
+      if (callContext !== void 0 && collectionId !== void 0) {
+        const advice = adviseFromSmokeClientStatus(response.status, collectionId, callContext);
+        if (advice !== void 0) {
+          throw new Error(advice, { cause: httpErr });
+        }
+      }
+      throw httpErr;
     }
     try {
       return await response.json();
@@ -29303,10 +29322,12 @@ var PostmanSmokeClient = class {
     const maxLockedRetries = 5;
     for (let lockedAttempt = 0; ; lockedAttempt += 1) {
       try {
-        generationResponse = await this.request(`/specs/${specId}/generations/collection`, {
-          method: "POST",
-          body: JSON.stringify(payload)
-        });
+        generationResponse = await this.request(
+          `/specs/${specId}/generations/collection`,
+          { method: "POST", body: JSON.stringify(payload) },
+          "write",
+          specId
+        );
         break;
       } catch (error2) {
         const message = error2 instanceof Error ? error2.message : String(error2);
@@ -29353,7 +29374,12 @@ var PostmanSmokeClient = class {
     throw new Error(`Collection generation timed out for ${prefix}`);
   }
   async getCollection(collectionUid) {
-    const response = await this.request(`/collections/${collectionUid}`);
+    const response = await this.request(
+      `/collections/${collectionUid}`,
+      {},
+      "read",
+      collectionUid
+    );
     const collection = asRecord3(response?.collection);
     if (!collection) {
       throw new Error(`Failed to fetch collection ${collectionUid}`);
@@ -29364,10 +29390,12 @@ var PostmanSmokeClient = class {
     const maxDeepUpdateRetries = 8;
     for (let attempt = 0; ; attempt += 1) {
       try {
-        await this.request(`/collections/${collectionUid}`, {
-          method: "PUT",
-          body: JSON.stringify({ collection })
-        });
+        await this.request(
+          `/collections/${collectionUid}`,
+          { method: "PUT", body: JSON.stringify({ collection }) },
+          "write",
+          collectionUid
+        );
         return;
       } catch (error2) {
         if (!isDeepUpdateConflict(error2) || attempt >= maxDeepUpdateRetries) {
@@ -29379,9 +29407,7 @@ var PostmanSmokeClient = class {
   }
   async deleteCollection(collectionUid) {
     try {
-      await this.request(`/collections/${collectionUid}`, {
-        method: "DELETE"
-      });
+      await this.request(`/collections/${collectionUid}`, { method: "DELETE" });
     } catch (error2) {
       if (error2 instanceof HttpError && error2.status === 404) {
         return;

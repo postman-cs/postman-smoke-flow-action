@@ -1,3 +1,4 @@
+import { adviseFromSmokeClientStatus, type SmokeCallContext } from '../lib/error-advice.js';
 import { HttpError } from '../lib/errors.js';
 
 type JsonRecord = Record<string, unknown>;
@@ -28,7 +29,12 @@ export class PostmanSmokeClient {
     private readonly sleepImpl: (ms: number) => Promise<void> = sleep
   ) {}
 
-  private async request(path: string, init: RequestInit = {}): Promise<JsonRecord | null> {
+  private async request(
+    path: string,
+    init: RequestInit = {},
+    callContext?: SmokeCallContext,
+    collectionId?: string
+  ): Promise<JsonRecord | null> {
     const url = path.startsWith('http') ? path : `${this.baseUrl.replace(/\/+$/g, '')}${path}`;
     const response = await this.fetchImpl(url, {
       ...init,
@@ -39,7 +45,14 @@ export class PostmanSmokeClient {
       }
     });
     if (!response.ok) {
-      throw await HttpError.fromResponse(response, url, init.method ?? 'GET');
+      const httpErr = await HttpError.fromResponse(response, url, init.method ?? 'GET');
+      if (callContext !== undefined && collectionId !== undefined) {
+        const advice = adviseFromSmokeClientStatus(response.status, collectionId, callContext);
+        if (advice !== undefined) {
+          throw new Error(advice, { cause: httpErr });
+        }
+      }
+      throw httpErr;
     }
     try {
       return (await response.json()) as JsonRecord;
@@ -78,10 +91,12 @@ export class PostmanSmokeClient {
 
     for (let lockedAttempt = 0; ; lockedAttempt += 1) {
       try {
-        generationResponse = await this.request(`/specs/${specId}/generations/collection`, {
-          method: 'POST',
-          body: JSON.stringify(payload)
-        });
+        generationResponse = await this.request(
+          `/specs/${specId}/generations/collection`,
+          { method: 'POST', body: JSON.stringify(payload) },
+          'write',
+          specId
+        );
         break;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -138,7 +153,12 @@ export class PostmanSmokeClient {
   }
 
   async getCollection(collectionUid: string): Promise<JsonRecord> {
-    const response = await this.request(`/collections/${collectionUid}`);
+    const response = await this.request(
+      `/collections/${collectionUid}`,
+      {},
+      'read',
+      collectionUid
+    );
     const collection = asRecord(response?.collection);
     if (!collection) {
       throw new Error(`Failed to fetch collection ${collectionUid}`);
@@ -150,10 +170,12 @@ export class PostmanSmokeClient {
     const maxDeepUpdateRetries = 8;
     for (let attempt = 0; ; attempt += 1) {
       try {
-        await this.request(`/collections/${collectionUid}`, {
-          method: 'PUT',
-          body: JSON.stringify({ collection })
-        });
+        await this.request(
+          `/collections/${collectionUid}`,
+          { method: 'PUT', body: JSON.stringify({ collection }) },
+          'write',
+          collectionUid
+        );
         return;
       } catch (error) {
         if (!isDeepUpdateConflict(error) || attempt >= maxDeepUpdateRetries) {
@@ -166,9 +188,7 @@ export class PostmanSmokeClient {
 
   async deleteCollection(collectionUid: string): Promise<void> {
     try {
-      await this.request(`/collections/${collectionUid}`, {
-        method: 'DELETE'
-      });
+      await this.request(`/collections/${collectionUid}`, { method: 'DELETE' });
     } catch (error) {
       if (error instanceof HttpError && error.status === 404) {
         return;
