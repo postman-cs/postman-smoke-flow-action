@@ -29,7 +29,7 @@ function loadPackageJson(): PackageJson {
 describe('postman-smoke-flow-action contract', () => {
   it('uses the expected action name and required inputs', () => {
     const manifest = loadManifest();
-    expect(manifest.name).toBe('postman-smoke-flow-action');
+    expect(manifest.name).toBe('Postman Smoke Flow');
     expect(manifest.inputs['flow-path']?.required).toBe(false);
     expect(manifest.inputs['smoke-collection-id']?.required).toBe(true);
     expect(manifest.inputs['secrets-resolver-enabled']?.default).toBe('true');

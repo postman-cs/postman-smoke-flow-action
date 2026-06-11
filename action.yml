@@ -1,5 +1,5 @@
-name: postman-smoke-flow-action
-description: Apply a curated flow.yaml or Smoke-only auth updates to the canonical Postman Smoke collection.
+name: Postman Smoke Flow
+description: Reshape your generated Postman Smoke collection to match a curated flow.yaml, with optional OAuth2 token acquisition.
 author: Postman
 branding:
   icon: zap
