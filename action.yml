@@ -1,5 +1,5 @@
-name: Postman Smoke Flow
-description: Reshape your generated Postman Smoke collection to match a curated flow.yaml, with optional OAuth2 token acquisition.
+name: 'Postman Onboarding: Smoke Flow'
+description: Reshape the generated Postman Smoke collection to a curated flow.yaml. Part of the Postman API Onboarding suite.
 author: Postman
 branding:
   icon: zap
