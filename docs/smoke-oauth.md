@@ -2,6 +2,14 @@
 
 `auth-config-json` enables collection-level token acquisition for protected Smoke collections. V1 supports `oauth2` with the `client_credentials` grant and `clientAuthentication: body`. This can be used with or without `flow-path`.
 
+## Authentication matrix
+
+| Credential | Purpose | Recommended source |
+| --- | --- | --- |
+| postman-api-key | Generates the temporary Smoke collection and updates the canonical Smoke collection. | GitHub Actions secret or CI secret. |
+| postman-access-token | Compatibility-only input from broader onboarding pipelines. Smoke Flow masks it, logs a deprecation warning, and does not use it for collection updates. | Omit in standalone Smoke Flow jobs. Use postman-resolve-service-token-action only for the broader pipeline steps that need a service-account access token and team ID. |
+| OAuth client credentials | Used by the Smoke collection at collection run time. | CI secrets or runtime variables passed to the collection runner. |
+
 The Smoke collection:
 
 - adds a collection-level pre-request script

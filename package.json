@@ -1,7 +1,7 @@
 {
   "name": "@postman-cse/onboarding-smoke-flow",
-  "version": "1.0.2",
-  "description": "Public customer preview Postman smoke flow GitHub Action.",
+  "version": "1.0.3",
+  "description": "GitHub Action and CLI for applying curated Postman Smoke collection flows.",
   "type": "module",
   "main": "dist/main.cjs",
   "bin": {
@@ -12,7 +12,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "npm run typecheck && rm -rf dist && esbuild src/main.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/main.cjs && esbuild src/cli.ts --bundle --platform=node --target=node24 --format=cjs --banner:js='#!/usr/bin/env node' --outfile=dist/cli.cjs",
+    "build": "npm run typecheck && rm -rf dist && esbuild src/main.ts --bundle --platform=node --target=node24 --format=cjs --define:__ACTION_VERSION__=\\\"$npm_package_version\\\" --outfile=dist/main.cjs && esbuild src/cli.ts --bundle --platform=node --target=node24 --format=cjs --define:__ACTION_VERSION__=\\\"$npm_package_version\\\" --banner:js='#!/usr/bin/env node' --outfile=dist/cli.cjs",
     "check:dist": "npm run build && git diff --exit-code -- dist",
     "docs:tables": "node scripts/render-action-tables.mjs",
     "lint": "eslint .",
@@ -21,8 +21,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "keywords": [
+    "api-onboarding",
     "github-action",
-    "postman"
+    "postman",
+    "smoke-testing"
   ],
   "license": "MIT",
   "publishConfig": {
@@ -30,7 +32,8 @@
   },
   "dependencies": {
     "@actions/core": "^3.0.1",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.0",
+    "undici": "^6.24.0"
   },
   "overrides": {
     "undici": "^6.24.0",

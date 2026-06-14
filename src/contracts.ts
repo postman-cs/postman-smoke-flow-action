@@ -1,4 +1,4 @@
-export const customerPreviewActionContract = {
+export const smokeFlowActionContract = {
   inputs: {
     'project-name': { required: true },
     'workspace-id': { required: true },
@@ -6,6 +6,7 @@ export const customerPreviewActionContract = {
     'smoke-collection-id': { required: true },
     'flow-path': { required: false },
     'postman-api-key': { required: true },
+    'postman-region': { required: false, default: 'us' },
     'auth-config-json': { required: false },
     'secrets-resolver-enabled': { required: false, default: 'true' },
     'spec-path': { required: false },
@@ -14,7 +15,8 @@ export const customerPreviewActionContract = {
     'postman-access-token': { required: false },
     'fail-on-flow-warning': { required: false, default: 'false' },
     'keep-temp-collection-on-failure': { required: false, default: 'false' },
-    'temp-collection-prefix': { required: false, default: '[Smoke][Temp]' }
+    'temp-collection-prefix': { required: false, default: '[Smoke][Temp]' },
+    'team-id': { required: false }
   },
   outputs: {
     'smoke-collection-id': {},

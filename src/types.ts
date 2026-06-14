@@ -44,6 +44,7 @@ export type ActionInputs = {
   smokeCollectionId: string;
   flowPath?: string;
   postmanApiKey: string;
+  postmanApiBaseUrl: string;
   authConfig?: SmokeAuthConfig;
   secretsResolverEnabled: boolean;
   specPath?: string;
@@ -53,6 +54,7 @@ export type ActionInputs = {
   failOnFlowWarning: boolean;
   keepTempCollectionOnFailure: boolean;
   tempCollectionPrefix: string;
+  teamId?: string;
 };
 
 export type SmokeAuthConfig = {
@@ -119,6 +121,7 @@ export type ActionOutputs = {
 
 export type CoreLike = {
   setOutput: (name: string, value: string) => void;
+  setSecret?: (secret: string) => void;
   info: (message: string) => void;
   warning: (message: string) => void;
   setFailed: (message: string) => void;

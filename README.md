@@ -2,9 +2,21 @@
 
 [![CI](https://github.com/postman-cs/postman-smoke-flow-action/actions/workflows/ci.yml/badge.svg)](https://github.com/postman-cs/postman-smoke-flow-action/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/postman-cs/postman-smoke-flow-action?sort=semver)](https://github.com/postman-cs/postman-smoke-flow-action/releases) [![npm](https://img.shields.io/npm/v/%40postman-cse%2Fonboarding-smoke-flow)](https://www.npmjs.com/package/@postman-cse/onboarding-smoke-flow) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Reshapes the generated Postman Smoke collection to match a curated `flow.yaml`, with optional OAuth2 token acquisition.
+Reshapes the generated Postman Smoke collection to match a curated `flow.yaml`, with optional [OAuth2](https://learning.postman.com/docs/use/send-requests/authorization/oauth-20/) token acquisition.
 
 Part of the [Postman API Onboarding suite](https://github.com/postman-cs/postman-api-onboarding-action).
+
+## Which action should I use?
+
+| Need | Action |
+| --- | --- |
+| Mint a service-account access token and team ID | [Postman Onboarding: Service Token](https://github.com/postman-cs/postman-resolve-service-token-action) |
+| Discover an OpenAPI spec from AWS | [Postman Onboarding: AWS Spec Discovery](https://github.com/postman-cs/postman-aws-spec-discovery-action) |
+| Create the Postman workspace, upload the spec, and generate collections | [Postman Onboarding: Workspace Bootstrap](https://github.com/postman-cs/postman-bootstrap-action) |
+| Apply a curated smoke flow to the generated Smoke collection | [Postman Onboarding: Smoke Flow](https://github.com/postman-cs/postman-smoke-flow-action) |
+| Export Postman artifacts and wire CI assets | [Postman Onboarding: Repo Sync](https://github.com/postman-cs/postman-repo-sync-action) |
+| Link Postman Insights services to the workspace | [Postman Onboarding: Insights Linking](https://github.com/postman-cs/postman-insights-onboarding-action) |
+| Run bootstrap, repo sync, and optional Insights linking as one GitHub workflow step | [Postman API Onboarding](https://github.com/postman-cs/postman-api-onboarding-action) |
 
 ## Usage
 
@@ -21,10 +33,14 @@ jobs:
           workspace-id: ${{ vars.POSTMAN_WORKSPACE_ID }}
           spec-id: ${{ vars.POSTMAN_SPEC_ID }}
           smoke-collection-id: ${{ vars.POSTMAN_SMOKE_COLLECTION_ID }}
+          flow-path: .postman-api-launchpad/flows/core-payments/flow.yaml
+          spec-path: api/openapi.yaml
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+          postman-region: us
 ```
 
 The workspace, spec, and Smoke collection IDs normally come straight from a `postman-bootstrap-action` step in the same job (see the chained pipeline example below).
+For EU data residency, set `postman-region: eu` on bootstrap, Smoke Flow, and repo sync so every step calls the same Postman region.
 
 ## Examples
 
@@ -39,12 +55,20 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - id: postman_token
+        uses: postman-cs/postman-resolve-service-token-action@v1
+        with:
+          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+          postman-region: us
+
       - id: bootstrap
         uses: postman-cs/postman-bootstrap-action@v1
         with:
           project-name: core-payments
-          spec-url: https://example.com/openapi.yaml
+          spec-url: https://gist.githubusercontent.com/jaredboynton/a839de57db2c3c90b8f75906c56b00ee/raw/openapi.yaml
+          postman-region: us
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+          postman-access-token: ${{ steps.postman_token.outputs.token }}
 
       - id: smoke_flow
         uses: postman-cs/postman-smoke-flow-action@v1
@@ -55,6 +79,7 @@ jobs:
           smoke-collection-id: ${{ steps.bootstrap.outputs.smoke-collection-id }}
           flow-path: .postman-api-launchpad/flows/core-payments/flow.yaml
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+          postman-region: us
 
       - id: repo_sync
         uses: postman-cs/postman-repo-sync-action@v1
@@ -66,12 +91,15 @@ jobs:
           contract-collection-id: ${{ steps.bootstrap.outputs.contract-collection-id }}
           environments-json: '["prod"]'
           env-runtime-urls-json: '{"prod":"https://api.example.com"}'
+          postman-region: us
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+          postman-access-token: ${{ steps.postman_token.outputs.token }}
+          team-id: ${{ steps.postman_token.outputs.team-id }}
 ```
 
 ### Apply a curated flow.yaml
 
-With `flow-path` set, the action generates a temporary Smoke collection from the current spec, reshapes it to match the curated flow, injects prerequest and test scripts from bindings and extracts, updates the canonical Smoke collection in place, and deletes the temporary collection. The manifest format is documented in [docs/flow-manifest.md](docs/flow-manifest.md).
+With `flow-path` set, the action generates a temporary Smoke collection from the current spec, reshapes it to match the curated flow, injects [pre-request](https://learning.postman.com/docs/tests-and-scripts/write-scripts/pre-request-scripts/) and [test scripts](https://learning.postman.com/docs/tests-and-scripts/write-scripts/test-scripts/) from bindings and extracts, updates the canonical Smoke collection in place, and deletes the temporary collection. The manifest format is documented in [docs/flow-manifest.md](docs/flow-manifest.md).
 
 ```yaml
 - uses: postman-cs/postman-smoke-flow-action@v1
@@ -80,6 +108,7 @@ With `flow-path` set, the action generates a temporary Smoke collection from the
     workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
     spec-id: ${{ steps.bootstrap.outputs.spec-id }}
     smoke-collection-id: ${{ steps.bootstrap.outputs.smoke-collection-id }}
+    postman-region: us
     flow-path: .postman-api-launchpad/flows/core-payments/flow.yaml
     spec-path: api/openapi.yaml
     postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
@@ -87,7 +116,7 @@ With `flow-path` set, the action generates a temporary Smoke collection from the
 
 ### OAuth-only update without flow-path
 
-To inject Smoke-only OAuth2 client-credentials token acquisition into the existing Smoke collection before a `flow.yaml` exists, omit `flow-path` and pass `auth-config-json`. The existing collection is updated in place without recreating or reordering requests. Full configuration options are in [docs/smoke-oauth.md](docs/smoke-oauth.md).
+To inject Smoke-only [OAuth2](https://learning.postman.com/docs/use/send-requests/authorization/oauth-20/) client-credentials token acquisition into the existing Smoke collection before a `flow.yaml` exists, omit `flow-path` and pass `auth-config-json`. The existing collection is updated in place without recreating or reordering requests. Full configuration options are in [docs/smoke-oauth.md](docs/smoke-oauth.md).
 
 ```yaml
 - uses: postman-cs/postman-smoke-flow-action@v1
@@ -96,6 +125,7 @@ To inject Smoke-only OAuth2 client-credentials token acquisition into the existi
     workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
     spec-id: ${{ steps.bootstrap.outputs.spec-id }}
     smoke-collection-id: ${{ steps.bootstrap.outputs.smoke-collection-id }}
+    postman-region: us
     postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
     auth-config-json: '{"enabled":true,"type":"oauth2","grantType":"client_credentials","tokenUrl":"{{auth_token_url}}","clientAuthentication":"body"}'
 ```
@@ -111,6 +141,7 @@ Set `debug-dump-path` to write the transformed collection JSON to disk before th
     workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
     spec-id: ${{ steps.bootstrap.outputs.spec-id }}
     smoke-collection-id: ${{ steps.bootstrap.outputs.smoke-collection-id }}
+    postman-region: us
     flow-path: .postman-api-launchpad/flows/core-payments/flow.yaml
     debug-dump-path: smoke-collection-debug.json
     keep-temp-collection-on-failure: "true"
@@ -134,6 +165,7 @@ npx --package @postman-cse/onboarding-smoke-flow postman-smoke-flow \
   --spec-id "$POSTMAN_SPEC_ID" \
   --smoke-collection-id "$POSTMAN_SMOKE_COLLECTION_ID" \
   --flow-path .postman-api-launchpad/flows/core-payments/flow.yaml \
+  --postman-region eu \
   --postman-api-key "$POSTMAN_API_KEY"
 ```
 
@@ -150,15 +182,17 @@ See [docs/cli.md](docs/cli.md) for GitLab CI, Bitbucket Pipelines, Azure DevOps,
 | `smoke-collection-id` | Canonical Smoke collection ID to refresh in place. | yes |  |
 | `flow-path` | Optional repo-root-relative path to the curated flow.yaml manifest. When omitted, OAuth config can still be applied to the existing Smoke collection. | no |  |
 | `postman-api-key` | Postman API key used for collection generation and mutation. | yes |  |
+| `postman-region` | Postman data residency region for public API calls. Supported values are us and eu. | no | `us` |
 | `auth-config-json` | Optional JSON config for Smoke collection OAuth2 client-credentials token acquisition. | no |  |
 | `secrets-resolver-enabled` | Whether to include the legacy AWS Secrets Manager resolver item at the start of the generated Smoke collection. Defaults to true for backward compatibility; set to false to opt out. | no | `true` |
 | `spec-path` | Optional repo-root-relative path to the local OpenAPI spec for validation and debug context. | no |  |
 | `debug-dump-path` | Optional repo-root-relative or absolute path to write the transformed collection JSON before update. | no |  |
 | `collection-sync-mode` | Collection lifecycle policy. Refresh is the supported v1 mode. | no | `refresh` |
-| `postman-access-token` | Optional Postman access token for future internal integrations. | no |  |
+| `postman-access-token` | Compatibility input for broader onboarding pipelines. Smoke Flow does not use it; when provided, the value is masked and a deprecation warning is logged. | no |  |
 | `fail-on-flow-warning` | Whether non-blocking flow warnings should fail the action. | no | `false` |
 | `keep-temp-collection-on-failure` | Whether to keep the generated temporary smoke collection for debugging after a failed apply. | no | `false` |
 | `temp-collection-prefix` | Prefix used when generating the temporary smoke collection from the spec. | no | `[Smoke][Temp]` |
+| `team-id` | Optional Postman team ID, used only to attribute anonymous usage telemetry to your team. The action runs identically with or without it. | no |  |
 <!-- inputs-table:end -->
 
 ## Outputs
@@ -179,11 +213,21 @@ See [docs/cli.md](docs/cli.md) for GitLab CI, Bitbucket Pipelines, Azure DevOps,
 
 ## How it works
 
-In flow mode (`flow-path` set), the action reads the curated manifest, generates a temporary Smoke collection from the spec, resolves each flow step against the generated requests by `operationId` (with an optional method-plus-path fallback when `spec-path` is provided), wires bindings and extracts into prerequest and test scripts, refreshes the canonical Smoke collection in place, and removes the temporary collection. The manifest schema and resolution rules are in [docs/flow-manifest.md](docs/flow-manifest.md).
+In flow mode (`flow-path` set), the action reads the curated manifest, generates a temporary Smoke collection from the spec, resolves each flow step against the generated requests by `operationId` (with an optional method-plus-path fallback when `spec-path` is provided), wires bindings and extracts into pre-request and test scripts, refreshes the canonical Smoke collection in place, and removes the temporary collection. The manifest schema and resolution rules are in [docs/flow-manifest.md](docs/flow-manifest.md).
 
 In OAuth-only mode (`flow-path` omitted, `auth-config-json` enabled), the action fetches the existing canonical Smoke collection and adds collection-level OAuth2 client-credentials token acquisition without touching request order or content. Details and runtime variable injection are in [docs/smoke-oauth.md](docs/smoke-oauth.md).
 
 The action never mutates baseline or contract collections, and it never writes runtime tokens or client secrets back to Postman environments.
+
+## Credentials and regions
+
+| Need | Recommended path |
+| --- | --- |
+| Postman API collection generation and updates | Pass postman-api-key from a GitHub Actions secret or CI secret. |
+| Service-account access token and team ID for the broader onboarding pipeline | Run postman-resolve-service-token-action before bootstrap or the composite action. |
+| Smoke collection OAuth at run time | Keep OAuth client credentials in CI secrets or runtime variables. This action writes placeholders only. |
+
+postman-region controls the Postman public API host. Use us for https://api.getpostman.com and eu for https://api.eu.postman.com. The default is us. Smoke Flow is scoped to public Postman API regions and should use the same public region as bootstrap and repo sync.
 
 ## Resources
 
@@ -208,8 +252,44 @@ The action never mutates baseline or contract collections, and it never writes r
 - npm package: [@postman-cse/onboarding-smoke-flow](https://www.npmjs.com/package/@postman-cse/onboarding-smoke-flow)
 - [flow.yaml manifest format](docs/flow-manifest.md)
 - [Smoke OAuth configuration](docs/smoke-oauth.md)
+- Postman scripting references: [OAuth 2.0](https://learning.postman.com/docs/use/send-requests/authorization/oauth-20/), [pre-request scripts](https://learning.postman.com/docs/tests-and-scripts/write-scripts/pre-request-scripts/), [test scripts](https://learning.postman.com/docs/tests-and-scripts/write-scripts/test-scripts/), [pm variables](https://learning.postman.com/docs/tests-and-scripts/write-scripts/postman-sandbox-reference/pm-variables/)
 - [CLI usage for non-GitHub CI](docs/cli.md)
-- [Contributing](CONTRIBUTING.md) and [Security policy](SECURITY.md)
+- [Support](SUPPORT.md), [Security policy](SECURITY.md), and [Release policy](RELEASE_POLICY.md)
+- [Contributing](CONTRIBUTING.md)
+
+
+## Telemetry
+
+This action sends a single anonymous usage event when a run completes, so the
+Postman team can measure adoption across CI systems. The event contains the
+action name and version, your Postman team ID, the detected CI provider and
+runner kind, the run outcome, and a one-way SHA-256 hash of the repository
+identifier. The Postman team ID is sent in the clear on a legitimate-interest
+basis to measure product adoption.
+
+It never sends API keys, access tokens, spec content, workspace or repository
+names in the clear, or any personal data. It is fire-and-forget with a hard
+timeout and can never block or fail your pipeline. Corporate HTTP and HTTPS
+proxies are honored through the standard `HTTPS_PROXY`, `HTTP_PROXY`, and
+`NO_PROXY` environment variables.
+
+Disable it by setting either environment variable in your CI:
+
+```sh
+POSTMAN_ACTIONS_TELEMETRY=off
+# or the cross-tool standard
+DO_NOT_TRACK=1
+```
+
+Telemetry is also skipped automatically when no Postman team ID can be resolved.
+
+This action resolves a Postman team only when a `team-id` input is provided, so
+telemetry stays inert unless you set it.
+
+Events are sent over HTTPS to `https://events.pm-cse.dev/v1/events`. To
+allowlist this destination on a restricted network, or to route events to a
+collector you operate, set the `POSTMAN_ACTIONS_TELEMETRY_ENDPOINT` environment
+variable to your own URL.
 
 ## License
 

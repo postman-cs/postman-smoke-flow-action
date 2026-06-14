@@ -2,7 +2,7 @@ import * as core from '@actions/core';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { customerPreviewActionContract } from './contracts.js';
+import { smokeFlowActionContract } from './contracts.js';
 import { loadFlowManifest } from './flow/parser.js';
 import { resolveFlowRequests } from './flow/resolver.js';
 import { validateFlowManifest } from './flow/validator.js';
@@ -16,6 +16,7 @@ import {
   type CollectionVerification
 } from './postman/collection-transform.js';
 import { PostmanSmokeClient } from './postman/postman-smoke-client.js';
+import { createTelemetryContext } from './lib/telemetry.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -44,6 +45,13 @@ function parseBooleanInput(value: string | undefined, defaultValue: boolean): bo
     return defaultValue;
   }
   return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
+function resolvePostmanApiBaseUrl(regionInput: string): string {
+  const region = String(regionInput || 'us').trim().toLowerCase();
+  if (region === 'us') return 'https://api.getpostman.com';
+  if (region === 'eu') return 'https://api.eu.postman.com';
+  throw new Error(`postman-region must be one of: us, eu; got: ${region}`);
 }
 
 function getInput(name: string, env: NodeJS.ProcessEnv): string {
@@ -99,6 +107,7 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
     smokeCollectionId: getInput('smoke-collection-id', env),
     flowPath: getInput('flow-path', env) || undefined,
     postmanApiKey: getInput('postman-api-key', env),
+    postmanApiBaseUrl: resolvePostmanApiBaseUrl(getInput('postman-region', env)),
     authConfig: parseAuthConfig(getInput('auth-config-json', env)),
     secretsResolverEnabled: parseBooleanInput(getInput('secrets-resolver-enabled', env), true),
     specPath: getInput('spec-path', env) || undefined,
@@ -107,7 +116,8 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
     postmanAccessToken: getInput('postman-access-token', env) || undefined,
     failOnFlowWarning: parseBooleanInput(getInput('fail-on-flow-warning', env), false),
     keepTempCollectionOnFailure: parseBooleanInput(getInput('keep-temp-collection-on-failure', env), false),
-    tempCollectionPrefix: getInput('temp-collection-prefix', env) || '[Smoke][Temp]'
+    tempCollectionPrefix: getInput('temp-collection-prefix', env) || '[Smoke][Temp]',
+    teamId: getInput('team-id', env) || env.POSTMAN_TEAM_ID || undefined
   };
 }
 
@@ -208,7 +218,7 @@ async function updateCanonicalCollectionUntilStable<T extends CollectionTransfor
 }
 
 function ensureRequiredInputs(inputs: ActionInputs): void {
-  for (const [name, details] of Object.entries(customerPreviewActionContract.inputs)) {
+  for (const [name, details] of Object.entries(smokeFlowActionContract.inputs)) {
     if (details.required) {
       const camel = name.replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase());
       const value = inputs[camel as keyof ActionInputs];
@@ -291,6 +301,13 @@ export async function runSmokeFlow(
   inputs: ActionInputs,
   dependencies: SmokeFlowDependencies
 ): Promise<ActionOutputs> {
+  dependencies.core.setSecret?.(inputs.postmanApiKey);
+  if (inputs.postmanAccessToken) {
+    dependencies.core.setSecret?.(inputs.postmanAccessToken);
+    dependencies.core.warning(
+      'postman-access-token is accepted only for compatibility with broader onboarding pipelines and is not used by postman-smoke-flow-action. Remove it from standalone Smoke Flow jobs; for pipeline steps that need an access token, mint a service-account token with postman-cs/postman-resolve-service-token-action.'
+    );
+  }
   ensureRequiredInputs(inputs);
   if (inputs.collectionSyncMode !== 'refresh') {
     throw new Error(`collection-sync-mode=refresh is the only supported mode for postman-smoke-flow-action; received ${inputs.collectionSyncMode}.`);
@@ -401,13 +418,21 @@ export async function runSmokeFlow(
 
 export async function runAction(actionCore: CoreLike = core, env: NodeJS.ProcessEnv = process.env): Promise<ActionOutputs> {
   const inputs = readActionInputs(env);
-  const postman = new PostmanSmokeClient(inputs.postmanApiKey);
-  const outputs = await runSmokeFlow(inputs, {
-    core: actionCore,
-    postman
-  });
-  for (const [name, value] of Object.entries(outputs)) {
-    actionCore.setOutput(name, value);
+  const telemetry = createTelemetryContext({ action: 'postman-smoke-flow-action', logger: actionCore });
+  telemetry.setTeamId(inputs.teamId);
+  try {
+    const postman = new PostmanSmokeClient(inputs.postmanApiKey, inputs.postmanApiBaseUrl);
+    const outputs = await runSmokeFlow(inputs, {
+      core: actionCore,
+      postman
+    });
+    for (const [name, value] of Object.entries(outputs)) {
+      actionCore.setOutput(name, value);
+    }
+    telemetry.emitCompletion('success');
+    return outputs;
+  } catch (error) {
+    telemetry.emitCompletion('failure');
+    throw error;
   }
-  return outputs;
 }

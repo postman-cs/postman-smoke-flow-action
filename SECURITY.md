@@ -15,5 +15,8 @@ You should receive an acknowledgement within five business days. Please include 
 
 ## Scope Notes
 
-- This action handles Postman API keys and access tokens. Both are masked in logs by the action itself; never echo them in your own workflow steps.
+- This action handles a Postman API key and may receive a compatibility access-token input from broader onboarding pipelines. Accepted Postman credentials are masked in logs by the action itself; never echo them in your own workflow steps.
+- Use postman-resolve-service-token-action as the primary path for service-account access tokens and team IDs in automated onboarding pipelines.
+- When service-account minting is unavailable, use the Postman CLI credential store created by `postman login` as the fallback source. Do not paste copied cookies, DevTools values, or manually harvested session credentials into workflow secrets.
+- OAuth client credentials passed at collection run time must stay in CI secrets or runtime variables. The action writes variable placeholders only, not token values or client secrets.
 - Reports about secrets you exposed in your own workflow configuration are out of scope; rotate the credential in Postman immediately.

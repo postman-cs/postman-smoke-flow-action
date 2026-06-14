@@ -27,6 +27,10 @@ flows:
         extract: []
 ```
 
+## Run order
+
+Run this action after postman-bootstrap-action has created or refreshed the workspace, spec, and canonical Smoke collection. Run it before postman-repo-sync-action when the repo should receive the curated Smoke collection artifacts.
+
 ## Resolution behavior
 
 - The action first tries to resolve each flow step by matching the generated request name or description to the step `operationId`.

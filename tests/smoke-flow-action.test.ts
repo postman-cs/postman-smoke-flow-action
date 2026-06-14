@@ -63,6 +63,7 @@ function createInputs(tempDir: string): ActionInputs {
     smokeCollectionId: 'col-smoke',
     flowPath: 'flow.yaml',
     postmanApiKey: 'PMAK-123',
+    postmanApiBaseUrl: 'https://api.getpostman.com',
     secretsResolverEnabled: true,
     specPath: 'openapi.yaml',
     collectionSyncMode: 'refresh',
@@ -157,6 +158,48 @@ describe('runSmokeFlow', () => {
       expect(postman.generateCollection).toHaveBeenCalledOnce();
       expect(postman.updateCollection).toHaveBeenCalledOnce();
       expect(postman.deleteCollection).toHaveBeenCalledWith('temp-123');
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('masks accepted Postman credentials and warns when access-token compatibility input is supplied', async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-'));
+    const previousCwd = process.cwd();
+    process.chdir(tempDir);
+
+    const core: CoreLike = {
+      setOutput: vi.fn(),
+      setSecret: vi.fn(),
+      info: vi.fn(),
+      warning: vi.fn(),
+      setFailed: vi.fn()
+    };
+
+    const postman = createFlowPostmanMock({
+      info: { name: '[Smoke][Temp] payments' },
+      item: [
+        {
+          name: 'createPayment',
+          request: {
+            method: 'POST',
+            url: 'https://api.example.com/payments'
+          }
+        }
+      ]
+    });
+
+    try {
+      await runSmokeFlow({
+        ...createInputs(tempDir),
+        postmanAccessToken: 'pma_at_user_session'
+      }, createDependencies(core, postman));
+
+      expect(core.setSecret).toHaveBeenCalledWith('PMAK-123');
+      expect(core.setSecret).toHaveBeenCalledWith('pma_at_user_session');
+      expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('postman-access-token is accepted only for compatibility'));
+      expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('postman-cs/postman-resolve-service-token-action'));
     } finally {
       process.chdir(previousCwd);
       rmSync(tempDir, { recursive: true, force: true });
