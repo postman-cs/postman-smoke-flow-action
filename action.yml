@@ -60,7 +60,7 @@ inputs:
     required: false
     default: "[Smoke][Temp]"
   team-id:
-    description: Optional Postman team ID, used only to attribute anonymous usage telemetry to your team. The action runs identically with or without it.
+    description: Optional Postman team ID, used only to attribute non-identifying usage telemetry to your team. The action runs identically with or without it.
     required: false
 outputs:
   smoke-collection-id:

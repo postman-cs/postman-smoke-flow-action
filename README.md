@@ -192,7 +192,7 @@ See [docs/cli.md](docs/cli.md) for GitLab CI, Bitbucket Pipelines, Azure DevOps,
 | `fail-on-flow-warning` | Whether non-blocking flow warnings should fail the action. | no | `false` |
 | `keep-temp-collection-on-failure` | Whether to keep the generated temporary smoke collection for debugging after a failed apply. | no | `false` |
 | `temp-collection-prefix` | Prefix used when generating the temporary smoke collection from the spec. | no | `[Smoke][Temp]` |
-| `team-id` | Optional Postman team ID, used only to attribute anonymous usage telemetry to your team. The action runs identically with or without it. | no |  |
+| `team-id` | Optional Postman team ID, used only to attribute non-identifying usage telemetry to your team. The action runs identically with or without it. | no |  |
 <!-- inputs-table:end -->
 
 ## Outputs
@@ -260,11 +260,11 @@ postman-region controls the Postman public API host. Use us for https://api.getp
 
 ## Telemetry
 
-This action sends a single anonymous usage event when a run completes, so the
+This action sends a single non-identifying usage event when a run completes, so the
 Postman team can measure adoption across CI systems. The event contains the
 action name and version, your Postman team ID, the detected CI provider and
 runner kind, the run outcome, the CI run identifier, an event timestamp, and a one-way SHA-256 hash of the repository
-identifier. Each event also carries a schema version and a constant event type used only by the collector. The Postman team ID is sent in the clear on a legitimate-interest
+identifier. Each event also carries a schema version and a constant event marker (always `completion`). The Postman team ID is sent in the clear on a legitimate-interest
 basis to measure product adoption.
 
 The `events.pm-cse.dev` endpoint is operated by the Postman Customer Success
