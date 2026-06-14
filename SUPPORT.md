@@ -6,4 +6,4 @@ For onboarding credential setup, use postman-resolve-service-token-action first.
 
 Do not include Postman API keys, access tokens, OAuth client secrets, collection JSON with live secrets, or debug dumps that contain runtime values. Rotate any credential that was posted publicly.
 
-Security reports belong in GitHub private vulnerability reporting or security@postman.com, not public issues.
+Report security issues through GitHub private vulnerability reporting or security@postman.com; these channels keep the details confidential.
