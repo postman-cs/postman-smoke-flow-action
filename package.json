@@ -1,6 +1,6 @@
 {
   "name": "@postman-cse/onboarding-smoke-flow",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "GitHub Action and CLI for applying curated Postman Smoke collection flows.",
   "type": "module",
   "main": "dist/main.cjs",
@@ -32,7 +32,7 @@
   },
   "dependencies": {
     "@actions/core": "^3.0.1",
-    "@postman-cse/automation-telemetry-core": "^0.1.0",
+    "@postman-cse/automation-telemetry-core": "^0.2.0",
     "undici": "^6.24.0",
     "yaml": "^2.9.0"
   },
