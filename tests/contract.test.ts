@@ -60,7 +60,11 @@ describe('postman-smoke-flow-action contract', () => {
       'resolved-operation-count',
       'applied-binding-count',
       'applied-extract-count',
-      'assertion-count'
+      'assertion-count',
+      'flow-id',
+      'flow-url',
+      'flow-draft-status',
+      'flow-draft-summary-json'
     ]);
   });
 

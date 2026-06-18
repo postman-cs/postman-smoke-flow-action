@@ -20,6 +20,16 @@ inputs:
   flow-path:
     description: Optional repo-root-relative path to the curated flow.yaml manifest. When omitted, OAuth config can still be applied to the existing Smoke collection.
     required: false
+  generate-flow-draft:
+    description: Experimental. Infer a safe smoke journey from spec-path, create or update a native Postman Flow draft, and compile it into the Smoke collection.
+    required: false
+    default: "false"
+  flow-id:
+    description: Optional existing native Postman Flow ID to update when generate-flow-draft is true. When omitted, .postman/resources.yaml is checked before creating a new Flow.
+    required: false
+  flow-name:
+    description: Optional native Postman Flow name. Defaults to "[Smoke] <project-name> happy path" when generate-flow-draft is true.
+    required: false
   postman-api-key:
     description: Postman API key used for collection generation and mutation.
     required: true
@@ -81,6 +91,14 @@ outputs:
     description: Number of extracts applied as test logic.
   assertion-count:
     description: Number of generated assertions applied across flow steps.
+  flow-id:
+    description: Native Postman Flow ID created or updated by generate-flow-draft.
+  flow-url:
+    description: URL for the native Postman Flow created or updated by generate-flow-draft.
+  flow-draft-status:
+    description: Native Flow draft status (created, updated, or skipped).
+  flow-draft-summary-json:
+    description: JSON summary of native Flow draft creation or update.
 runs:
   using: node24
   main: dist/main.cjs

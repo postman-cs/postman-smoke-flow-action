@@ -3,11 +3,12 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { smokeFlowActionContract } from './contracts.js';
+import { inferSmokeFlowFromOpenApi } from './flow/infer.js';
 import { loadFlowManifest } from './flow/parser.js';
 import { resolveFlowRequests } from './flow/resolver.js';
 import { validateFlowManifest } from './flow/validator.js';
 import { summarizeError } from './lib/logging.js';
-import type { ActionInputs, ActionOutputs, CoreLike, FlowApplySummary, SmokeAuthConfig } from './types.js';
+import type { ActionInputs, ActionOutputs, CoreLike, FlowApplySummary, FlowDefinition, FlowDraftSummary, FlowWarning, SmokeAuthConfig } from './types.js';
 import {
   applySmokeCollectionAuth,
   buildCuratedSmokeCollection,
@@ -15,7 +16,9 @@ import {
   verifySmokeCollectionAuth,
   type CollectionVerification
 } from './postman/collection-transform.js';
+import { PostmanFlowClient, type FlowDraftRequest } from './postman/postman-flow-client.js';
 import { PostmanSmokeClient } from './postman/postman-smoke-client.js';
+import { readFlowIdFromResources } from './postman/resources-state.js';
 import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
 
 type JsonRecord = Record<string, unknown>;
@@ -23,6 +26,7 @@ type JsonRecord = Record<string, unknown>;
 type SmokeFlowDependencies = {
   core: CoreLike;
   postman: Pick<PostmanSmokeClient, 'generateCollection' | 'getCollection' | 'updateCollection' | 'deleteCollection'>;
+  flowClient?: Pick<PostmanFlowClient, 'createOrUpdateDraft'>;
   sleep?: (ms: number) => Promise<void>;
 };
 
@@ -106,6 +110,9 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
     specId: getInput('spec-id', env),
     smokeCollectionId: getInput('smoke-collection-id', env),
     flowPath: getInput('flow-path', env) || undefined,
+    generateFlowDraft: parseBooleanInput(getInput('generate-flow-draft', env), false),
+    flowId: getInput('flow-id', env) || undefined,
+    flowName: getInput('flow-name', env) || undefined,
     postmanApiKey: getInput('postman-api-key', env),
     postmanApiBaseUrl: resolvePostmanApiBaseUrl(getInput('postman-region', env)),
     authConfig: parseAuthConfig(getInput('auth-config-json', env)),
@@ -230,6 +237,7 @@ function ensureRequiredInputs(inputs: ActionInputs): void {
 }
 
 function createOutputs(summary: FlowApplySummary): ActionOutputs {
+  const flowDraft = summary.flowDraft;
   return {
     'smoke-collection-id': summary.canonicalSmokeCollectionId,
     'flow-apply-status': summary.status,
@@ -239,7 +247,11 @@ function createOutputs(summary: FlowApplySummary): ActionOutputs {
     'resolved-operation-count': String(summary.resolvedOperationCount),
     'applied-binding-count': String(summary.appliedBindingCount),
     'applied-extract-count': String(summary.appliedExtractCount),
-    'assertion-count': String(summary.assertionCount)
+    'assertion-count': String(summary.assertionCount),
+    'flow-id': flowDraft?.flowId ?? '',
+    'flow-url': flowDraft?.flowUrl ?? '',
+    'flow-draft-status': flowDraft?.status ?? 'skipped',
+    'flow-draft-summary-json': flowDraft ? JSON.stringify(flowDraft) : '{}'
   };
 }
 
@@ -297,35 +309,65 @@ async function runWithoutFlowManifest(
   });
 }
 
-export async function runSmokeFlow(
-  inputs: ActionInputs,
-  dependencies: SmokeFlowDependencies
-): Promise<ActionOutputs> {
-  dependencies.core.setSecret?.(inputs.postmanApiKey);
-  if (inputs.postmanAccessToken) {
-    dependencies.core.setSecret?.(inputs.postmanAccessToken);
-    dependencies.core.warning(
-      'postman-access-token is accepted only for compatibility with broader onboarding pipelines and is not used by postman-smoke-flow-action. Remove it from standalone Smoke Flow jobs; for pipeline steps that need an access token, mint a service-account token with postman-cs/postman-resolve-service-token-action.'
-    );
+function resolveNativeFlowName(inputs: ActionInputs): string {
+  return inputs.flowName?.trim() || `[Smoke] ${inputs.projectName} happy path`;
+}
+
+function collectionFlowName(nativeFlowName: string): string {
+  return nativeFlowName.replace(/^\[Smoke\]\s*/i, '').trim() || nativeFlowName;
+}
+
+function flowWarningsToMessages(warnings: FlowWarning[]): string[] {
+  return warnings.map((warning) => warning.message);
+}
+
+function skippedFlowDraft(existingFlowId = ''): FlowDraftSummary {
+  return {
+    status: 'skipped',
+    flowId: existingFlowId,
+    flowUrl: '',
+    nodeCount: 0,
+    connectionCount: 0,
+    warnings: []
+  };
+}
+
+async function createOrUpdateNativeFlowDraft(options: {
+  inputs: ActionInputs;
+  dependencies: SmokeFlowDependencies;
+  flow: FlowDefinition;
+  nativeFlowName: string;
+}): Promise<FlowDraftSummary> {
+  if (!options.inputs.generateFlowDraft) {
+    return skippedFlowDraft(options.inputs.flowId);
   }
-  ensureRequiredInputs(inputs);
-  if (inputs.collectionSyncMode !== 'refresh') {
-    throw new Error(`collection-sync-mode=refresh is the only supported mode for postman-smoke-flow-action; received ${inputs.collectionSyncMode}.`);
+  if (!options.dependencies.flowClient) {
+    throw new Error('generate-flow-draft requires a Flow client. Pass postman-access-token when using the GitHub Action.');
   }
 
-  const flowPath = inputs.flowPath?.trim();
-  if (!flowPath) {
-    return runWithoutFlowManifest(inputs, dependencies);
-  }
+  const existingFlowId = options.inputs.flowId || readFlowIdFromResources(options.nativeFlowName);
+  const canonicalCollection = await options.dependencies.postman.getCollection(options.inputs.smokeCollectionId);
+  const canonicalRequests = resolveFlowRequests(options.flow, canonicalCollection, options.inputs.specPath);
+  const request: FlowDraftRequest = {
+    workspaceId: options.inputs.workspaceId,
+    flowId: existingFlowId,
+    flowName: options.nativeFlowName,
+    smokeCollectionId: options.inputs.smokeCollectionId,
+    flow: options.flow,
+    resolvedRequests: canonicalRequests
+  };
+  return options.dependencies.flowClient.createOrUpdateDraft(request);
+}
 
-  const manifest = loadFlowManifest(flowPath);
-  const { flow, warnings } = validateFlowManifest(manifest);
+async function applyFlowDefinition(options: {
+  inputs: ActionInputs;
+  dependencies: SmokeFlowDependencies;
+  flow: FlowDefinition;
+  warnings: FlowWarning[];
+  nativeFlowName?: string;
+}): Promise<ActionOutputs> {
+  const { inputs, dependencies, flow, warnings } = options;
   const flowName = flow.name;
-  warnings.forEach((warning) => dependencies.core.warning(warning.message));
-  if (warnings.length > 0 && inputs.failOnFlowWarning) {
-    throw new Error(`Flow validation produced ${warnings.length} warning(s) and fail-on-flow-warning=true.`);
-  }
-
   let tempCollectionId = '';
   let tempCollectionDeleted = false;
   let runFailed = false;
@@ -356,6 +398,12 @@ export async function runSmokeFlow(
     dependencies.core.info(`Updated canonical Smoke collection ${inputs.smokeCollectionId} from curated flow.`);
 
     const resolvedRequests = resolveFlowRequests(flow, generatedCollection, inputs.specPath);
+    const flowDraft = await createOrUpdateNativeFlowDraft({
+      inputs,
+      dependencies,
+      flow,
+      nativeFlowName: options.nativeFlowName || resolveNativeFlowName(inputs)
+    });
 
     const summary: FlowApplySummary = {
       flowName: flow.name,
@@ -368,7 +416,9 @@ export async function runSmokeFlow(
       appliedBindingCount: transformed.bindingCount,
       appliedExtractCount: transformed.extractCount,
       assertionCount: transformed.assertionCount,
-      warnings: warnings.map((warning) => warning.message)
+      generatedFlowDraft: inputs.generateFlowDraft,
+      flowDraft,
+      warnings: flowWarningsToMessages(warnings)
     };
 
     return createOutputs(summary);
@@ -385,7 +435,9 @@ export async function runSmokeFlow(
       appliedBindingCount: 0,
       appliedExtractCount: 0,
       assertionCount: 0,
-      warnings: [...warnings.map((warning) => warning.message), summarizeError(error)]
+      generatedFlowDraft: inputs.generateFlowDraft,
+      flowDraft: skippedFlowDraft(inputs.flowId),
+      warnings: [...flowWarningsToMessages(warnings), summarizeError(error)]
     };
     if (tempCollectionId && !inputs.keepTempCollectionOnFailure) {
       try {
@@ -416,15 +468,86 @@ export async function runSmokeFlow(
   }
 }
 
+async function runWithGeneratedFlowDraft(
+  inputs: ActionInputs,
+  dependencies: SmokeFlowDependencies
+): Promise<ActionOutputs> {
+  if (!inputs.specPath) {
+    throw new Error('generate-flow-draft requires spec-path so the action can infer a safe smoke journey.');
+  }
+  if (!inputs.postmanAccessToken) {
+    throw new Error('generate-flow-draft requires postman-access-token for native Flow create/update calls.');
+  }
+
+  const nativeFlowName = resolveNativeFlowName(inputs);
+  const inferred = inferSmokeFlowFromOpenApi(inputs.specPath, collectionFlowName(nativeFlowName));
+  const warnings = inferred.warnings.map((message) => ({ message }));
+  warnings.forEach((warning) => dependencies.core.warning(warning.message));
+  if (warnings.length > 0 && inputs.failOnFlowWarning) {
+    throw new Error(`Flow inference produced ${warnings.length} warning(s) and fail-on-flow-warning=true.`);
+  }
+
+  return applyFlowDefinition({
+    inputs,
+    dependencies,
+    flow: inferred.flow,
+    warnings,
+    nativeFlowName
+  });
+}
+
+export async function runSmokeFlow(
+  inputs: ActionInputs,
+  dependencies: SmokeFlowDependencies
+): Promise<ActionOutputs> {
+  dependencies.core.setSecret?.(inputs.postmanApiKey);
+  if (inputs.postmanAccessToken) {
+    dependencies.core.setSecret?.(inputs.postmanAccessToken);
+    if (!inputs.generateFlowDraft) {
+      dependencies.core.warning(
+        'postman-access-token is accepted only for compatibility with broader onboarding pipelines and is not used by postman-smoke-flow-action. Remove it from standalone Smoke Flow jobs; for pipeline steps that need an access token, mint a service-account token with postman-cs/postman-resolve-service-token-action.'
+      );
+    }
+  }
+  ensureRequiredInputs(inputs);
+  if (inputs.collectionSyncMode !== 'refresh') {
+    throw new Error(`collection-sync-mode=refresh is the only supported mode for postman-smoke-flow-action; received ${inputs.collectionSyncMode}.`);
+  }
+
+  const flowPath = inputs.flowPath?.trim();
+  if (flowPath && inputs.generateFlowDraft) {
+    throw new Error('flow-path and generate-flow-draft=true are mutually exclusive. Use one source for the Smoke journey.');
+  }
+  if (inputs.generateFlowDraft) {
+    return runWithGeneratedFlowDraft(inputs, dependencies);
+  }
+  if (!flowPath) {
+    return runWithoutFlowManifest(inputs, dependencies);
+  }
+
+  const manifest = loadFlowManifest(flowPath);
+  const { flow, warnings } = validateFlowManifest(manifest);
+  warnings.forEach((warning) => dependencies.core.warning(warning.message));
+  if (warnings.length > 0 && inputs.failOnFlowWarning) {
+    throw new Error(`Flow validation produced ${warnings.length} warning(s) and fail-on-flow-warning=true.`);
+  }
+
+  return applyFlowDefinition({ inputs, dependencies, flow, warnings });
+}
+
 export async function runAction(actionCore: CoreLike = core, env: NodeJS.ProcessEnv = process.env): Promise<ActionOutputs> {
   const inputs = readActionInputs(env);
   const telemetry = createTelemetryContext({ action: 'postman-smoke-flow-action', logger: actionCore });
   telemetry.setTeamId(inputs.teamId);
   try {
     const postman = new PostmanSmokeClient(inputs.postmanApiKey, inputs.postmanApiBaseUrl);
+    const flowClient = inputs.generateFlowDraft
+      ? new PostmanFlowClient(inputs.postmanAccessToken ?? '', inputs.teamId)
+      : undefined;
     const outputs = await runSmokeFlow(inputs, {
       core: actionCore,
-      postman
+      postman,
+      flowClient
     });
     for (const [name, value] of Object.entries(outputs)) {
       actionCore.setOutput(name, value);

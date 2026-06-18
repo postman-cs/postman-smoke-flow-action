@@ -25902,7 +25902,7 @@ var require_public_api = __commonJS({
       }
       return doc;
     }
-    function parse3(src, reviver, options) {
+    function parse5(src, reviver, options) {
       let _reviver = void 0;
       if (typeof reviver === "function") {
         _reviver = reviver;
@@ -25943,7 +25943,7 @@ var require_public_api = __commonJS({
         return value.toString(options);
       return new Document.Document(value, _replacer, options).toString(options);
     }
-    exports2.parse = parse3;
+    exports2.parse = parse5;
     exports2.parseAllDocuments = parseAllDocuments;
     exports2.parseDocument = parseDocument;
     exports2.stringify = stringify;
@@ -28299,7 +28299,7 @@ function getIDToken(aud) {
 }
 
 // src/index.ts
-var import_node_fs3 = require("node:fs");
+var import_node_fs5 = require("node:fs");
 var import_node_path2 = __toESM(require("node:path"), 1);
 
 // src/contracts.ts
@@ -28310,6 +28310,9 @@ var smokeFlowActionContract = {
     "spec-id": { required: true },
     "smoke-collection-id": { required: true },
     "flow-path": { required: false },
+    "generate-flow-draft": { required: false, default: "false" },
+    "flow-id": { required: false },
+    "flow-name": { required: false },
     "postman-api-key": { required: true },
     "postman-region": { required: false, default: "us" },
     "auth-config-json": { required: false },
@@ -28332,16 +28335,17 @@ var smokeFlowActionContract = {
     "resolved-operation-count": {},
     "applied-binding-count": {},
     "applied-extract-count": {},
-    "assertion-count": {}
+    "assertion-count": {},
+    "flow-id": {},
+    "flow-url": {},
+    "flow-draft-status": {},
+    "flow-draft-summary-json": {}
   }
 };
 
-// src/flow/parser.ts
+// src/flow/infer.ts
 var import_node_fs = require("node:fs");
 var import_yaml = __toESM(require_dist(), 1);
-
-// src/lib/paths.ts
-var import_node_path = __toESM(require("node:path"), 1);
 
 // src/lib/errors.ts
 var ValidationError = class extends Error {
@@ -28359,6 +28363,7 @@ var HttpError = class _HttpError extends Error {
 };
 
 // src/lib/paths.ts
+var import_node_path = __toESM(require("node:path"), 1);
 function assertPathWithinCwd(targetPath, fieldName) {
   const base = import_node_path.default.resolve(".");
   const resolved = import_node_path.default.resolve(base, targetPath);
@@ -28369,11 +28374,182 @@ function assertPathWithinCwd(targetPath, fieldName) {
   return resolved;
 }
 
+// src/flow/infer.ts
+var HTTP_METHODS = /* @__PURE__ */ new Set(["get", "post", "put", "patch", "delete"]);
+var DESTRUCTIVE_PATTERN = /delete|remove|cancel|void|terminate|deactivate/i;
+function asRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function operationName(method, pathKey) {
+  const pathName = pathKey.replace(/[{}]/g, "").split("/").filter(Boolean).map((segment) => segment.replace(/[^A-Za-z0-9]+/g, " ")).flatMap((segment) => segment.split(/\s+/g).filter(Boolean)).map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1)).join("");
+  return `${method.toLowerCase()}${pathName || "Root"}`;
+}
+function extractPathParams(pathKey) {
+  return [...pathKey.matchAll(/\{([^}]+)\}/g)].map((match) => match[1]).filter(Boolean);
+}
+function dereferenceSchema(schema, document) {
+  const record = asRecord(schema);
+  const ref = typeof record?.$ref === "string" ? record.$ref : "";
+  if (!ref.startsWith("#/")) {
+    return record;
+  }
+  const segments = ref.slice(2).split("/").map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"));
+  let cursor = document;
+  for (const segment of segments) {
+    cursor = asRecord(cursor)?.[segment];
+  }
+  return asRecord(cursor);
+}
+function responseSchemaProperties(operation, document) {
+  const responses = asRecord(operation.responses);
+  const candidates = ["201", "200", "202", "default"];
+  const response = candidates.map((status) => asRecord(responses?.[status])).find(Boolean) ?? Object.values(responses ?? {}).map(asRecord).find(Boolean);
+  const content = asRecord(response?.content);
+  const jsonContent = asRecord(content?.["application/json"]) ?? asRecord(Object.values(content ?? {}).map(asRecord).find(Boolean));
+  const schema = dereferenceSchema(jsonContent?.schema, document);
+  const properties = asRecord(schema?.properties);
+  return new Set(Object.keys(properties ?? {}));
+}
+function parseOperations(specPath) {
+  const resolvedPath = assertPathWithinCwd(specPath, "spec-path");
+  const document = (0, import_yaml.parse)((0, import_node_fs.readFileSync)(resolvedPath, "utf8"));
+  const paths = asRecord(document?.paths);
+  if (!document || !paths) {
+    throw new ValidationError("generate-flow-draft requires spec-path to point to an OpenAPI document with paths.");
+  }
+  const operations = [];
+  for (const [pathKey, pathItem] of Object.entries(paths)) {
+    const pathRecord = asRecord(pathItem);
+    if (!pathRecord) continue;
+    for (const [methodKey, operationValue] of Object.entries(pathRecord)) {
+      const method = methodKey.toLowerCase();
+      if (!HTTP_METHODS.has(method)) continue;
+      const operationRecord = asRecord(operationValue);
+      if (!operationRecord) continue;
+      const operationId = typeof operationRecord.operationId === "string" && operationRecord.operationId.trim() ? operationRecord.operationId.trim() : operationName(method, pathKey);
+      operations.push({
+        operationId,
+        method: method.toUpperCase(),
+        path: pathKey,
+        pathParams: extractPathParams(pathKey),
+        responseProperties: responseSchemaProperties(operationRecord, document)
+      });
+    }
+  }
+  return operations;
+}
+function isDestructive(operation) {
+  return operation.method === "DELETE" || DESTRUCTIVE_PATTERN.test(`${operation.operationId} ${operation.path}`);
+}
+function singularize(value) {
+  return value.endsWith("ies") ? `${value.slice(0, -3)}y` : value.endsWith("s") ? value.slice(0, -1) : value;
+}
+function pathParent(pathKey) {
+  return pathKey.replace(/\/\{[^}]+\}$/, "") || "/";
+}
+function inferExtractJsonPath(createOperation, pathParam) {
+  if (createOperation.responseProperties.has(pathParam)) {
+    return `$.${pathParam}`;
+  }
+  if (createOperation.responseProperties.has("id")) {
+    return "$.id";
+  }
+  const snakeId = pathParam.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+  if (createOperation.responseProperties.has(snakeId)) {
+    return `$.${snakeId}`;
+  }
+  return `$.${pathParam}`;
+}
+function stepForOperation(operation, index, bindings = [], extract = []) {
+  return {
+    stepKey: `${operation.operationId}-${index + 1}`,
+    operationId: operation.operationId,
+    bindings,
+    extract
+  };
+}
+function buildSafeChain(operations) {
+  const safeOperations = operations.filter((operation) => !isDestructive(operation));
+  const creates = safeOperations.filter((operation) => operation.method === "POST" && operation.pathParams.length === 0);
+  for (const createOperation of creates) {
+    const childOperations = safeOperations.filter(
+      (operation) => pathParent(operation.path) === createOperation.path && operation.pathParams.length === 1
+    );
+    const readOperation = childOperations.find((operation) => operation.method === "GET");
+    if (!readOperation) continue;
+    const updateOperation = childOperations.find((operation) => operation.method === "PATCH" || operation.method === "PUT");
+    const pathParam = readOperation.pathParams[0];
+    const variable = `${createOperation.operationId}.${pathParam}`;
+    const binding = {
+      fieldKey: pathParam,
+      source: "prior_output",
+      sourceStepKey: `${createOperation.operationId}-1`,
+      variable
+    };
+    const createStep = stepForOperation(createOperation, 0, [], [
+      {
+        variable,
+        jsonPath: inferExtractJsonPath(createOperation, pathParam)
+      }
+    ]);
+    const steps = [
+      createStep,
+      stepForOperation(readOperation, 1, [binding], [])
+    ];
+    if (updateOperation) {
+      steps.push(stepForOperation(updateOperation, 2, [binding], []));
+      steps.push(stepForOperation(readOperation, 3, [binding], []));
+    }
+    const resourceName = singularize(createOperation.path.split("/").filter(Boolean).at(-1) ?? "resource");
+    return {
+      flow: {
+        name: `${resourceName.charAt(0).toUpperCase()}${resourceName.slice(1)} happy path`,
+        type: "smoke",
+        steps
+      },
+      warnings: updateOperation ? [] : [`No safe update operation found for ${readOperation.path}; generated create/read smoke journey.`]
+    };
+  }
+  return null;
+}
+function buildSafeGetFallback(operations) {
+  const operation = operations.find(
+    (candidate) => candidate.method === "GET" && candidate.pathParams.length === 0 && !isDestructive(candidate)
+  );
+  if (!operation) {
+    return null;
+  }
+  return {
+    flow: {
+      name: `${operation.operationId} smoke check`,
+      type: "smoke",
+      steps: [stepForOperation(operation, 0)]
+    },
+    warnings: ["No create/read happy path could be inferred; generated a single safe GET smoke check."]
+  };
+}
+function inferSmokeFlowFromOpenApi(specPath, flowName) {
+  const operations = parseOperations(specPath);
+  const inferred = buildSafeChain(operations) ?? buildSafeGetFallback(operations);
+  if (!inferred) {
+    throw new ValidationError("Could not infer a safe smoke flow from spec-path. Add a non-destructive GET operation or provide flow-path.");
+  }
+  return {
+    ...inferred,
+    flow: {
+      ...inferred.flow,
+      name: flowName?.trim() || inferred.flow.name
+    }
+  };
+}
+
 // src/flow/parser.ts
+var import_node_fs2 = require("node:fs");
+var import_yaml2 = __toESM(require_dist(), 1);
 function loadFlowManifest(flowPath) {
   const resolved = assertPathWithinCwd(flowPath, "flow-path");
-  const raw = (0, import_node_fs.readFileSync)(resolved, "utf8");
-  const parsed = (0, import_yaml.parse)(raw);
+  const raw = (0, import_node_fs2.readFileSync)(resolved, "utf8");
+  const parsed = (0, import_yaml2.parse)(raw);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new ValidationError("flow.yaml must parse to an object.");
   }
@@ -28381,35 +28557,35 @@ function loadFlowManifest(flowPath) {
 }
 
 // src/flow/resolver.ts
-var import_node_fs2 = require("node:fs");
-var import_yaml2 = __toESM(require_dist(), 1);
-function asRecord(value) {
+var import_node_fs3 = require("node:fs");
+var import_yaml3 = __toESM(require_dist(), 1);
+function asRecord2(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function getItemName(item) {
   return typeof item.name === "string" ? item.name : "";
 }
 function getRequestDescription(item) {
-  const request = asRecord(item.request);
+  const request = asRecord2(item.request);
   if (!request) return "";
   if (typeof request.description === "string") return request.description;
-  const description = asRecord(request.description);
+  const description = asRecord2(request.description);
   return typeof description?.content === "string" ? description.content : "";
 }
 function getRequestMethod(item) {
-  const request = asRecord(item.request);
+  const request = asRecord2(item.request);
   return typeof request?.method === "string" ? request.method.toUpperCase() : "";
 }
 function normalizePathTemplate(value) {
   return value.replace(/[?#].*$/, "").replace(/^https?:\/\/[^/]+/i, "").replace(/^\{\{[^}]+\}\}/, "").replace(/:[^/]+/g, "{}").replace(/\{[^/]+\}/g, "{}").replace(/\/+/g, "/").replace(/\/$/, "") || "/";
 }
 function getRequestPath(item) {
-  const request = asRecord(item.request);
+  const request = asRecord2(item.request);
   const url = request?.url;
   if (typeof url === "string") {
     return normalizePathTemplate(url);
   }
-  const urlRecord = asRecord(url);
+  const urlRecord = asRecord2(url);
   if (!urlRecord) return "";
   if (typeof urlRecord.raw === "string") {
     return normalizePathTemplate(urlRecord.raw);
@@ -28427,7 +28603,7 @@ function flattenRequestItems(node) {
       results.push(item);
     }
     const children = Array.isArray(item.item) ? item.item : [];
-    children.map(asRecord).filter((entry) => Boolean(entry)).forEach(visit);
+    children.map(asRecord2).filter((entry) => Boolean(entry)).forEach(visit);
   };
   visit(node);
   return results;
@@ -28441,17 +28617,17 @@ function loadOperationMatches(specPath) {
   if (!specPath) {
     return /* @__PURE__ */ new Map();
   }
-  const document = (0, import_yaml2.parse)((0, import_node_fs2.readFileSync)(specPath, "utf8"));
-  const paths = asRecord(document?.paths);
+  const document = (0, import_yaml3.parse)((0, import_node_fs3.readFileSync)(specPath, "utf8"));
+  const paths = asRecord2(document?.paths);
   if (!paths) {
     return /* @__PURE__ */ new Map();
   }
   const operationMatches = /* @__PURE__ */ new Map();
   for (const [specPathKey, pathItem] of Object.entries(paths)) {
-    const pathRecord = asRecord(pathItem);
+    const pathRecord = asRecord2(pathItem);
     if (!pathRecord) continue;
     for (const [method, operation] of Object.entries(pathRecord)) {
-      const operationRecord = asRecord(operation);
+      const operationRecord = asRecord2(operation);
       const operationId = typeof operationRecord?.operationId === "string" ? operationRecord.operationId : "";
       if (!operationId) continue;
       operationMatches.set(operationId, {
@@ -28774,7 +28950,7 @@ function createSecretsResolverItem() {
 // src/postman/collection-transform.ts
 var GENERATED_OAUTH_EVENT_MARKER = "[Smoke Flow] Auto-generated OAuth2 client-credentials token cache";
 var LEGACY_SECRETS_RESOLVER_ITEM_NAME = "00 - Resolve Secrets";
-function asRecord2(value) {
+function asRecord3(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function sanitizeForCollectionUpdate(value) {
@@ -28806,7 +28982,7 @@ function setNestedValue(root, dottedKey, value) {
   let cursor = root;
   for (let index = 0; index < segments.length - 1; index += 1) {
     const segment = segments[index];
-    const next = asRecord2(cursor[segment]);
+    const next = asRecord3(cursor[segment]);
     if (next) {
       cursor = next;
       continue;
@@ -28868,7 +29044,7 @@ function updateRequestUrl(request, step) {
     request.url = updateRawUrlQuery(next, step);
     return;
   }
-  const urlRecord = asRecord2(url);
+  const urlRecord = asRecord3(url);
   if (!urlRecord) {
     return;
   }
@@ -28882,7 +29058,7 @@ function updateRequestUrl(request, step) {
   }
   if (Array.isArray(urlRecord.variable)) {
     urlRecord.variable = urlRecord.variable.map((entry) => {
-      const variable = asRecord2(entry) ?? {};
+      const variable = asRecord3(entry) ?? {};
       const key = typeof variable.key === "string" ? variable.key : "";
       if (variableBindings.some((binding) => binding.fieldKey === key)) {
         variable.value = `{{${key}}}`;
@@ -28892,7 +29068,7 @@ function updateRequestUrl(request, step) {
   }
   if (Array.isArray(urlRecord.query)) {
     urlRecord.query = urlRecord.query.flatMap((entry) => {
-      const query = asRecord2(entry) ?? {};
+      const query = asRecord3(entry) ?? {};
       const key = typeof query.key === "string" ? query.key : "";
       const binding = bindingByFieldKey.get(key);
       if (!binding) {
@@ -28907,7 +29083,7 @@ function updateRequestUrl(request, step) {
 }
 function updateRequestBody(request, step) {
   const variableBindings = getVariableBindings(step);
-  const body = asRecord2(request.body);
+  const body = asRecord3(request.body);
   if (!body || body.mode !== "raw" || typeof body.raw !== "string") {
     return;
   }
@@ -28928,11 +29104,11 @@ function updateRequestBody(request, step) {
 }
 function applyFlowScripts(item, step) {
   const existingEvents = Array.isArray(item.event) ? item.event : [];
-  item.event = existingEvents.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)).filter((entry) => entry.listen !== "prerequest" && entry.listen !== "test");
+  item.event = existingEvents.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)).filter((entry) => entry.listen !== "prerequest" && entry.listen !== "test");
   item.event.push(createPreRequestEvent(step), createTestEvent(step));
 }
 function removeHeader(request, key) {
-  const headers = Array.isArray(request.header) ? request.header.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)) : [];
+  const headers = Array.isArray(request.header) ? request.header.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)) : [];
   request.header = headers.filter((entry) => typeof entry.key !== "string" || entry.key.toLowerCase() !== key.toLowerCase());
 }
 function getAuthVariableNames2(authConfig) {
@@ -28967,7 +29143,7 @@ function applyAuthToRequest(request, authConfig) {
   return true;
 }
 function upsertCollectionVariable(collection, key, value = "") {
-  const variables = Array.isArray(collection.variable) ? collection.variable.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)) : [];
+  const variables = Array.isArray(collection.variable) ? collection.variable.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)) : [];
   const existing = variables.find((entry) => entry.key === key);
   if (existing) {
     if (typeof existing.value !== "string") {
@@ -28989,7 +29165,7 @@ function seedOAuthCollectionVariables(collection, authConfig) {
   upsertCollectionVariable(collection, variables.expiresAt);
 }
 function getScriptExecText(event) {
-  const script = asRecord2(event.script);
+  const script = asRecord3(event.script);
   const exec2 = script?.exec;
   if (Array.isArray(exec2)) {
     return exec2.map((line) => String(line)).join("\n");
@@ -29009,7 +29185,7 @@ function applyCollectionAuth(collection, authConfig) {
   seedOAuthCollectionVariables(collection, authConfig);
   const existingEvents = Array.isArray(collection.event) ? collection.event : [];
   collection.event = [
-    ...existingEvents.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)).filter((entry) => !isGeneratedOAuthEvent(entry)),
+    ...existingEvents.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)).filter((entry) => !isGeneratedOAuthEvent(entry)),
     createOAuthPreRequestEvent(authConfig)
   ];
 }
@@ -29018,12 +29194,12 @@ function applyAuthToCollectionItems(items, authConfig) {
     return 0;
   }
   return items.reduce((count, entry) => {
-    const item = asRecord2(entry);
+    const item = asRecord3(entry);
     if (!item) {
       return count;
     }
     let nextCount = count;
-    const request = asRecord2(item.request);
+    const request = asRecord3(item.request);
     const itemName = typeof item.name === "string" ? item.name : "";
     if (request && itemName !== LEGACY_SECRETS_RESOLVER_ITEM_NAME && applyAuthToRequest(request, authConfig)) {
       nextCount += 1;
@@ -29036,7 +29212,7 @@ function getRequestUrlText(request) {
   if (typeof url === "string") {
     return url;
   }
-  const urlRecord = asRecord2(url);
+  const urlRecord = asRecord3(url);
   if (!urlRecord) {
     return "";
   }
@@ -29052,14 +29228,14 @@ function isSecretsResolverItem(item) {
   if (name === LEGACY_SECRETS_RESOLVER_ITEM_NAME.toLowerCase() || name === "resolve secrets") {
     return true;
   }
-  const request = asRecord2(item.request);
+  const request = asRecord3(item.request);
   if (!request) {
     return false;
   }
-  const auth = asRecord2(request.auth);
+  const auth = asRecord3(request.auth);
   const authType = typeof auth?.type === "string" ? auth.type.toLowerCase() : "";
   const urlText = getRequestUrlText(request).toLowerCase();
-  const headers = Array.isArray(request.header) ? request.header.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)) : [];
+  const headers = Array.isArray(request.header) ? request.header.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)) : [];
   const hasSecretsManagerTarget = headers.some(
     (entry) => typeof entry.key === "string" && entry.key.toLowerCase() === "x-amz-target" && String(entry.value ?? "").toLowerCase().includes("secretsmanager.getsecretvalue")
   );
@@ -29070,7 +29246,7 @@ function removeSecretsResolverItems(items) {
     return items;
   }
   return items.map((entry) => {
-    const item = asRecord2(entry);
+    const item = asRecord3(entry);
     if (!item) {
       return entry;
     }
@@ -29079,7 +29255,7 @@ function removeSecretsResolverItems(items) {
     }
     return item;
   }).filter((entry) => {
-    const item = asRecord2(entry);
+    const item = asRecord3(entry);
     return !item || !isSecretsResolverItem(item);
   });
 }
@@ -29088,7 +29264,7 @@ function containsSecretsResolverItem(items) {
     return false;
   }
   return items.some((entry) => {
-    const item = asRecord2(entry);
+    const item = asRecord3(entry);
     if (!item) {
       return false;
     }
@@ -29097,21 +29273,21 @@ function containsSecretsResolverItem(items) {
 }
 function hasGeneratedOAuthEvent(collection) {
   const events2 = Array.isArray(collection.event) ? collection.event : [];
-  return events2.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)).some((entry) => isGeneratedOAuthEvent(entry));
+  return events2.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)).some((entry) => isGeneratedOAuthEvent(entry));
 }
 function getCollectionVariableKeys(collection) {
   const variables = Array.isArray(collection.variable) ? collection.variable : [];
   return new Set(
-    variables.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)).map((entry) => String(entry.key ?? "")).filter(Boolean)
+    variables.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)).map((entry) => String(entry.key ?? "")).filter(Boolean)
   );
 }
 function requestUsesBearerAuth(request, accessTokenVariable) {
-  const auth = asRecord2(request.auth);
+  const auth = asRecord3(request.auth);
   if (!auth || auth.type !== "bearer") {
     return false;
   }
   const bearer = Array.isArray(auth.bearer) ? auth.bearer : [];
-  return bearer.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)).some((entry) => entry.key === "token" && entry.value === `{{${accessTokenVariable}}}`);
+  return bearer.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)).some((entry) => entry.key === "token" && entry.value === `{{${accessTokenVariable}}}`);
 }
 function countBearerAuthRequests(items, authConfig) {
   if (!Array.isArray(items)) {
@@ -29119,12 +29295,12 @@ function countBearerAuthRequests(items, authConfig) {
   }
   const variables = getAuthVariableNames2(authConfig);
   return items.reduce((count, entry) => {
-    const item = asRecord2(entry);
+    const item = asRecord3(entry);
     if (!item) {
       return count;
     }
     let nextCount = count;
-    const request = asRecord2(item.request);
+    const request = asRecord3(item.request);
     if (request && !isSecretsResolverItem(item) && requestUsesBearerAuth(request, variables.accessToken)) {
       nextCount += 1;
     }
@@ -29132,10 +29308,10 @@ function countBearerAuthRequests(items, authConfig) {
   }, 0);
 }
 function getTopLevelItems(collection) {
-  return Array.isArray(collection.item) ? collection.item.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)) : [];
+  return Array.isArray(collection.item) ? collection.item.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)) : [];
 }
 function hasFlowRequestScripts(item) {
-  const events2 = Array.isArray(item.event) ? item.event.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)) : [];
+  const events2 = Array.isArray(item.event) ? item.event.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)) : [];
   return events2.some((entry) => entry.listen === "prerequest") && events2.some((entry) => entry.listen === "test");
 }
 function verifySmokeCollectionAuth(collection, authConfig, options = {}) {
@@ -29163,7 +29339,7 @@ function verifySmokeCollectionAuth(collection, authConfig, options = {}) {
 }
 function verifyCuratedSmokeCollection(collection, flow, authConfig, options = {}) {
   const topLevelItems = getTopLevelItems(collection);
-  const requestItems = topLevelItems.filter((item) => asRecord2(item.request) && !isSecretsResolverItem(item));
+  const requestItems = topLevelItems.filter((item) => asRecord3(item.request) && !isSecretsResolverItem(item));
   const requestNames = requestItems.map((item) => String(item.name ?? ""));
   const expectedRequestNames = flow.steps.map((step) => step.name?.trim() || step.operationId);
   const missingRequests = expectedRequestNames.filter((name) => !requestNames.includes(name));
@@ -29199,7 +29375,7 @@ function verifyCuratedSmokeCollection(collection, flow, authConfig, options = {}
 function curateRequestItem(resolved, authConfig) {
   const item = structuredClone(resolved.item);
   item.name = resolved.step.name?.trim() || resolved.step.operationId;
-  const request = asRecord2(item.request);
+  const request = asRecord3(item.request);
   if (request) {
     updateRequestUrl(request, resolved.step);
     updateRequestBody(request, resolved.step);
@@ -29222,7 +29398,7 @@ function applySmokeCollectionAuth(existingCollection, authConfig, options = {}) 
 }
 function buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests, authConfig, secretsResolverEnabled = true) {
   const collection = sanitizeForCollectionUpdate(structuredClone(generatedCollection));
-  const info2 = asRecord2(collection.info);
+  const info2 = asRecord3(collection.info);
   if (info2) {
     info2.name = `[Smoke] ${flow.name}`;
   }
@@ -29240,6 +29416,291 @@ function buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests
     assertionCount
   };
 }
+
+// src/postman/postman-flow-client.ts
+var import_node_crypto = require("node:crypto");
+function asRecord4(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function idFor(prefix, index) {
+  return `${prefix}${String(index + 1).padStart(3, "0")}`;
+}
+function embeddedReference(id, key) {
+  return {
+    id,
+    type: "value/reference@2",
+    kind: "reference",
+    value: "",
+    key,
+    __noIn: true
+  };
+}
+function extractRequestId(item) {
+  return String(item.id ?? item.uid ?? item._postman_id ?? "").trim() || null;
+}
+function jsonPathToTypeScript(jsonPath) {
+  if (!jsonPath.startsWith("$.")) {
+    return "response?.body";
+  }
+  const accessors = jsonPath.slice(2).replace(/\[(\d+)\]/g, ".$1").split(".").filter(Boolean).map((segment) => /^\d+$/.test(segment) ? `[${segment}]` : `?.${segment}`).join("");
+  return `response?.body${accessors}`;
+}
+function createRequestNode(nodeId, resolved, collectionId, x, y) {
+  const variables = resolved.step.bindings.map(
+    (binding, bindingIndex) => embeddedReference(idFor(`${nodeId}v`, bindingIndex), binding.fieldKey)
+  );
+  const requestId = extractRequestId(resolved.item);
+  return {
+    type: "task/http-request@1",
+    pos: { x, y },
+    config: {
+      element: {
+        id: requestId,
+        collection: collectionId
+      },
+      environment: null,
+      parseBody: "auto",
+      requestVariables: variables,
+      scriptsModifyEnvVars: false,
+      requestVariables__expanded: variables.length > 0
+    },
+    ui: {
+      data: {
+        blockTitle: resolved.step.name?.trim() || resolved.step.operationId
+      },
+      namedInputsExpanded: variables.length > 0
+    },
+    extend: {
+      input: Object.fromEntries(variables.map((variable) => [String(variable.id), { extends: "requestVariables" }])),
+      output: {}
+    }
+  };
+}
+function createExtractNode(nodeId, variable, jsonPath, x, y) {
+  const responseVariableId = `${nodeId}response`;
+  return {
+    type: "logic/manipulate@1",
+    pos: { x, y },
+    size: { width: 304, height: 104 },
+    config: {
+      language: "ts",
+      query: "",
+      tscript: jsonPathToTypeScript(jsonPath),
+      variables: [embeddedReference(responseVariableId, "response")],
+      variables__expanded: true
+    },
+    ui: {
+      data: {
+        blockTitle: `Extract ${variable}`
+      },
+      namedInputsExpanded: true
+    },
+    extend: {
+      input: {
+        [responseVariableId]: { extends: "variables" }
+      },
+      output: {}
+    }
+  };
+}
+function buildNativeFlowDraftModel(flow, resolvedRequests, smokeCollectionId) {
+  const nodes = {};
+  const connections = {};
+  const extractionNodesByVariable = /* @__PURE__ */ new Map();
+  const requestNodeIds = [];
+  resolvedRequests.forEach((resolved, index) => {
+    const requestNodeId = idFor("req", index);
+    requestNodeIds.push(requestNodeId);
+    nodes[requestNodeId] = createRequestNode(requestNodeId, resolved, smokeCollectionId, 320 * index, 0);
+    if (index > 0) {
+      connections[idFor("seq", index - 1)] = {
+        source: requestNodeIds[index - 1],
+        sourcePort: "success",
+        target: requestNodeId,
+        targetPort: "@"
+      };
+    }
+    resolved.step.extract.forEach((extract, extractIndex) => {
+      const extractNodeId = idFor(`ext${index + 1}`, extractIndex);
+      nodes[extractNodeId] = createExtractNode(extractNodeId, extract.variable, extract.jsonPath, 320 * index + 160, 180);
+      extractionNodesByVariable.set(extract.variable, extractNodeId);
+      connections[idFor(`rex${index + 1}`, extractIndex)] = {
+        source: requestNodeId,
+        sourcePort: "success",
+        target: extractNodeId,
+        targetPort: `variables|${extractNodeId}response`
+      };
+    });
+  });
+  resolvedRequests.forEach((resolved, index) => {
+    const requestNodeId = requestNodeIds[index];
+    resolved.step.bindings.forEach((binding, bindingIndex) => {
+      if (binding.source !== "prior_output" || !binding.variable) {
+        return;
+      }
+      const sourceNodeId = extractionNodesByVariable.get(binding.variable);
+      if (!sourceNodeId) {
+        return;
+      }
+      connections[idFor(`bind${index + 1}`, bindingIndex)] = {
+        source: sourceNodeId,
+        sourcePort: "out",
+        target: requestNodeId,
+        targetPort: `requestVariables|${idFor(`${requestNodeId}v`, bindingIndex)}`
+      };
+    });
+  });
+  return {
+    nodes,
+    modules: {},
+    connections,
+    annotations: {},
+    forms: {},
+    groups: {},
+    ports: {},
+    io: {},
+    description: `Generated draft for ${flow.name}. Edit this Flow in Postman to refine the smoke journey.`,
+    webhook: {
+      payloadContent: "body-only",
+      responseType: "default"
+    },
+    meta: {},
+    scenes: {
+      smokeJourney: {
+        name: flow.name,
+        slides: [
+          {
+            id: "slide001",
+            name: "Smoke journey",
+            bounds: {
+              left: -80,
+              top: -160,
+              right: Math.max(640, resolvedRequests.length * 320 + 320),
+              bottom: 420
+            }
+          }
+        ]
+      }
+    },
+    scenarios: {},
+    config: {
+      definitions: {},
+      constants: {}
+    }
+  };
+}
+function extractCreatedFlowId(response, tempId) {
+  const root = asRecord4(response);
+  const exchange = asRecord4(root?.exchange);
+  const exchanged = exchange?.[tempId];
+  const exchangedRecord = asRecord4(exchanged);
+  return String(
+    exchangedRecord?.id ?? exchanged ?? asRecord4(root?.flow)?.id ?? asRecord4(root?.resource)?.id ?? root?.id ?? ""
+  ).trim();
+}
+function flowUrl(workspaceId, flowId) {
+  return `https://www.postman.com/workspace/${workspaceId}/flow/${flowId}`;
+}
+var PostmanFlowClient = class {
+  constructor(accessToken, teamId = "", bifrostBaseUrl = "https://bifrost-premium-https-v4.gw.postman.com", fetchImpl = fetch) {
+    this.accessToken = accessToken;
+    this.teamId = teamId;
+    this.bifrostBaseUrl = bifrostBaseUrl;
+    this.fetchImpl = fetchImpl;
+  }
+  accessToken;
+  teamId;
+  bifrostBaseUrl;
+  fetchImpl;
+  async proxy(payload) {
+    const response = await this.fetchImpl(`${this.bifrostBaseUrl.replace(/\/+$/g, "")}/ws/proxy`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-access-token": this.accessToken,
+        ...this.teamId ? { "x-entity-team-id": this.teamId } : {}
+      },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      throw await HttpError.fromResponse(response, `${this.bifrostBaseUrl}/ws/proxy`, "POST");
+    }
+    try {
+      return await response.json();
+    } catch {
+      return null;
+    }
+  }
+  async createOrUpdateDraft(request) {
+    const model = buildNativeFlowDraftModel(request.flow, request.resolvedRequests, request.smokeCollectionId);
+    const warnings = request.resolvedRequests.filter((resolved) => !extractRequestId(resolved.item)).map((resolved) => `Could not find a stable request id for ${resolved.step.operationId}; the draft request block may need manual relinking.`);
+    if (!request.flowId) {
+      const tempId = `tmp-${(0, import_node_crypto.randomUUID)()}`;
+      const response = await this.proxy({
+        service: "flow",
+        method: "post",
+        path: `/flows/workspace/${request.workspaceId}/add?v=2`,
+        body: {
+          ids: [tempId],
+          defaults: {
+            [tempId]: {
+              attributes: {
+                name: request.flowName,
+                type: "module"
+              },
+              ...model
+            }
+          }
+        }
+      });
+      const flowId = extractCreatedFlowId(response, tempId);
+      if (!flowId) {
+        throw new Error("Flow creation did not return a Flow ID.");
+      }
+      return {
+        status: "created",
+        flowId,
+        flowUrl: flowUrl(request.workspaceId, flowId),
+        nodeCount: Object.keys(model.nodes).length,
+        connectionCount: Object.keys(model.connections).length,
+        warnings
+      };
+    }
+    const clientId = (0, import_node_crypto.randomUUID)();
+    const shadowResponse = asRecord4(await this.proxy({
+      service: "flow",
+      method: "get",
+      path: `/flow/${request.flowId}/shadow?client=${clientId}&v=2`
+    }));
+    const shadow = asRecord4(shadowResponse?.shadow) ?? asRecord4(asRecord4(shadowResponse?.data)?.shadow);
+    const shadowId = String(shadow?.id ?? shadowResponse?.shadowId ?? "").trim();
+    if (!shadowId) {
+      throw new Error(`Could not acquire Flow shadow for ${request.flowId}.`);
+    }
+    await this.proxy({
+      service: "flow",
+      method: "patch",
+      path: `/flow/${request.flowId}/shadow/${shadowId}`,
+      body: {
+        cv: Number(shadow?.cv ?? 0),
+        sv: Number(shadow?.sv ?? 0),
+        patch: Object.entries(model).map(([key, value]) => ({
+          op: "add",
+          path: `/${key}`,
+          value
+        }))
+      }
+    });
+    return {
+      status: "updated",
+      flowId: request.flowId,
+      flowUrl: flowUrl(request.workspaceId, request.flowId),
+      nodeCount: Object.keys(model.nodes).length,
+      connectionCount: Object.keys(model.connections).length,
+      warnings
+    };
+  }
+};
 
 // src/lib/error-advice.ts
 function adviseFromSmokeClientStatus(status, collectionId, callContext) {
@@ -29259,7 +29720,7 @@ function sleep(ms) {
     setTimeout(resolve2, ms);
   });
 }
-function asRecord3(value) {
+function asRecord5(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function isDeepUpdateConflict(error2) {
@@ -29307,12 +29768,12 @@ var PostmanSmokeClient = class {
     }
   }
   extractCollectionUid(data) {
-    const root = asRecord3(data);
-    const details = asRecord3(root?.details);
+    const root = asRecord5(data);
+    const details = asRecord5(root?.details);
     const resources = Array.isArray(details?.resources) ? details.resources : [];
-    const firstResource = asRecord3(resources[0]);
-    const collection = asRecord3(root?.collection);
-    const resource = asRecord3(root?.resource);
+    const firstResource = asRecord5(resources[0]);
+    const collection = asRecord5(root?.collection);
+    const resource = asRecord5(root?.resource);
     return String(
       firstResource?.id ?? collection?.id ?? collection?.uid ?? resource?.uid ?? resource?.id ?? ""
     ).trim() || void 0;
@@ -29351,9 +29812,9 @@ var PostmanSmokeClient = class {
     if (directUid) {
       return directUid;
     }
-    let taskUrl = String(generationResponse.url ?? "") || String(generationResponse.task_url ?? "") || String(generationResponse.taskUrl ?? "") || String(asRecord3(generationResponse.links)?.task ?? "");
+    let taskUrl = String(generationResponse.url ?? "") || String(generationResponse.task_url ?? "") || String(generationResponse.taskUrl ?? "") || String(asRecord5(generationResponse.links)?.task ?? "");
     if (!taskUrl) {
-      const task = asRecord3(generationResponse.task);
+      const task = asRecord5(generationResponse.task);
       const taskId = generationResponse.taskId ?? task?.id ?? generationResponse.id;
       if (!taskId) {
         throw new Error(`Collection generation did not return a task URL or ID for ${prefix}`);
@@ -29363,8 +29824,8 @@ var PostmanSmokeClient = class {
     for (let attempt = 0; attempt < 45; attempt += 1) {
       await this.sleepImpl(2e3);
       const task = await this.request(taskUrl);
-      const taskRecord = asRecord3(task);
-      const nestedTask = asRecord3(taskRecord?.task);
+      const taskRecord = asRecord5(task);
+      const nestedTask = asRecord5(taskRecord?.task);
       const status = String(taskRecord?.status ?? nestedTask?.status ?? "").toLowerCase();
       if (status === "completed") {
         const taskUid = this.extractCollectionUid(task);
@@ -29386,7 +29847,7 @@ var PostmanSmokeClient = class {
       "read",
       collectionUid
     );
-    const collection = asRecord3(response?.collection);
+    const collection = asRecord5(response?.collection);
     if (!collection) {
       throw new Error(`Failed to fetch collection ${collectionUid}`);
     }
@@ -29422,6 +29883,31 @@ var PostmanSmokeClient = class {
     }
   }
 };
+
+// src/postman/resources-state.ts
+var import_node_fs4 = require("node:fs");
+var import_yaml4 = __toESM(require_dist(), 1);
+function normalize(value) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+function readFlowIdFromResources(flowName) {
+  if (!(0, import_node_fs4.existsSync)(".postman/resources.yaml")) {
+    return void 0;
+  }
+  try {
+    const parsed = (0, import_yaml4.parse)((0, import_node_fs4.readFileSync)(".postman/resources.yaml", "utf8"));
+    const flows = parsed?.cloudResources?.flows;
+    if (!flows) {
+      return void 0;
+    }
+    const normalizedName = normalize(flowName);
+    const entries = Object.entries(flows);
+    const namedMatch = entries.find(([resourcePath]) => normalize(resourcePath).includes(normalizedName));
+    return namedMatch?.[1] ?? entries[0]?.[1];
+  } catch {
+    return void 0;
+  }
+}
 
 // node_modules/@postman-cse/automation-telemetry-core/dist/ci-context.js
 function norm(value) {
@@ -29575,12 +30061,12 @@ function detectCiProviderContext(env = process.env) {
 }
 
 // node_modules/@postman-cse/automation-telemetry-core/dist/repo-context.js
-function normalize(value) {
+function normalize2(value) {
   const trimmed = (value ?? "").trim();
   return trimmed.length > 0 ? trimmed : void 0;
 }
 function normalizeRepoUrl(url) {
-  const raw = normalize(url);
+  const raw = normalize2(url);
   if (!raw) {
     return void 0;
   }
@@ -29593,7 +30079,7 @@ function normalizeRepoUrl(url) {
   return raw.replace(/\.git$/, "");
 }
 function parseProvider(explicitProvider, repoUrl, env) {
-  const explicit = normalize(explicitProvider)?.toLowerCase();
+  const explicit = normalize2(explicitProvider)?.toLowerCase();
   if (explicit === "github" || explicit === "gitlab" || explicit === "bitbucket" || explicit === "azure-devops") {
     return explicit;
   }
@@ -29610,47 +30096,47 @@ function parseProvider(explicitProvider, repoUrl, env) {
   if (url.includes("dev.azure.com") || url.includes("visualstudio.com")) {
     return "azure-devops";
   }
-  if (normalize(env.GITHUB_REPOSITORY)) {
+  if (normalize2(env.GITHUB_REPOSITORY)) {
     return "github";
   }
-  if (normalize(env.CI_PROJECT_PATH) || normalize(env.GITLAB_CI)) {
+  if (normalize2(env.CI_PROJECT_PATH) || normalize2(env.GITLAB_CI)) {
     return "gitlab";
   }
-  if (normalize(env.BITBUCKET_REPO_SLUG)) {
+  if (normalize2(env.BITBUCKET_REPO_SLUG)) {
     return "bitbucket";
   }
-  if (normalize(env.BUILD_REPOSITORY_URI)) {
+  if (normalize2(env.BUILD_REPOSITORY_URI)) {
     return "azure-devops";
   }
   return "unknown";
 }
 function classifyRefKind(env = process.env) {
-  const githubRefType = normalize(env.GITHUB_REF_TYPE)?.toLowerCase();
-  const githubRef = normalize(env.GITHUB_REF);
-  const azureRef = normalize(env.BUILD_SOURCEBRANCH);
-  if (githubRefType === "tag" || githubRef?.startsWith("refs/tags/") || normalize(env.CI_COMMIT_TAG) || normalize(env.BITBUCKET_TAG) || azureRef?.startsWith("refs/tags/")) {
+  const githubRefType = normalize2(env.GITHUB_REF_TYPE)?.toLowerCase();
+  const githubRef = normalize2(env.GITHUB_REF);
+  const azureRef = normalize2(env.BUILD_SOURCEBRANCH);
+  if (githubRefType === "tag" || githubRef?.startsWith("refs/tags/") || normalize2(env.CI_COMMIT_TAG) || normalize2(env.BITBUCKET_TAG) || azureRef?.startsWith("refs/tags/")) {
     return "tag";
   }
-  const githubRefName = normalize(env.GITHUB_REF_NAME);
-  const githubDefault = normalize(env.GITHUB_DEFAULT_BRANCH);
+  const githubRefName = normalize2(env.GITHUB_REF_NAME);
+  const githubDefault = normalize2(env.GITHUB_DEFAULT_BRANCH);
   if (githubRefName && githubDefault) {
     return githubRefName === githubDefault ? "default-branch" : "branch";
   }
-  const gitlabRef = normalize(env.CI_COMMIT_REF_NAME);
-  const gitlabDefault = normalize(env.CI_DEFAULT_BRANCH);
+  const gitlabRef = normalize2(env.CI_COMMIT_REF_NAME);
+  const gitlabDefault = normalize2(env.CI_DEFAULT_BRANCH);
   if (gitlabRef && gitlabDefault) {
     return gitlabRef === gitlabDefault ? "default-branch" : "branch";
   }
-  if (githubRefName || githubRef?.startsWith("refs/heads/") || gitlabRef || normalize(env.BITBUCKET_BRANCH) || normalize(env.BUILD_SOURCEBRANCHNAME) || azureRef?.startsWith("refs/heads/")) {
+  if (githubRefName || githubRef?.startsWith("refs/heads/") || gitlabRef || normalize2(env.BITBUCKET_BRANCH) || normalize2(env.BUILD_SOURCEBRANCHNAME) || azureRef?.startsWith("refs/heads/")) {
     return "branch";
   }
   return "unknown";
 }
 function detectRepoContext(input, env = process.env) {
   const repoUrl = normalizeRepoUrl(input.repoUrl) ?? normalizeRepoUrl(env.GITHUB_SERVER_URL && env.GITHUB_REPOSITORY ? `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}` : void 0) ?? normalizeRepoUrl(env.CI_PROJECT_URL) ?? normalizeRepoUrl(env.BITBUCKET_GIT_HTTP_ORIGIN) ?? normalizeRepoUrl(env.BUILD_REPOSITORY_URI);
-  const repoSlug = normalize(input.repoSlug) ?? normalize(env.GITHUB_REPOSITORY) ?? normalize(env.CI_PROJECT_PATH) ?? (env.BITBUCKET_WORKSPACE && env.BITBUCKET_REPO_SLUG ? normalize(`${env.BITBUCKET_WORKSPACE}/${env.BITBUCKET_REPO_SLUG}`) : void 0) ?? normalize(env.BUILD_REPOSITORY_NAME);
-  const ref = normalize(input.ref) ?? normalize(env.GITHUB_REF_NAME) ?? normalize(env.CI_COMMIT_REF_NAME) ?? normalize(env.BITBUCKET_BRANCH) ?? normalize(env.BUILD_SOURCEBRANCHNAME);
-  const sha = normalize(input.sha) ?? normalize(env.GITHUB_SHA) ?? normalize(env.CI_COMMIT_SHA) ?? normalize(env.BITBUCKET_COMMIT) ?? normalize(env.BUILD_SOURCEVERSION);
+  const repoSlug = normalize2(input.repoSlug) ?? normalize2(env.GITHUB_REPOSITORY) ?? normalize2(env.CI_PROJECT_PATH) ?? (env.BITBUCKET_WORKSPACE && env.BITBUCKET_REPO_SLUG ? normalize2(`${env.BITBUCKET_WORKSPACE}/${env.BITBUCKET_REPO_SLUG}`) : void 0) ?? normalize2(env.BUILD_REPOSITORY_NAME);
+  const ref = normalize2(input.ref) ?? normalize2(env.GITHUB_REF_NAME) ?? normalize2(env.CI_COMMIT_REF_NAME) ?? normalize2(env.BITBUCKET_BRANCH) ?? normalize2(env.BUILD_SOURCEBRANCHNAME);
+  const sha = normalize2(input.sha) ?? normalize2(env.GITHUB_SHA) ?? normalize2(env.CI_COMMIT_SHA) ?? normalize2(env.BITBUCKET_COMMIT) ?? normalize2(env.BUILD_SOURCEVERSION);
   const provider = parseProvider(input.gitProvider, repoUrl, env);
   const refKind = classifyRefKind(env);
   return {
@@ -29664,7 +30150,7 @@ function detectRepoContext(input, env = process.env) {
 }
 
 // node_modules/@postman-cse/automation-telemetry-core/dist/telemetry.js
-var import_node_crypto = require("node:crypto");
+var import_node_crypto2 = require("node:crypto");
 var import_undici2 = __toESM(require_undici(), 1);
 var SCHEMA_VERSION = 3;
 var DEFAULT_TIMEOUT_MS = 1500;
@@ -29691,7 +30177,7 @@ function telemetryDisabled(env) {
   return false;
 }
 function sha256(value) {
-  return (0, import_node_crypto.createHash)("sha256").update(value).digest("hex");
+  return (0, import_node_crypto2.createHash)("sha256").update(value).digest("hex");
 }
 function accountTypeFromConsumer(consumerType) {
   const t = (consumerType ?? "").trim().toLowerCase();
@@ -29865,6 +30351,9 @@ function readActionInputs(env = process.env) {
     specId: getInput2("spec-id", env),
     smokeCollectionId: getInput2("smoke-collection-id", env),
     flowPath: getInput2("flow-path", env) || void 0,
+    generateFlowDraft: parseBooleanInput(getInput2("generate-flow-draft", env), false),
+    flowId: getInput2("flow-id", env) || void 0,
+    flowName: getInput2("flow-name", env) || void 0,
     postmanApiKey: getInput2("postman-api-key", env),
     postmanApiBaseUrl: resolvePostmanApiBaseUrl(getInput2("postman-region", env)),
     authConfig: parseAuthConfig(getInput2("auth-config-json", env)),
@@ -29884,8 +30373,8 @@ function writeDebugDump(debugDumpPath, collection, actionCore) {
     return;
   }
   const resolvedPath = import_node_path2.default.isAbsolute(debugDumpPath) ? debugDumpPath : import_node_path2.default.resolve(process.cwd(), debugDumpPath);
-  (0, import_node_fs3.mkdirSync)(import_node_path2.default.dirname(resolvedPath), { recursive: true });
-  (0, import_node_fs3.writeFileSync)(resolvedPath, `${JSON.stringify(collection, null, 2)}
+  (0, import_node_fs5.mkdirSync)(import_node_path2.default.dirname(resolvedPath), { recursive: true });
+  (0, import_node_fs5.writeFileSync)(resolvedPath, `${JSON.stringify(collection, null, 2)}
 `, "utf8");
   actionCore.info(`Wrote transformed collection debug dump to ${resolvedPath}`);
 }
@@ -29965,6 +30454,7 @@ function ensureRequiredInputs(inputs) {
   }
 }
 function createOutputs(summary2) {
+  const flowDraft = summary2.flowDraft;
   return {
     "smoke-collection-id": summary2.canonicalSmokeCollectionId,
     "flow-apply-status": summary2.status,
@@ -29974,7 +30464,11 @@ function createOutputs(summary2) {
     "resolved-operation-count": String(summary2.resolvedOperationCount),
     "applied-binding-count": String(summary2.appliedBindingCount),
     "applied-extract-count": String(summary2.appliedExtractCount),
-    "assertion-count": String(summary2.assertionCount)
+    "assertion-count": String(summary2.assertionCount),
+    "flow-id": flowDraft?.flowId ?? "",
+    "flow-url": flowDraft?.flowUrl ?? "",
+    "flow-draft-status": flowDraft?.status ?? "skipped",
+    "flow-draft-summary-json": flowDraft ? JSON.stringify(flowDraft) : "{}"
   };
 }
 async function runWithoutFlowManifest(inputs, dependencies) {
@@ -30023,29 +30517,48 @@ async function runWithoutFlowManifest(inputs, dependencies) {
     warnings: ["flow-path was not provided; applied OAuth to the existing Smoke collection without flow curation."]
   });
 }
-async function runSmokeFlow(inputs, dependencies) {
-  dependencies.core.setSecret?.(inputs.postmanApiKey);
-  if (inputs.postmanAccessToken) {
-    dependencies.core.setSecret?.(inputs.postmanAccessToken);
-    dependencies.core.warning(
-      "postman-access-token is accepted only for compatibility with broader onboarding pipelines and is not used by postman-smoke-flow-action. Remove it from standalone Smoke Flow jobs; for pipeline steps that need an access token, mint a service-account token with postman-cs/postman-resolve-service-token-action."
-    );
+function resolveNativeFlowName(inputs) {
+  return inputs.flowName?.trim() || `[Smoke] ${inputs.projectName} happy path`;
+}
+function collectionFlowName(nativeFlowName) {
+  return nativeFlowName.replace(/^\[Smoke\]\s*/i, "").trim() || nativeFlowName;
+}
+function flowWarningsToMessages(warnings) {
+  return warnings.map((warning2) => warning2.message);
+}
+function skippedFlowDraft(existingFlowId = "") {
+  return {
+    status: "skipped",
+    flowId: existingFlowId,
+    flowUrl: "",
+    nodeCount: 0,
+    connectionCount: 0,
+    warnings: []
+  };
+}
+async function createOrUpdateNativeFlowDraft(options) {
+  if (!options.inputs.generateFlowDraft) {
+    return skippedFlowDraft(options.inputs.flowId);
   }
-  ensureRequiredInputs(inputs);
-  if (inputs.collectionSyncMode !== "refresh") {
-    throw new Error(`collection-sync-mode=refresh is the only supported mode for postman-smoke-flow-action; received ${inputs.collectionSyncMode}.`);
+  if (!options.dependencies.flowClient) {
+    throw new Error("generate-flow-draft requires a Flow client. Pass postman-access-token when using the GitHub Action.");
   }
-  const flowPath = inputs.flowPath?.trim();
-  if (!flowPath) {
-    return runWithoutFlowManifest(inputs, dependencies);
-  }
-  const manifest = loadFlowManifest(flowPath);
-  const { flow, warnings } = validateFlowManifest(manifest);
+  const existingFlowId = options.inputs.flowId || readFlowIdFromResources(options.nativeFlowName);
+  const canonicalCollection = await options.dependencies.postman.getCollection(options.inputs.smokeCollectionId);
+  const canonicalRequests = resolveFlowRequests(options.flow, canonicalCollection, options.inputs.specPath);
+  const request = {
+    workspaceId: options.inputs.workspaceId,
+    flowId: existingFlowId,
+    flowName: options.nativeFlowName,
+    smokeCollectionId: options.inputs.smokeCollectionId,
+    flow: options.flow,
+    resolvedRequests: canonicalRequests
+  };
+  return options.dependencies.flowClient.createOrUpdateDraft(request);
+}
+async function applyFlowDefinition(options) {
+  const { inputs, dependencies, flow, warnings } = options;
   const flowName = flow.name;
-  warnings.forEach((warning2) => dependencies.core.warning(warning2.message));
-  if (warnings.length > 0 && inputs.failOnFlowWarning) {
-    throw new Error(`Flow validation produced ${warnings.length} warning(s) and fail-on-flow-warning=true.`);
-  }
   let tempCollectionId = "";
   let tempCollectionDeleted = false;
   let runFailed = false;
@@ -30073,6 +30586,12 @@ async function runSmokeFlow(inputs, dependencies) {
     });
     dependencies.core.info(`Updated canonical Smoke collection ${inputs.smokeCollectionId} from curated flow.`);
     const resolvedRequests = resolveFlowRequests(flow, generatedCollection, inputs.specPath);
+    const flowDraft = await createOrUpdateNativeFlowDraft({
+      inputs,
+      dependencies,
+      flow,
+      nativeFlowName: options.nativeFlowName || resolveNativeFlowName(inputs)
+    });
     const summary2 = {
       flowName: flow.name,
       status: "success",
@@ -30084,7 +30603,9 @@ async function runSmokeFlow(inputs, dependencies) {
       appliedBindingCount: transformed.bindingCount,
       appliedExtractCount: transformed.extractCount,
       assertionCount: transformed.assertionCount,
-      warnings: warnings.map((warning2) => warning2.message)
+      generatedFlowDraft: inputs.generateFlowDraft,
+      flowDraft,
+      warnings: flowWarningsToMessages(warnings)
     };
     return createOutputs(summary2);
   } catch (error2) {
@@ -30100,7 +30621,9 @@ async function runSmokeFlow(inputs, dependencies) {
       appliedBindingCount: 0,
       appliedExtractCount: 0,
       assertionCount: 0,
-      warnings: [...warnings.map((warning2) => warning2.message), summarizeError(error2)]
+      generatedFlowDraft: inputs.generateFlowDraft,
+      flowDraft: skippedFlowDraft(inputs.flowId),
+      warnings: [...flowWarningsToMessages(warnings), summarizeError(error2)]
     };
     if (tempCollectionId && !inputs.keepTempCollectionOnFailure) {
       try {
@@ -30127,15 +30650,71 @@ async function runSmokeFlow(inputs, dependencies) {
     }
   }
 }
+async function runWithGeneratedFlowDraft(inputs, dependencies) {
+  if (!inputs.specPath) {
+    throw new Error("generate-flow-draft requires spec-path so the action can infer a safe smoke journey.");
+  }
+  if (!inputs.postmanAccessToken) {
+    throw new Error("generate-flow-draft requires postman-access-token for native Flow create/update calls.");
+  }
+  const nativeFlowName = resolveNativeFlowName(inputs);
+  const inferred = inferSmokeFlowFromOpenApi(inputs.specPath, collectionFlowName(nativeFlowName));
+  const warnings = inferred.warnings.map((message) => ({ message }));
+  warnings.forEach((warning2) => dependencies.core.warning(warning2.message));
+  if (warnings.length > 0 && inputs.failOnFlowWarning) {
+    throw new Error(`Flow inference produced ${warnings.length} warning(s) and fail-on-flow-warning=true.`);
+  }
+  return applyFlowDefinition({
+    inputs,
+    dependencies,
+    flow: inferred.flow,
+    warnings,
+    nativeFlowName
+  });
+}
+async function runSmokeFlow(inputs, dependencies) {
+  dependencies.core.setSecret?.(inputs.postmanApiKey);
+  if (inputs.postmanAccessToken) {
+    dependencies.core.setSecret?.(inputs.postmanAccessToken);
+    if (!inputs.generateFlowDraft) {
+      dependencies.core.warning(
+        "postman-access-token is accepted only for compatibility with broader onboarding pipelines and is not used by postman-smoke-flow-action. Remove it from standalone Smoke Flow jobs; for pipeline steps that need an access token, mint a service-account token with postman-cs/postman-resolve-service-token-action."
+      );
+    }
+  }
+  ensureRequiredInputs(inputs);
+  if (inputs.collectionSyncMode !== "refresh") {
+    throw new Error(`collection-sync-mode=refresh is the only supported mode for postman-smoke-flow-action; received ${inputs.collectionSyncMode}.`);
+  }
+  const flowPath = inputs.flowPath?.trim();
+  if (flowPath && inputs.generateFlowDraft) {
+    throw new Error("flow-path and generate-flow-draft=true are mutually exclusive. Use one source for the Smoke journey.");
+  }
+  if (inputs.generateFlowDraft) {
+    return runWithGeneratedFlowDraft(inputs, dependencies);
+  }
+  if (!flowPath) {
+    return runWithoutFlowManifest(inputs, dependencies);
+  }
+  const manifest = loadFlowManifest(flowPath);
+  const { flow, warnings } = validateFlowManifest(manifest);
+  warnings.forEach((warning2) => dependencies.core.warning(warning2.message));
+  if (warnings.length > 0 && inputs.failOnFlowWarning) {
+    throw new Error(`Flow validation produced ${warnings.length} warning(s) and fail-on-flow-warning=true.`);
+  }
+  return applyFlowDefinition({ inputs, dependencies, flow, warnings });
+}
 async function runAction(actionCore = core_exports, env = process.env) {
   const inputs = readActionInputs(env);
   const telemetry = createTelemetryContext({ action: "postman-smoke-flow-action", logger: actionCore });
   telemetry.setTeamId(inputs.teamId);
   try {
     const postman = new PostmanSmokeClient(inputs.postmanApiKey, inputs.postmanApiBaseUrl);
+    const flowClient = inputs.generateFlowDraft ? new PostmanFlowClient(inputs.postmanAccessToken ?? "", inputs.teamId) : void 0;
     const outputs2 = await runSmokeFlow(inputs, {
       core: actionCore,
-      postman
+      postman,
+      flowClient
     });
     for (const [name, value] of Object.entries(outputs2)) {
       actionCore.setOutput(name, value);

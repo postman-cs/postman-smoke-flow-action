@@ -43,6 +43,9 @@ export type ActionInputs = {
   specId: string;
   smokeCollectionId: string;
   flowPath?: string;
+  generateFlowDraft: boolean;
+  flowId?: string;
+  flowName?: string;
   postmanApiKey: string;
   postmanApiBaseUrl: string;
   authConfig?: SmokeAuthConfig;
@@ -92,6 +95,17 @@ export type ResolvedRequest = {
   item: Record<string, unknown>;
 };
 
+export type FlowDraftStatus = 'created' | 'updated' | 'skipped';
+
+export type FlowDraftSummary = {
+  status: FlowDraftStatus;
+  flowId: string;
+  flowUrl: string;
+  nodeCount: number;
+  connectionCount: number;
+  warnings: string[];
+};
+
 export type FlowApplySummary = {
   flowName: string;
   status: 'success' | 'failed' | 'skipped';
@@ -104,6 +118,8 @@ export type FlowApplySummary = {
   appliedBindingCount: number;
   appliedExtractCount: number;
   assertionCount: number;
+  generatedFlowDraft?: boolean;
+  flowDraft?: FlowDraftSummary;
   warnings: string[];
 };
 
@@ -117,6 +133,10 @@ export type ActionOutputs = {
   'applied-binding-count': string;
   'applied-extract-count': string;
   'assertion-count': string;
+  'flow-id': string;
+  'flow-url': string;
+  'flow-draft-status': FlowDraftStatus;
+  'flow-draft-summary-json': string;
 };
 
 export type CoreLike = {

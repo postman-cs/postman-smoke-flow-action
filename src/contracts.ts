@@ -5,6 +5,9 @@ export const smokeFlowActionContract = {
     'spec-id': { required: true },
     'smoke-collection-id': { required: true },
     'flow-path': { required: false },
+    'generate-flow-draft': { required: false, default: 'false' },
+    'flow-id': { required: false },
+    'flow-name': { required: false },
     'postman-api-key': { required: true },
     'postman-region': { required: false, default: 'us' },
     'auth-config-json': { required: false },
@@ -27,6 +30,10 @@ export const smokeFlowActionContract = {
     'resolved-operation-count': {},
     'applied-binding-count': {},
     'applied-extract-count': {},
-    'assertion-count': {}
+    'assertion-count': {},
+    'flow-id': {},
+    'flow-url': {},
+    'flow-draft-status': {},
+    'flow-draft-summary-json': {}
   }
 } as const;

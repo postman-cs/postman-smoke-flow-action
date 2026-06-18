@@ -10,6 +10,9 @@ describe('readActionInputs', () => {
       INPUT_SPEC_ID: 'spec-123',
       INPUT_SMOKE_COLLECTION_ID: 'col-123',
       INPUT_FLOW_PATH: '.postman-api-launchpad/flows/remote-pos/flow.yaml',
+      INPUT_GENERATE_FLOW_DRAFT: 'false',
+      INPUT_FLOW_ID: 'flow-123',
+      INPUT_FLOW_NAME: '[Smoke] Remote POS happy path',
       INPUT_POSTMAN_API_KEY: 'pmak-test',
       INPUT_AUTH_CONFIG_JSON: JSON.stringify({
         enabled: true,
@@ -30,6 +33,9 @@ describe('readActionInputs', () => {
     expect(inputs.specId).toBe('spec-123');
     expect(inputs.smokeCollectionId).toBe('col-123');
     expect(inputs.flowPath).toBe('.postman-api-launchpad/flows/remote-pos/flow.yaml');
+    expect(inputs.generateFlowDraft).toBe(false);
+    expect(inputs.flowId).toBe('flow-123');
+    expect(inputs.flowName).toBe('[Smoke] Remote POS happy path');
     expect(inputs.postmanApiKey).toBe('pmak-test');
     expect(inputs.authConfig?.enabled).toBe(true);
     expect(inputs.authConfig?.tokenUrl).toBe('{{auth_token_url}}');
@@ -40,6 +46,7 @@ describe('readActionInputs', () => {
     const inputs = readActionInputs({} as NodeJS.ProcessEnv);
 
     expect(inputs.secretsResolverEnabled).toBe(true);
+    expect(inputs.generateFlowDraft).toBe(false);
   });
 
   it('treats missing flow-path as undefined for auth-only Smoke updates', () => {
@@ -60,5 +67,17 @@ describe('readActionInputs', () => {
 
     expect(inputs.flowPath).toBeUndefined();
     expect(inputs.authConfig?.enabled).toBe(true);
+  });
+
+  it('parses generated Flow draft controls', () => {
+    const inputs = readActionInputs({
+      INPUT_GENERATE_FLOW_DRAFT: 'true',
+      INPUT_FLOW_ID: 'flow-abc',
+      INPUT_FLOW_NAME: '[Smoke] Payments happy path'
+    } as NodeJS.ProcessEnv);
+
+    expect(inputs.generateFlowDraft).toBe(true);
+    expect(inputs.flowId).toBe('flow-abc');
+    expect(inputs.flowName).toBe('[Smoke] Payments happy path');
   });
 });

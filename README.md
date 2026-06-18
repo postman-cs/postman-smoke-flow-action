@@ -130,6 +130,27 @@ To inject Smoke-only [OAuth2](https://learning.postman.com/docs/use/send-request
     auth-config-json: '{"enabled":true,"type":"oauth2","grantType":"client_credentials","tokenUrl":"{{auth_token_url}}","clientAuthentication":"body"}'
 ```
 
+### Generate a native Flow draft without flow.yaml
+
+Set `generate-flow-draft: "true"` to infer a safe happy-path journey from `spec-path`, create or update a native Postman Flow draft, and compile the same inferred journey into the canonical Smoke collection. This mode is opt-in and requires a service-account access token from `postman-resolve-service-token-action`.
+
+```yaml
+- id: smoke_flow
+  uses: postman-cs/postman-smoke-flow-action@v1
+  with:
+    project-name: core-payments
+    workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
+    spec-id: ${{ steps.bootstrap.outputs.spec-id }}
+    smoke-collection-id: ${{ steps.bootstrap.outputs.smoke-collection-id }}
+    spec-path: api/openapi.yaml
+    generate-flow-draft: "true"
+    flow-name: "[Smoke] Core Payments happy path"
+    postman-region: us
+    postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+    postman-access-token: ${{ steps.postman_token.outputs.token }}
+    team-id: ${{ steps.postman_token.outputs.team-id }}
+```
+
 ### Debug the transformed collection with debug-dump-path
 
 Set `debug-dump-path` to write the transformed collection JSON to disk before the update call, then upload it as a workflow artifact for inspection:
@@ -181,6 +202,9 @@ See [docs/cli.md](docs/cli.md) for GitLab CI, Bitbucket Pipelines, Azure DevOps,
 | `spec-id` | Postman spec ID produced by bootstrap. | yes |  |
 | `smoke-collection-id` | Canonical Smoke collection ID to refresh in place. | yes |  |
 | `flow-path` | Optional repo-root-relative path to the curated flow.yaml manifest. When omitted, OAuth config can still be applied to the existing Smoke collection. | no |  |
+| `generate-flow-draft` | Experimental. Infer a safe smoke journey from spec-path, create or update a native Postman Flow draft, and compile it into the Smoke collection. | no | `false` |
+| `flow-id` | Optional existing native Postman Flow ID to update when generate-flow-draft is true. When omitted, .postman/resources.yaml is checked before creating a new Flow. | no |  |
+| `flow-name` | Optional native Postman Flow name. Defaults to "[Smoke] <project-name> happy path" when generate-flow-draft is true. | no |  |
 | `postman-api-key` | Postman API key used for collection generation and mutation. | yes |  |
 | `postman-region` | Postman data residency region for public API calls. Supported values are us and eu. | no | `us` |
 | `auth-config-json` | Optional JSON config for Smoke collection OAuth2 client-credentials token acquisition. | no |  |
@@ -209,6 +233,10 @@ See [docs/cli.md](docs/cli.md) for GitLab CI, Bitbucket Pipelines, Azure DevOps,
 | `applied-binding-count` | Number of bindings applied as prerequest logic. |
 | `applied-extract-count` | Number of extracts applied as test logic. |
 | `assertion-count` | Number of generated assertions applied across flow steps. |
+| `flow-id` | Native Postman Flow ID created or updated by generate-flow-draft. |
+| `flow-url` | URL for the native Postman Flow created or updated by generate-flow-draft. |
+| `flow-draft-status` | Native Flow draft status (created, updated, or skipped). |
+| `flow-draft-summary-json` | JSON summary of native Flow draft creation or update. |
 <!-- outputs-table:end -->
 
 ## How it works
