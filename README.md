@@ -27,6 +27,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - id: postman_token
+        uses: postman-cs/postman-resolve-service-token-action@v1
+        with:
+          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+          postman-region: us
+
       - uses: postman-cs/postman-smoke-flow-action@v1
         with:
           project-name: core-payments
@@ -35,9 +41,11 @@ jobs:
           smoke-collection-id: ${{ vars.POSTMAN_SMOKE_COLLECTION_ID }}
           flow-path: .postman-api-launchpad/flows/core-payments/flow.yaml
           spec-path: api/openapi.yaml
-          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+          postman-access-token: ${{ steps.postman_token.outputs.token }}
           postman-region: us
 ```
+
+`postman-access-token` is the required credential: the Smoke collection reshape runs entirely through the Postman gateway under that token. Mint it with [`postman-resolve-service-token-action`](https://github.com/postman-cs/postman-resolve-service-token-action), as shown above. `postman-api-key` is optional and only re-mints the access token if it expires mid-run; it never drives the reshape.
 
 The workspace, spec, and Smoke collection IDs normally come straight from a `postman-bootstrap-action` step in the same job (see the chained pipeline example below).
 For EU data residency, set `postman-region: eu` on bootstrap, Smoke Flow, and repo sync so every step calls the same Postman region.
@@ -78,7 +86,7 @@ jobs:
           spec-id: ${{ steps.bootstrap.outputs.spec-id }}
           smoke-collection-id: ${{ steps.bootstrap.outputs.smoke-collection-id }}
           flow-path: .postman-api-launchpad/flows/core-payments/flow.yaml
-          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+          postman-access-token: ${{ steps.postman_token.outputs.token }}
           postman-region: us
 
       - id: repo_sync
@@ -111,7 +119,7 @@ With `flow-path` set, the action generates a temporary Smoke collection from the
     postman-region: us
     flow-path: .postman-api-launchpad/flows/core-payments/flow.yaml
     spec-path: api/openapi.yaml
-    postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+    postman-access-token: ${{ steps.postman_token.outputs.token }}
 ```
 
 ### OAuth-only update without flow-path
@@ -126,7 +134,7 @@ To inject Smoke-only [OAuth2](https://learning.postman.com/docs/use/send-request
     spec-id: ${{ steps.bootstrap.outputs.spec-id }}
     smoke-collection-id: ${{ steps.bootstrap.outputs.smoke-collection-id }}
     postman-region: us
-    postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+    postman-access-token: ${{ steps.postman_token.outputs.token }}
     auth-config-json: '{"enabled":true,"type":"oauth2","grantType":"client_credentials","tokenUrl":"{{auth_token_url}}","clientAuthentication":"body"}'
 ```
 
@@ -145,7 +153,7 @@ Set `debug-dump-path` to write the transformed collection JSON to disk before th
     flow-path: .postman-api-launchpad/flows/core-payments/flow.yaml
     debug-dump-path: smoke-collection-debug.json
     keep-temp-collection-on-failure: "true"
-    postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+    postman-access-token: ${{ steps.postman_token.outputs.token }}
 
 - if: always()
   uses: actions/upload-artifact@v4
@@ -166,7 +174,7 @@ npx --package @postman-cse/onboarding-smoke-flow postman-smoke-flow \
   --smoke-collection-id "$POSTMAN_SMOKE_COLLECTION_ID" \
   --flow-path .postman-api-launchpad/flows/core-payments/flow.yaml \
   --postman-region eu \
-  --postman-api-key "$POSTMAN_API_KEY"
+  --postman-access-token "$POSTMAN_ACCESS_TOKEN"
 ```
 
 See [docs/cli.md](docs/cli.md) for GitLab CI, Bitbucket Pipelines, Azure DevOps, and Jenkins patterns.
@@ -217,17 +225,18 @@ In flow mode (`flow-path` set), the action reads the curated manifest, generates
 
 In OAuth-only mode (`flow-path` omitted, `auth-config-json` enabled), the action fetches the existing canonical Smoke collection and adds collection-level OAuth2 client-credentials token acquisition without touching request order or content. Details and runtime variable injection are in [docs/smoke-oauth.md](docs/smoke-oauth.md).
 
-The action never mutates baseline or contract collections, and it never writes runtime tokens or client secrets back to Postman environments.
+All collection operations — generating the temporary collection from the spec, reading it, reshaping the canonical collection, and deleting the temporary one — run through the Postman gateway under postman-access-token. The action never mutates baseline or contract collections, and it never writes runtime tokens or client secrets back to Postman environments.
 
 ## Credentials and regions
 
 | Need | Recommended path |
 | --- | --- |
-| Postman API collection generation and updates | Pass postman-api-key from a GitHub Actions secret or CI secret. |
-| Service-account access token and team ID for the broader onboarding pipeline | Run postman-resolve-service-token-action before bootstrap or the composite action. |
+| Generate, read, reshape, and delete the Smoke collection | Pass postman-access-token. The reshape runs entirely through the Postman gateway under this token, so it is required. Mint it with postman-resolve-service-token-action. |
+| Re-mint the access token if it expires mid-run | Optionally pass postman-api-key from a GitHub Actions secret or CI secret. It is used only to refresh an expired postman-access-token and never drives an asset operation. |
+| Service-account access token and team ID for the broader onboarding pipeline | Run postman-resolve-service-token-action before bootstrap or the composite action, and reuse its token output across steps. |
 | Smoke collection OAuth at run time | Keep OAuth client credentials in CI secrets or runtime variables. This action writes placeholders only. |
 
-postman-region controls the Postman public API host. Use us for https://api.getpostman.com and eu for https://api.eu.postman.com. The default is us. Smoke Flow is scoped to public Postman API regions and should use the same public region as bootstrap and repo sync.
+postman-region selects the Postman public API host used to re-mint the access token and to run the identity preflight: us for https://api.getpostman.com and eu for https://api.eu.postman.com. The default is us. Use the same region as bootstrap and repo sync.
 
 ## Resources
 
