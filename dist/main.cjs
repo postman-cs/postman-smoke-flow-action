@@ -28521,6 +28521,82 @@ function summarizeError(error2) {
   return error2 instanceof Error ? error2.message : String(error2);
 }
 
+// src/lib/secrets.ts
+var REDACTED = "[REDACTED]";
+var SENSITIVE_HEADER_NAMES = /* @__PURE__ */ new Set([
+  "authorization",
+  "cookie",
+  "proxy-authorization",
+  "set-cookie",
+  "x-access-token",
+  "x-api-key"
+]);
+function isIterable(value) {
+  return value !== null && value !== void 0 && typeof value !== "string" && typeof value[Symbol.iterator] === "function";
+}
+function appendSecretValues(value, results) {
+  if (value === null || value === void 0) {
+    return;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (normalized) {
+      results.push(normalized);
+    }
+    return;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    results.push(String(value));
+    return;
+  }
+  if (Array.isArray(value) || isIterable(value)) {
+    for (const entry of value) {
+      appendSecretValues(entry, results);
+    }
+  }
+}
+function normalizeSecretValues(secretValues) {
+  const values = [];
+  appendSecretValues(secretValues, values);
+  return [...new Set(values)].sort((left, right) => right.length - left.length);
+}
+function redactSecrets(input, secretValues, replacement = REDACTED) {
+  const source = String(input ?? "");
+  const secrets = normalizeSecretValues(secretValues);
+  if (!source || secrets.length === 0) {
+    return source;
+  }
+  return secrets.reduce((sanitized, secret) => {
+    if (!secret) {
+      return sanitized;
+    }
+    return sanitized.split(secret).join(replacement);
+  }, source);
+}
+function createSecretMasker(secretValues, replacement = REDACTED) {
+  return (input) => redactSecrets(input, secretValues, replacement);
+}
+function headerEntries(headers) {
+  if (headers instanceof Headers) {
+    return Array.from(headers.entries());
+  }
+  if (Array.isArray(headers)) {
+    return headers.map(([name, value]) => [name, String(value)]);
+  }
+  return Object.entries(headers).map(([name, value]) => [name, String(value)]);
+}
+function sanitizeHeaders(headers, secretValues) {
+  if (!headers) {
+    return {};
+  }
+  const sanitized = {};
+  for (const [name, value] of headerEntries(headers)) {
+    const normalizedName = name.toLowerCase();
+    sanitized[normalizedName] = SENSITIVE_HEADER_NAMES.has(normalizedName) ? REDACTED : redactSecrets(value, secretValues);
+  }
+  return sanitized;
+}
+
 // src/postman/scripts.ts
 function quote(value) {
   return JSON.stringify(value);
@@ -29209,82 +29285,6 @@ function buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests
     extractCount,
     assertionCount
   };
-}
-
-// src/lib/secrets.ts
-var REDACTED = "[REDACTED]";
-var SENSITIVE_HEADER_NAMES = /* @__PURE__ */ new Set([
-  "authorization",
-  "cookie",
-  "proxy-authorization",
-  "set-cookie",
-  "x-access-token",
-  "x-api-key"
-]);
-function isIterable(value) {
-  return value !== null && value !== void 0 && typeof value !== "string" && typeof value[Symbol.iterator] === "function";
-}
-function appendSecretValues(value, results) {
-  if (value === null || value === void 0) {
-    return;
-  }
-  if (typeof value === "string") {
-    const normalized = value.trim();
-    if (normalized) {
-      results.push(normalized);
-    }
-    return;
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    results.push(String(value));
-    return;
-  }
-  if (Array.isArray(value) || isIterable(value)) {
-    for (const entry of value) {
-      appendSecretValues(entry, results);
-    }
-  }
-}
-function normalizeSecretValues(secretValues) {
-  const values = [];
-  appendSecretValues(secretValues, values);
-  return [...new Set(values)].sort((left, right) => right.length - left.length);
-}
-function redactSecrets(input, secretValues, replacement = REDACTED) {
-  const source = String(input ?? "");
-  const secrets = normalizeSecretValues(secretValues);
-  if (!source || secrets.length === 0) {
-    return source;
-  }
-  return secrets.reduce((sanitized, secret) => {
-    if (!secret) {
-      return sanitized;
-    }
-    return sanitized.split(secret).join(replacement);
-  }, source);
-}
-function createSecretMasker(secretValues, replacement = REDACTED) {
-  return (input) => redactSecrets(input, secretValues, replacement);
-}
-function headerEntries(headers) {
-  if (headers instanceof Headers) {
-    return Array.from(headers.entries());
-  }
-  if (Array.isArray(headers)) {
-    return headers.map(([name, value]) => [name, String(value)]);
-  }
-  return Object.entries(headers).map(([name, value]) => [name, String(value)]);
-}
-function sanitizeHeaders(headers, secretValues) {
-  if (!headers) {
-    return {};
-  }
-  const sanitized = {};
-  for (const [name, value] of headerEntries(headers)) {
-    const normalizedName = name.toLowerCase();
-    sanitized[normalizedName] = SENSITIVE_HEADER_NAMES.has(normalizedName) ? REDACTED : redactSecrets(value, secretValues);
-  }
-  return sanitized;
 }
 
 // src/lib/http-error.ts
@@ -29981,6 +29981,7 @@ var AccessTokenProvider = class {
 
 // src/postman/credential-identity.ts
 var sessionPath = "/api/sessions/current";
+var pmakMemo = /* @__PURE__ */ new Map();
 var sessionMemo = /* @__PURE__ */ new Map();
 var memoizedSessionIdentity;
 function getMemoizedSessionIdentity() {
@@ -30004,6 +30005,46 @@ function coerceText(raw) {
 }
 function normalizeBaseUrl(raw) {
   return String(raw || "").replace(/\/+$/, "");
+}
+async function resolvePmakIdentity(opts) {
+  const apiKey = String(opts.apiKey || "").trim();
+  if (!apiKey) {
+    return void 0;
+  }
+  const baseUrl = normalizeBaseUrl(opts.apiBaseUrl);
+  const memoKey = `${baseUrl}::${apiKey}`;
+  let pending = pmakMemo.get(memoKey);
+  if (!pending) {
+    pending = probePmakIdentity(baseUrl, apiKey, opts.fetchImpl ?? fetch);
+    pmakMemo.set(memoKey, pending);
+  }
+  return pending;
+}
+async function probePmakIdentity(baseUrl, apiKey, fetchImpl) {
+  try {
+    const response = await fetchImpl(`${baseUrl}/me`, {
+      method: "GET",
+      headers: { "X-Api-Key": apiKey }
+    });
+    if (!response.ok) {
+      return void 0;
+    }
+    const payload = asRecord4(await response.json());
+    const user = asRecord4(payload?.user);
+    if (!user) {
+      return void 0;
+    }
+    return {
+      source: "pmak/me",
+      userId: coerceId(user.id),
+      fullName: coerceText(user.fullName) ?? coerceText(user.username),
+      teamId: coerceId(user.teamId),
+      teamName: coerceText(user.teamName),
+      teamDomain: coerceText(user.teamDomain)
+    };
+  } catch {
+    return void 0;
+  }
 }
 async function resolveSessionIdentity(opts) {
   const accessToken = String(opts.accessToken || "").trim();
@@ -30054,6 +30095,141 @@ async function probeSessionIdentity(baseUrl, accessToken, fetchImpl) {
   } catch {
     return void 0;
   }
+}
+function describeTeam(id) {
+  const label = id?.teamName ?? id?.teamDomain;
+  return `team ${id?.teamId ?? "unresolved"}${label ? ` (${label})` : ""}`;
+}
+function formatIdentityLine(id, mask) {
+  const teamPart = id.teamId ? describeTeam(id) : "team unresolved";
+  const domainPart = id.teamDomain ? `, domain ${id.teamDomain}` : "";
+  if (id.source === "pmak/me") {
+    const userPart = id.userId ? `user ${id.userId}${id.fullName ? ` (${id.fullName})` : ""}, ` : "";
+    return mask(`postman: PMAK identity - ${userPart}${teamPart}${domainPart}`);
+  }
+  return mask(
+    `postman: access-token session identity - ${teamPart}${domainPart} [source: iapub/sessions]`
+  );
+}
+function crossCheckIdentities(args) {
+  const pmakTeamId = args.pmak?.teamId;
+  const sessionTeamId = args.session?.teamId;
+  if (pmakTeamId && sessionTeamId && pmakTeamId !== sessionTeamId) {
+    const level = args.mode === "enforce" ? "fail" : "note";
+    const lead = level === "fail" ? "credential preflight FAILED" : "credential preflight note";
+    const fix = level === "fail" ? "Use one credential pair from a single parent org: re-mint the access token from the same parent org as postman-api-key (postman-resolve-service-token-action, or POST https://api.getpostman.com/service-account-tokens with that team's PMAK), or set postman-api-key to the matching parent org." : "Use one credential pair from a single parent org.";
+    return {
+      ok: false,
+      level,
+      message: args.mask(
+        `postman: ${lead} - PMAK belongs to ${describeTeam(args.pmak)} but the access token's session belongs to a different parent org, ${describeTeam(args.session)}. ` + fix
+      )
+    };
+  }
+  if (pmakTeamId && sessionTeamId) {
+    const scope = args.workspaceTeamId || args.explicitTeamId ? "parent org team" : "team";
+    const label = args.pmak?.teamName ?? args.pmak?.teamDomain ?? args.session?.teamName ?? args.session?.teamDomain;
+    return {
+      ok: true,
+      level: "ok",
+      message: args.mask(
+        `postman: credential preflight OK - PMAK and access token both resolve to ${scope} ${pmakTeamId}${label ? ` (${label})` : ""}`
+      )
+    };
+  }
+  const missing = [
+    !pmakTeamId ? "PMAK identity" : void 0,
+    !sessionTeamId ? "access-token session identity" : void 0
+  ].filter(Boolean).join(" and ");
+  return {
+    ok: false,
+    level: "note",
+    message: args.mask(
+      `postman: credential preflight note - cross-check skipped because the ${missing} did not resolve a team id; continuing with reactive error guidance only`
+    )
+  };
+}
+async function runCredentialPreflight(args) {
+  const mask = args.mask;
+  const apiKey = String(args.postmanApiKey || "").trim();
+  const accessToken = String(args.postmanAccessToken || "").trim();
+  let pmak;
+  if (apiKey) {
+    try {
+      pmak = await resolvePmakIdentity({
+        apiBaseUrl: args.apiBaseUrl,
+        apiKey,
+        fetchImpl: args.fetchImpl
+      });
+    } catch (error2) {
+      args.log.warning(
+        mask(
+          `postman: credential preflight could not resolve PMAK identity: ${error2 instanceof Error ? error2.message : String(error2)}`
+        )
+      );
+    }
+    if (pmak) {
+      args.log.info(formatIdentityLine(pmak, mask));
+    } else {
+      args.log.warning(
+        mask("postman: credential preflight could not resolve PMAK identity from GET /me; continuing")
+      );
+    }
+  }
+  if (!accessToken) {
+    args.log.info(mask("postman: Bifrost diagnostics limited: no access token"));
+    return;
+  }
+  let session;
+  try {
+    session = await resolveSessionIdentity({
+      iapubBaseUrl: args.iapubBaseUrl,
+      accessToken,
+      fetchImpl: args.fetchImpl
+    });
+  } catch (error2) {
+    args.log.warning(
+      mask(
+        `postman: credential preflight could not resolve access-token session identity: ${error2 instanceof Error ? error2.message : String(error2)}`
+      )
+    );
+  }
+  if (session) {
+    args.log.info(formatIdentityLine(session, mask));
+    const consumerType = session.consumerType?.trim();
+    if (consumerType && consumerType.toLowerCase() !== "service_account") {
+      args.log.warning(
+        mask(
+          `postman: deprecation warning - postman-access-token resolved to consumerType ${consumerType}. postman-cs/postman-resolve-service-token-action is the primary CI path for service-account access tokens.`
+        )
+      );
+    }
+  } else {
+    args.log.warning(
+      mask(
+        "postman: credential preflight could not resolve the access-token session identity from iapub; continuing with reactive error guidance only"
+      )
+    );
+  }
+  const result = crossCheckIdentities({
+    pmak,
+    session,
+    workspaceTeamId: args.workspaceTeamId,
+    explicitTeamId: args.explicitTeamId,
+    mode: args.mode,
+    mask
+  });
+  if (!result.message) {
+    return;
+  }
+  if (result.level === "fail") {
+    throw new Error(result.message);
+  }
+  if (result.level === "note") {
+    args.log.warning(result.message);
+    return;
+  }
+  args.log.info(result.message);
 }
 
 // node_modules/@postman-cse/automation-telemetry-core/dist/ci-context.js
@@ -30787,12 +30963,22 @@ async function runAction(actionCore = core_exports, env = process.env) {
   const inputs = readActionInputs(env);
   const telemetry = createTelemetryContext({ action: "postman-smoke-flow-action", logger: actionCore });
   telemetry.setTeamId(inputs.teamId);
-  if (inputs.postmanAccessToken) {
-    await resolveSessionIdentity({
-      iapubBaseUrl: inputs.postmanIapubBaseUrl,
-      accessToken: inputs.postmanAccessToken
-    }).catch(() => void 0);
+  if (inputs.postmanApiKey) {
+    actionCore.setSecret?.(inputs.postmanApiKey);
   }
+  if (inputs.postmanAccessToken) {
+    actionCore.setSecret?.(inputs.postmanAccessToken);
+  }
+  await runCredentialPreflight({
+    apiBaseUrl: inputs.postmanApiBaseUrl,
+    iapubBaseUrl: inputs.postmanIapubBaseUrl,
+    postmanApiKey: inputs.postmanApiKey,
+    postmanAccessToken: inputs.postmanAccessToken,
+    explicitTeamId: inputs.teamId || void 0,
+    mode: "warn",
+    mask: createSecretMasker([inputs.postmanApiKey, inputs.postmanAccessToken]),
+    log: actionCore
+  });
   try {
     const postman = createSmokeClient(inputs, actionCore);
     const outputs = await runSmokeFlow(inputs, {

@@ -7,6 +7,7 @@ import { loadFlowManifest } from './flow/parser.js';
 import { resolveFlowRequests } from './flow/resolver.js';
 import { validateFlowManifest } from './flow/validator.js';
 import { summarizeError } from './lib/logging.js';
+import { createSecretMasker } from './lib/secrets.js';
 import type { ActionInputs, ActionOutputs, CoreLike, FlowApplySummary, SmokeAuthConfig } from './types.js';
 import {
   applySmokeCollectionAuth,
@@ -20,7 +21,7 @@ import { PostmanGatewaySmokeClient } from './postman/postman-gateway-smoke-clien
 import { AccessTokenProvider } from './lib/postman/token-provider.js';
 import {
   getMemoizedSessionIdentity,
-  resolveSessionIdentity
+  runCredentialPreflight
 } from './postman/credential-identity.js';
 import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
 
@@ -468,16 +469,22 @@ export async function runAction(actionCore: CoreLike = core, env: NodeJS.Process
   const inputs = readActionInputs(env);
   const telemetry = createTelemetryContext({ action: 'postman-smoke-flow-action', logger: actionCore });
   telemetry.setTeamId(inputs.teamId);
-  // Resolve the access-token session identity once (memoized) so telemetry can
-  // emit `account_type` from the session `consumerType`, closing the gap where
-  // smoke-flow only set team_id. Best-effort: a failed probe leaves account_type
-  // unknown rather than blocking the run.
-  if (inputs.postmanAccessToken) {
-    await resolveSessionIdentity({
-      iapubBaseUrl: inputs.postmanIapubBaseUrl,
-      accessToken: inputs.postmanAccessToken
-    }).catch(() => undefined);
+  if (inputs.postmanApiKey) {
+    actionCore.setSecret?.(inputs.postmanApiKey);
   }
+  if (inputs.postmanAccessToken) {
+    actionCore.setSecret?.(inputs.postmanAccessToken);
+  }
+  await runCredentialPreflight({
+    apiBaseUrl: inputs.postmanApiBaseUrl,
+    iapubBaseUrl: inputs.postmanIapubBaseUrl,
+    postmanApiKey: inputs.postmanApiKey,
+    postmanAccessToken: inputs.postmanAccessToken,
+    explicitTeamId: inputs.teamId || undefined,
+    mode: 'warn',
+    mask: createSecretMasker([inputs.postmanApiKey, inputs.postmanAccessToken]),
+    log: actionCore
+  });
   try {
     const postman = createSmokeClient(inputs, actionCore);
     const outputs = await runSmokeFlow(inputs, {
