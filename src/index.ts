@@ -16,6 +16,8 @@ import {
   type CollectionVerification
 } from './postman/collection-transform.js';
 import { PostmanSmokeClient } from './postman/postman-smoke-client.js';
+import { PostmanGatewaySmokeClient } from './postman/postman-gateway-smoke-client.js';
+import { AccessTokenProvider } from './lib/postman/token-provider.js';
 import {
   getMemoizedSessionIdentity,
   resolveSessionIdentity
@@ -314,18 +316,11 @@ export async function runSmokeFlow(
   inputs: ActionInputs,
   dependencies: SmokeFlowDependencies
 ): Promise<ActionOutputs> {
-  dependencies.core.setSecret?.(inputs.postmanApiKey);
+  if (inputs.postmanApiKey) {
+    dependencies.core.setSecret?.(inputs.postmanApiKey);
+  }
   if (inputs.postmanAccessToken) {
     dependencies.core.setSecret?.(inputs.postmanAccessToken);
-    // The access token enriches telemetry identity (session consumerType ->
-    // account_type). The Smoke collection reshape itself runs on the Postman
-    // collection API, which authenticates with postman-api-key: the collection
-    // routes reject x-access-token and the gateway collection service 404s on a
-    // public collection uid (verified live), so postman-api-key stays required
-    // here as a documented access-token-primary exception.
-    dependencies.core.info(
-      'postman-access-token is used for telemetry identity enrichment; the Smoke collection reshape authenticates with postman-api-key.'
-    );
   }
   ensureRequiredInputs(inputs);
   if (inputs.collectionSyncMode !== 'refresh') {
@@ -435,6 +430,40 @@ export async function runSmokeFlow(
   }
 }
 
+/**
+ * Build the Smoke collection client. The reshape runs access-token-only through
+ * the gateway (`PostmanGatewaySmokeClient`): generate via the specification
+ * service, read via `GET /v3/collections/:cid/export`, and apply the curated
+ * reshape via v3 per-item create/patch + a collection-level patch — no PMAK.
+ * A postman-api-key, when present, is only the AccessTokenProvider re-mint
+ * credential (service-account access tokens expire); it is never used for the
+ * collection mutation itself.
+ */
+function createSmokeClient(
+  inputs: ActionInputs,
+  actionCore: CoreLike
+): Pick<PostmanSmokeClient, 'generateCollection' | 'getCollection' | 'updateCollection' | 'deleteCollection'> {
+  const accessToken = String(inputs.postmanAccessToken ?? '').trim();
+  if (!accessToken) {
+    throw new Error(
+      'postman-access-token is required: the Smoke collection reshape runs access-token-only through ' +
+        'the Postman gateway. Mint one with postman-resolve-service-token-action and pass it as ' +
+        'postman-access-token (postman-api-key alone no longer drives the reshape).'
+    );
+  }
+  const provider = new AccessTokenProvider({
+    accessToken,
+    apiKey: inputs.postmanApiKey || undefined,
+    apiBaseUrl: inputs.postmanApiBaseUrl,
+    onToken: (token) => actionCore.setSecret?.(token)
+  });
+  const teamId = String(inputs.teamId ?? '').trim();
+  return new PostmanGatewaySmokeClient({
+    tokenProvider: provider,
+    ...(teamId ? { teamId, orgMode: true } : {})
+  });
+}
+
 export async function runAction(actionCore: CoreLike = core, env: NodeJS.ProcessEnv = process.env): Promise<ActionOutputs> {
   const inputs = readActionInputs(env);
   const telemetry = createTelemetryContext({ action: 'postman-smoke-flow-action', logger: actionCore });
@@ -450,7 +479,7 @@ export async function runAction(actionCore: CoreLike = core, env: NodeJS.Process
     }).catch(() => undefined);
   }
   try {
-    const postman = new PostmanSmokeClient(inputs.postmanApiKey, inputs.postmanApiBaseUrl);
+    const postman = createSmokeClient(inputs, actionCore);
     const outputs = await runSmokeFlow(inputs, {
       core: actionCore,
       postman

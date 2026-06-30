@@ -21,8 +21,8 @@ inputs:
     description: Optional repo-root-relative path to the curated flow.yaml manifest. When omitted, OAuth config can still be applied to the existing Smoke collection.
     required: false
   postman-api-key:
-    description: Postman API key used for collection generation and mutation.
-    required: true
+    description: Optional service-account API key. Only used to re-mint an expired postman-access-token; the collection reshape itself runs access-token-only through the Postman gateway.
+    required: false
   postman-region:
     description: Postman data residency region for public API calls. Supported values are us and eu.
     required: false
@@ -45,7 +45,7 @@ inputs:
     required: false
     default: refresh
   postman-access-token:
-    description: Compatibility input for broader onboarding pipelines. Smoke Flow does not use it; when provided, the value is masked and a deprecation warning is logged.
+    description: Service-account access token (x-access-token) that authenticates the Smoke collection reshape against the Postman gateway. Required for the reshape.
     required: false
   fail-on-flow-warning:
     description: Whether non-blocking flow warnings should fail the action.

@@ -5,7 +5,7 @@ export const smokeFlowActionContract = {
     'spec-id': { required: true },
     'smoke-collection-id': { required: true },
     'flow-path': { required: false },
-    'postman-api-key': { required: true },
+    'postman-api-key': { required: false },
     'postman-region': { required: false, default: 'us' },
     'auth-config-json': { required: false },
     'secrets-resolver-enabled': { required: false, default: 'true' },

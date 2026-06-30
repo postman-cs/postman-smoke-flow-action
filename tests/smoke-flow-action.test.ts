@@ -165,7 +165,7 @@ describe('runSmokeFlow', () => {
     }
   });
 
-  it('masks accepted Postman credentials and warns when access-token compatibility input is supplied', async () => {
+  it('masks both accepted Postman credentials', async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-'));
     const previousCwd = process.cwd();
     process.chdir(tempDir);
@@ -199,8 +199,6 @@ describe('runSmokeFlow', () => {
 
       expect(core.setSecret).toHaveBeenCalledWith('PMAK-123');
       expect(core.setSecret).toHaveBeenCalledWith('pma_at_user_session');
-      expect(core.info).toHaveBeenCalledWith(expect.stringContaining('postman-access-token is used for telemetry identity enrichment'));
-      expect(core.info).toHaveBeenCalledWith(expect.stringContaining('authenticates with postman-api-key'));
     } finally {
       process.chdir(previousCwd);
       rmSync(tempDir, { recursive: true, force: true });

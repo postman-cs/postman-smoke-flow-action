@@ -1001,7 +1001,7 @@ var require_util = __commonJS({
         return body;
       } else if (body && typeof body.pipeTo === "function") {
         return new BodyAsyncIterable(body);
-      } else if (body && typeof body !== "string" && !ArrayBuffer.isView(body) && isIterable(body)) {
+      } else if (body && typeof body !== "string" && !ArrayBuffer.isView(body) && isIterable2(body)) {
         return new BodyAsyncIterable(body);
       } else {
         return body;
@@ -1121,7 +1121,7 @@ var require_util = __commonJS({
     function isAsyncIterable(obj) {
       return !!(obj != null && typeof obj[Symbol.asyncIterator] === "function");
     }
-    function isIterable(obj) {
+    function isIterable2(obj) {
       return !!(obj != null && (typeof obj[Symbol.iterator] === "function" || typeof obj[Symbol.asyncIterator] === "function"));
     }
     function bodyLength(body) {
@@ -1426,7 +1426,7 @@ var require_util = __commonJS({
       parseURL,
       getServerName,
       isStream,
-      isIterable,
+      isIterable: isIterable2,
       isAsyncIterable,
       isDestroyed,
       headerNameToString,
@@ -1664,7 +1664,7 @@ var require_request = __commonJS({
       destroy,
       isBuffer,
       isFormDataLike,
-      isIterable,
+      isIterable: isIterable2,
       isBlobLike,
       buildURL,
       validateHandler,
@@ -1754,7 +1754,7 @@ var require_request = __commonJS({
           this.body = body.byteLength ? Buffer.from(body) : null;
         } else if (typeof body === "string") {
           this.body = body.length ? Buffer.from(body) : null;
-        } else if (isFormDataLike(body) || isIterable(body) || isBlobLike(body)) {
+        } else if (isFormDataLike(body) || isIterable2(body) || isBlobLike(body)) {
           this.body = body;
         } else {
           throw new InvalidArgumentError("body must be a string, a Buffer, a Readable stream, an iterable, or an async iterable");
@@ -9187,14 +9187,14 @@ var require_retry_agent = __commonJS({
         this.#options = options;
       }
       dispatch(opts, handler) {
-        const retry = new RetryHandler({
+        const retry2 = new RetryHandler({
           ...opts,
           retryOptions: this.#options
         }, {
           dispatch: this.#agent.dispatch.bind(this.#agent),
           handler
         });
-        return this.#agent.dispatch(opts, retry);
+        return this.#agent.dispatch(opts, retry2);
       }
       close() {
         return this.#agent.close();
@@ -11931,7 +11931,7 @@ var require_headers = __commonJS({
         }
       }
     };
-    var Headers2 = class _Headers {
+    var Headers3 = class _Headers {
       #guard;
       #headersList;
       constructor(init = void 0) {
@@ -12081,13 +12081,13 @@ var require_headers = __commonJS({
         o.#headersList = list;
       }
     };
-    var { getHeadersGuard, setHeadersGuard, getHeadersList, setHeadersList } = Headers2;
-    Reflect.deleteProperty(Headers2, "getHeadersGuard");
-    Reflect.deleteProperty(Headers2, "setHeadersGuard");
-    Reflect.deleteProperty(Headers2, "getHeadersList");
-    Reflect.deleteProperty(Headers2, "setHeadersList");
-    iteratorMixin("Headers", Headers2, kHeadersSortedMap, 0, 1);
-    Object.defineProperties(Headers2.prototype, {
+    var { getHeadersGuard, setHeadersGuard, getHeadersList, setHeadersList } = Headers3;
+    Reflect.deleteProperty(Headers3, "getHeadersGuard");
+    Reflect.deleteProperty(Headers3, "setHeadersGuard");
+    Reflect.deleteProperty(Headers3, "getHeadersList");
+    Reflect.deleteProperty(Headers3, "setHeadersList");
+    iteratorMixin("Headers", Headers3, kHeadersSortedMap, 0, 1);
+    Object.defineProperties(Headers3.prototype, {
       append: kEnumerableProperty,
       delete: kEnumerableProperty,
       get: kEnumerableProperty,
@@ -12105,7 +12105,7 @@ var require_headers = __commonJS({
     webidl.converters.HeadersInit = function(V, prefix, argument) {
       if (webidl.util.Type(V) === "Object") {
         const iterator = Reflect.get(V, Symbol.iterator);
-        if (!util.types.isProxy(V) && iterator === Headers2.prototype.entries) {
+        if (!util.types.isProxy(V) && iterator === Headers3.prototype.entries) {
           try {
             return getHeadersList(V).entriesList;
           } catch {
@@ -12126,7 +12126,7 @@ var require_headers = __commonJS({
       fill,
       // for test.
       compareHeaderName,
-      Headers: Headers2,
+      Headers: Headers3,
       HeadersList,
       getHeadersGuard,
       setHeadersGuard,
@@ -12140,7 +12140,7 @@ var require_headers = __commonJS({
 var require_response = __commonJS({
   "node_modules/undici/lib/web/fetch/response.js"(exports2, module2) {
     "use strict";
-    var { Headers: Headers2, HeadersList, fill, getHeadersGuard, setHeadersGuard, setHeadersList } = require_headers();
+    var { Headers: Headers3, HeadersList, fill, getHeadersGuard, setHeadersGuard, setHeadersList } = require_headers();
     var { extractBody, cloneBody, mixinBody, hasFinalizationRegistry, streamRegistry, bodyUnusable } = require_body();
     var util = require_util();
     var nodeUtil = require("node:util");
@@ -12218,7 +12218,7 @@ var require_response = __commonJS({
         }
         init = webidl.converters.ResponseInit(init);
         this[kState] = makeResponse({});
-        this[kHeaders] = new Headers2(kConstruct);
+        this[kHeaders] = new Headers3(kConstruct);
         setHeadersGuard(this[kHeaders], "response");
         setHeadersList(this[kHeaders], this[kState].headersList);
         let bodyWithType = null;
@@ -12462,7 +12462,7 @@ var require_response = __commonJS({
     function fromInnerResponse(innerResponse, guard) {
       const response = new Response(kConstruct);
       response[kState] = innerResponse;
-      response[kHeaders] = new Headers2(kConstruct);
+      response[kHeaders] = new Headers3(kConstruct);
       setHeadersList(response[kHeaders], innerResponse.headersList);
       setHeadersGuard(response[kHeaders], guard);
       if (hasFinalizationRegistry && innerResponse.body?.stream) {
@@ -12582,7 +12582,7 @@ var require_request2 = __commonJS({
   "node_modules/undici/lib/web/fetch/request.js"(exports2, module2) {
     "use strict";
     var { extractBody, mixinBody, cloneBody, bodyUnusable } = require_body();
-    var { Headers: Headers2, fill: fillHeaders, HeadersList, setHeadersGuard, getHeadersGuard, setHeadersList, getHeadersList } = require_headers();
+    var { Headers: Headers3, fill: fillHeaders, HeadersList, setHeadersGuard, getHeadersGuard, setHeadersList, getHeadersList } = require_headers();
     var { FinalizationRegistry: FinalizationRegistry2 } = require_dispatcher_weakref()();
     var util = require_util();
     var nodeUtil = require("node:util");
@@ -12850,7 +12850,7 @@ var require_request2 = __commonJS({
             requestFinalizer.register(ac, { signal, abort }, abort);
           }
         }
-        this[kHeaders] = new Headers2(kConstruct);
+        this[kHeaders] = new Headers3(kConstruct);
         setHeadersList(this[kHeaders], request.headersList);
         setHeadersGuard(this[kHeaders], "request");
         if (mode === "no-cors") {
@@ -13139,7 +13139,7 @@ var require_request2 = __commonJS({
       const request = new Request(kConstruct);
       request[kState] = innerRequest;
       request[kSignal] = signal;
-      request[kHeaders] = new Headers2(kConstruct);
+      request[kHeaders] = new Headers3(kConstruct);
       setHeadersList(request[kHeaders], innerRequest.headersList);
       setHeadersGuard(request[kHeaders], guard);
       return request;
@@ -16177,10 +16177,10 @@ var require_cookies = __commonJS({
     var { parseSetCookie } = require_parse();
     var { stringify } = require_util6();
     var { webidl } = require_webidl();
-    var { Headers: Headers2 } = require_headers();
+    var { Headers: Headers3 } = require_headers();
     function getCookies(headers) {
       webidl.argumentLengthCheck(arguments, 1, "getCookies");
-      webidl.brandCheck(headers, Headers2, { strict: false });
+      webidl.brandCheck(headers, Headers3, { strict: false });
       const cookie = headers.get("cookie");
       const out = {};
       if (!cookie) {
@@ -16193,7 +16193,7 @@ var require_cookies = __commonJS({
       return out;
     }
     function deleteCookie(headers, name, attributes) {
-      webidl.brandCheck(headers, Headers2, { strict: false });
+      webidl.brandCheck(headers, Headers3, { strict: false });
       const prefix = "deleteCookie";
       webidl.argumentLengthCheck(arguments, 2, prefix);
       name = webidl.converters.DOMString(name, prefix, "name");
@@ -16207,7 +16207,7 @@ var require_cookies = __commonJS({
     }
     function getSetCookies(headers) {
       webidl.argumentLengthCheck(arguments, 1, "getSetCookies");
-      webidl.brandCheck(headers, Headers2, { strict: false });
+      webidl.brandCheck(headers, Headers3, { strict: false });
       const cookies = headers.getSetCookie();
       if (!cookies) {
         return [];
@@ -16216,7 +16216,7 @@ var require_cookies = __commonJS({
     }
     function setCookie(headers, cookie) {
       webidl.argumentLengthCheck(arguments, 2, "setCookie");
-      webidl.brandCheck(headers, Headers2, { strict: false });
+      webidl.brandCheck(headers, Headers3, { strict: false });
       cookie = webidl.converters.Cookie(cookie);
       const str = stringify(cookie);
       if (str) {
@@ -16906,7 +16906,7 @@ var require_connection = __commonJS({
     var { CloseEvent } = require_events();
     var { makeRequest } = require_request2();
     var { fetching } = require_fetch();
-    var { Headers: Headers2, getHeadersList } = require_headers();
+    var { Headers: Headers3, getHeadersList } = require_headers();
     var { getDecodeSplit } = require_util2();
     var { WebsocketFrameSend } = require_frame();
     var crypto2;
@@ -16928,7 +16928,7 @@ var require_connection = __commonJS({
         redirect: "error"
       });
       if (options.headers) {
-        const headersList = getHeadersList(new Headers2(options.headers));
+        const headersList = getHeadersList(new Headers3(options.headers));
         request.headersList = headersList;
       }
       const keyValue = crypto2.randomBytes(16).toString("base64");
@@ -26301,11 +26301,11 @@ var HttpCodes;
   HttpCodes2[HttpCodes2["ServiceUnavailable"] = 503] = "ServiceUnavailable";
   HttpCodes2[HttpCodes2["GatewayTimeout"] = 504] = "GatewayTimeout";
 })(HttpCodes || (HttpCodes = {}));
-var Headers;
-(function(Headers2) {
-  Headers2["Accept"] = "accept";
-  Headers2["ContentType"] = "content-type";
-})(Headers || (Headers = {}));
+var Headers2;
+(function(Headers3) {
+  Headers3["Accept"] = "accept";
+  Headers3["ContentType"] = "content-type";
+})(Headers2 || (Headers2 = {}));
 var MediaTypes;
 (function(MediaTypes2) {
   MediaTypes2["ApplicationJson"] = "application/json";
@@ -26448,7 +26448,7 @@ var HttpClient = class {
    */
   getJson(requestUrl_1) {
     return __awaiter(this, arguments, void 0, function* (requestUrl, additionalHeaders = {}) {
-      additionalHeaders[Headers.Accept] = this._getExistingOrDefaultHeader(additionalHeaders, Headers.Accept, MediaTypes.ApplicationJson);
+      additionalHeaders[Headers2.Accept] = this._getExistingOrDefaultHeader(additionalHeaders, Headers2.Accept, MediaTypes.ApplicationJson);
       const res = yield this.get(requestUrl, additionalHeaders);
       return this._processResponse(res, this.requestOptions);
     });
@@ -26456,8 +26456,8 @@ var HttpClient = class {
   postJson(requestUrl_1, obj_1) {
     return __awaiter(this, arguments, void 0, function* (requestUrl, obj, additionalHeaders = {}) {
       const data = JSON.stringify(obj, null, 2);
-      additionalHeaders[Headers.Accept] = this._getExistingOrDefaultHeader(additionalHeaders, Headers.Accept, MediaTypes.ApplicationJson);
-      additionalHeaders[Headers.ContentType] = this._getExistingOrDefaultContentTypeHeader(additionalHeaders, MediaTypes.ApplicationJson);
+      additionalHeaders[Headers2.Accept] = this._getExistingOrDefaultHeader(additionalHeaders, Headers2.Accept, MediaTypes.ApplicationJson);
+      additionalHeaders[Headers2.ContentType] = this._getExistingOrDefaultContentTypeHeader(additionalHeaders, MediaTypes.ApplicationJson);
       const res = yield this.post(requestUrl, data, additionalHeaders);
       return this._processResponse(res, this.requestOptions);
     });
@@ -26465,8 +26465,8 @@ var HttpClient = class {
   putJson(requestUrl_1, obj_1) {
     return __awaiter(this, arguments, void 0, function* (requestUrl, obj, additionalHeaders = {}) {
       const data = JSON.stringify(obj, null, 2);
-      additionalHeaders[Headers.Accept] = this._getExistingOrDefaultHeader(additionalHeaders, Headers.Accept, MediaTypes.ApplicationJson);
-      additionalHeaders[Headers.ContentType] = this._getExistingOrDefaultContentTypeHeader(additionalHeaders, MediaTypes.ApplicationJson);
+      additionalHeaders[Headers2.Accept] = this._getExistingOrDefaultHeader(additionalHeaders, Headers2.Accept, MediaTypes.ApplicationJson);
+      additionalHeaders[Headers2.ContentType] = this._getExistingOrDefaultContentTypeHeader(additionalHeaders, MediaTypes.ApplicationJson);
       const res = yield this.put(requestUrl, data, additionalHeaders);
       return this._processResponse(res, this.requestOptions);
     });
@@ -26474,8 +26474,8 @@ var HttpClient = class {
   patchJson(requestUrl_1, obj_1) {
     return __awaiter(this, arguments, void 0, function* (requestUrl, obj, additionalHeaders = {}) {
       const data = JSON.stringify(obj, null, 2);
-      additionalHeaders[Headers.Accept] = this._getExistingOrDefaultHeader(additionalHeaders, Headers.Accept, MediaTypes.ApplicationJson);
-      additionalHeaders[Headers.ContentType] = this._getExistingOrDefaultContentTypeHeader(additionalHeaders, MediaTypes.ApplicationJson);
+      additionalHeaders[Headers2.Accept] = this._getExistingOrDefaultHeader(additionalHeaders, Headers2.Accept, MediaTypes.ApplicationJson);
+      additionalHeaders[Headers2.ContentType] = this._getExistingOrDefaultContentTypeHeader(additionalHeaders, MediaTypes.ApplicationJson);
       const res = yield this.patch(requestUrl, data, additionalHeaders);
       return this._processResponse(res, this.requestOptions);
     });
@@ -26705,7 +26705,7 @@ var HttpClient = class {
   _getExistingOrDefaultContentTypeHeader(additionalHeaders, _default) {
     let clientHeader;
     if (this.requestOptions && this.requestOptions.headers) {
-      const headerValue = lowercaseKeys(this.requestOptions.headers)[Headers.ContentType];
+      const headerValue = lowercaseKeys(this.requestOptions.headers)[Headers2.ContentType];
       if (headerValue) {
         if (typeof headerValue === "number") {
           clientHeader = String(headerValue);
@@ -26716,7 +26716,7 @@ var HttpClient = class {
         }
       }
     }
-    const additionalValue = additionalHeaders[Headers.ContentType];
+    const additionalValue = additionalHeaders[Headers2.ContentType];
     if (additionalValue !== void 0) {
       if (typeof additionalValue === "number") {
         return String(additionalValue);
@@ -28310,7 +28310,7 @@ var smokeFlowActionContract = {
     "spec-id": { required: true },
     "smoke-collection-id": { required: true },
     "flow-path": { required: false },
-    "postman-api-key": { required: true },
+    "postman-api-key": { required: false },
     "postman-region": { required: false, default: "us" },
     "auth-config-json": { required: false },
     "secrets-resolver-enabled": { required: false, default: "true" },
@@ -28345,17 +28345,6 @@ var import_node_path = __toESM(require("node:path"), 1);
 
 // src/lib/errors.ts
 var ValidationError = class extends Error {
-};
-var HttpError = class _HttpError extends Error {
-  status;
-  constructor(message, status) {
-    super(message);
-    this.status = status;
-  }
-  static async fromResponse(response, url, method) {
-    const body = await response.text();
-    return new _HttpError(`${method} ${url} failed: ${response.status} ${body}`, response.status);
-  }
 };
 
 // src/lib/paths.ts
@@ -29241,185 +29230,771 @@ function buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests
   };
 }
 
-// src/lib/error-advice.ts
-function adviseFromSmokeClientStatus(status, collectionId, callContext) {
-  if (status === 401 || status === 403) {
-    const verb = callContext === "write" ? "writing" : "reading";
-    return `postman-api-key rejected ${verb} collection ${collectionId}; confirm the key's team owns this collection`;
+// src/lib/secrets.ts
+var REDACTED = "[REDACTED]";
+var SENSITIVE_HEADER_NAMES = /* @__PURE__ */ new Set([
+  "authorization",
+  "cookie",
+  "proxy-authorization",
+  "set-cookie",
+  "x-access-token",
+  "x-api-key"
+]);
+function isIterable(value) {
+  return value !== null && value !== void 0 && typeof value !== "string" && typeof value[Symbol.iterator] === "function";
+}
+function appendSecretValues(value, results) {
+  if (value === null || value === void 0) {
+    return;
   }
-  if (status === 404) {
-    return `collection ${collectionId} not found for this key's team; a wrong-team key is the usual cause`;
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (normalized) {
+      results.push(normalized);
+    }
+    return;
   }
-  return void 0;
+  if (typeof value === "number" || typeof value === "boolean") {
+    results.push(String(value));
+    return;
+  }
+  if (Array.isArray(value) || isIterable(value)) {
+    for (const entry of value) {
+      appendSecretValues(entry, results);
+    }
+  }
+}
+function normalizeSecretValues(secretValues) {
+  const values = [];
+  appendSecretValues(secretValues, values);
+  return [...new Set(values)].sort((left, right) => right.length - left.length);
+}
+function redactSecrets(input, secretValues, replacement = REDACTED) {
+  const source = String(input ?? "");
+  const secrets = normalizeSecretValues(secretValues);
+  if (!source || secrets.length === 0) {
+    return source;
+  }
+  return secrets.reduce((sanitized, secret) => {
+    if (!secret) {
+      return sanitized;
+    }
+    return sanitized.split(secret).join(replacement);
+  }, source);
+}
+function createSecretMasker(secretValues, replacement = REDACTED) {
+  return (input) => redactSecrets(input, secretValues, replacement);
+}
+function headerEntries(headers) {
+  if (headers instanceof Headers) {
+    return Array.from(headers.entries());
+  }
+  if (Array.isArray(headers)) {
+    return headers.map(([name, value]) => [name, String(value)]);
+  }
+  return Object.entries(headers).map(([name, value]) => [name, String(value)]);
+}
+function sanitizeHeaders(headers, secretValues) {
+  if (!headers) {
+    return {};
+  }
+  const sanitized = {};
+  for (const [name, value] of headerEntries(headers)) {
+    const normalizedName = name.toLowerCase();
+    sanitized[normalizedName] = SENSITIVE_HEADER_NAMES.has(normalizedName) ? REDACTED : redactSecrets(value, secretValues);
+  }
+  return sanitized;
 }
 
-// src/postman/postman-smoke-client.ts
-function sleep(ms) {
-  return new Promise((resolve2) => {
-    setTimeout(resolve2, ms);
-  });
-}
-function asRecord3(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
-}
-function isDeepUpdateConflict(error2) {
-  if (!(error2 instanceof HttpError) || error2.status !== 409) {
-    return false;
+// src/lib/http-error.ts
+function truncate(value, limit) {
+  if (value.length <= limit) {
+    return value;
   }
-  const message = error2.message.toLowerCase();
-  return message.includes("deepupdate") || message.includes("currently being modified");
+  return `${value.slice(0, limit)}...[truncated]`;
 }
-var PostmanSmokeClient = class {
-  constructor(apiKey, baseUrl = "https://api.getpostman.com", fetchImpl = fetch, sleepImpl = sleep) {
-    this.apiKey = apiKey;
-    this.baseUrl = baseUrl;
-    this.fetchImpl = fetchImpl;
-    this.sleepImpl = sleepImpl;
+function buildMessage(init) {
+  const method = String(init.method || "GET").toUpperCase();
+  const status = `${init.status}${init.statusText ? ` ${init.statusText}` : ""}`;
+  const url = redactSecrets(init.url, init.secretValues);
+  const body = truncate(
+    redactSecrets(init.responseBody || "", init.secretValues),
+    Math.max(0, init.bodyLimit ?? 800)
+  );
+  return body ? `${method} ${url} failed: ${status} - ${body}` : `${method} ${url} failed: ${status}`;
+}
+var HttpError = class _HttpError extends Error {
+  method;
+  requestHeaders;
+  responseBody;
+  secretValues;
+  status;
+  statusText;
+  url;
+  constructor(init) {
+    super(buildMessage(init));
+    this.name = "HttpError";
+    this.method = String(init.method || "GET").toUpperCase();
+    this.requestHeaders = init.requestHeaders;
+    this.responseBody = init.responseBody || "";
+    this.secretValues = init.secretValues;
+    this.status = init.status;
+    this.statusText = init.statusText;
+    this.url = init.url;
   }
-  apiKey;
-  baseUrl;
-  fetchImpl;
-  sleepImpl;
-  async request(path8, init = {}, callContext, collectionId) {
-    const url = path8.startsWith("http") ? path8 : `${this.baseUrl.replace(/\/+$/g, "")}${path8}`;
-    const response = await this.fetchImpl(url, {
+  static async fromResponse(response, init) {
+    const responseBody = init.responseBody ?? await response.text().catch(() => "");
+    return new _HttpError({
       ...init,
-      headers: {
-        "Content-Type": "application/json",
-        "X-Api-Key": this.apiKey,
-        ...init.headers ?? {}
-      }
+      responseBody,
+      status: response.status,
+      statusText: response.statusText
     });
-    if (!response.ok) {
-      const httpErr = await HttpError.fromResponse(response, url, init.method ?? "GET");
-      if (callContext !== void 0 && collectionId !== void 0) {
-        const advice = adviseFromSmokeClientStatus(response.status, collectionId, callContext);
-        if (advice !== void 0) {
-          throw new Error(advice, { cause: httpErr });
-        }
+  }
+  toJSON() {
+    return {
+      method: this.method,
+      name: this.name,
+      requestHeaders: sanitizeHeaders(this.requestHeaders, this.secretValues),
+      responseBody: redactSecrets(this.responseBody, this.secretValues),
+      status: this.status,
+      statusText: this.statusText,
+      url: redactSecrets(this.url, this.secretValues)
+    };
+  }
+};
+
+// src/lib/postman/base-urls.ts
+var POSTMAN_ENDPOINT_PROFILES = {
+  prod: {
+    apiBaseUrl: "https://api.getpostman.com",
+    bifrostBaseUrl: "https://bifrost-premium-https-v4.gw.postman.com",
+    cliInstallUrl: "https://dl-cli.pstmn.io/install/unix.sh",
+    gatewayBaseUrl: "https://gateway.postman.com",
+    iapubBaseUrl: "https://iapub.postman.co"
+  },
+  beta: {
+    apiBaseUrl: "https://api.getpostman-beta.com",
+    bifrostBaseUrl: "https://bifrost-https-v4.gw.postman-beta.com",
+    cliInstallUrl: "https://dl-cli.pstmn-beta.io/install/unix.sh",
+    gatewayBaseUrl: "https://gateway.postman-beta.com",
+    iapubBaseUrl: "https://iapub.postman.co"
+  }
+};
+
+// src/lib/postman/gateway-client.ts
+function isExpiredAuthError(status, body) {
+  return status === 401 || body.includes("UNAUTHENTICATED") || body.includes("authenticationError");
+}
+function isTransientGatewayError(status, body) {
+  if (status === 502 || status === 503 || status === 504) return true;
+  if (status >= 500 && (body.includes("ESOCKETTIMEDOUT") || body.includes("ETIMEDOUT") || body.includes("ECONNRESET") || body.includes("serverError") || body.includes("downstream"))) {
+    return true;
+  }
+  return false;
+}
+function defaultSleep(ms) {
+  return new Promise((resolve2) => setTimeout(resolve2, ms));
+}
+var AccessTokenGatewayClient = class {
+  tokenProvider;
+  bifrostBaseUrl;
+  teamId;
+  orgMode;
+  fetchImpl;
+  secretMasker;
+  maxRetries;
+  retryBaseDelayMs;
+  sleepImpl;
+  constructor(options) {
+    this.tokenProvider = options.tokenProvider;
+    this.bifrostBaseUrl = String(
+      options.bifrostBaseUrl || POSTMAN_ENDPOINT_PROFILES.prod.bifrostBaseUrl
+    ).replace(/\/+$/, "");
+    this.teamId = String(options.teamId || "").trim();
+    this.orgMode = options.orgMode ?? false;
+    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.secretMasker = options.secretMasker ?? createSecretMasker([this.tokenProvider.current()]);
+    this.maxRetries = options.maxRetries ?? 3;
+    this.retryBaseDelayMs = options.retryBaseDelayMs ?? 400;
+    this.sleepImpl = options.sleepImpl ?? defaultSleep;
+  }
+  configureTeamContext(teamId, orgMode) {
+    this.teamId = String(teamId || "").trim();
+    this.orgMode = orgMode;
+  }
+  buildHeaders(extra) {
+    const headers = {
+      "Content-Type": "application/json",
+      "x-access-token": this.tokenProvider.current(),
+      ...extra || {}
+    };
+    if (this.teamId && this.orgMode) {
+      headers["x-entity-team-id"] = this.teamId;
+    }
+    return headers;
+  }
+  async send(request) {
+    const url = `${this.bifrostBaseUrl}/ws/proxy`;
+    return this.fetchImpl(url, {
+      method: "POST",
+      headers: this.buildHeaders(request.headers),
+      body: JSON.stringify({
+        service: request.service,
+        method: request.method,
+        path: request.path,
+        ...request.query !== void 0 ? { query: request.query } : {},
+        ...request.body !== void 0 ? { body: request.body } : {}
+      })
+    });
+  }
+  /**
+   * Send a gateway request, refreshing the token once on an auth failure and
+   * retrying transient downstream failures (5xx / Bifrost read timeouts) with
+   * exponential backoff. The auth-refresh-once path is independent of the
+   * transient-retry budget.
+   */
+  async request(request) {
+    let attempt = 0;
+    for (; ; ) {
+      let response = await this.send(request);
+      if (response.ok) {
+        return response;
       }
-      throw httpErr;
+      const body = await response.text().catch(() => "");
+      if (isExpiredAuthError(response.status, body) && this.tokenProvider.canRefresh()) {
+        await this.tokenProvider.refresh();
+        response = await this.send(request);
+        if (response.ok) {
+          return response;
+        }
+        const retryBody = await response.text().catch(() => "");
+        throw this.toHttpError(request, response, retryBody);
+      }
+      if (isTransientGatewayError(response.status, body) && attempt < this.maxRetries) {
+        const delay = this.retryBaseDelayMs * 2 ** attempt;
+        attempt += 1;
+        await this.sleepImpl(delay);
+        continue;
+      }
+      throw this.toHttpError(request, response, body);
+    }
+  }
+  /** Send a gateway request and parse the JSON body, or null when empty. */
+  async requestJson(request) {
+    const response = await this.request(request);
+    const text = await response.text().catch(() => "");
+    if (!text.trim()) {
+      return null;
     }
     try {
-      return await response.json();
+      return JSON.parse(text);
     } catch {
       return null;
     }
   }
-  extractCollectionUid(data) {
-    const root = asRecord3(data);
-    const details = asRecord3(root?.details);
-    const resources = Array.isArray(details?.resources) ? details.resources : [];
-    const firstResource = asRecord3(resources[0]);
-    const collection = asRecord3(root?.collection);
-    const resource = asRecord3(root?.resource);
-    return String(
-      firstResource?.id ?? collection?.id ?? collection?.uid ?? resource?.uid ?? resource?.id ?? ""
-    ).trim() || void 0;
+  toHttpError(request, response, body) {
+    return new HttpError({
+      method: request.method.toUpperCase(),
+      url: `${this.bifrostBaseUrl}/ws/proxy (${request.service}: ${request.method} ${request.path})`,
+      status: response.status,
+      statusText: response.statusText,
+      requestHeaders: this.buildHeaders(request.headers),
+      responseBody: this.secretMasker(body),
+      secretValues: [this.tokenProvider.current()]
+    });
+  }
+};
+
+// src/postman/postman-gateway-smoke-client.ts
+function asRecord3(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function asArray(value) {
+  return Array.isArray(value) ? value.map(asRecord3).filter((v) => Boolean(v)) : [];
+}
+function bareModelId(uid) {
+  const u = String(uid ?? "").trim();
+  return u.includes("-") ? u.slice(u.indexOf("-") + 1) : u;
+}
+function sleep(ms) {
+  return new Promise((resolve2) => setTimeout(resolve2, ms));
+}
+function v3BodyToV2(body) {
+  if (!body) return void 0;
+  const content = typeof body.content === "string" ? body.content : "";
+  return { mode: "raw", raw: content };
+}
+function v3AuthToV2(auth) {
+  const block = Array.isArray(auth) ? asRecord3(auth[0]) : asRecord3(auth);
+  if (!block) return void 0;
+  const type = typeof block.type === "string" ? block.type : "";
+  if (!type) return void 0;
+  const credentials = Array.isArray(block.credentials) ? block.credentials : [];
+  return { type, [type]: credentials };
+}
+function v3ScriptsToV2Events(scripts) {
+  return asArray(scripts).map((script) => {
+    const type = typeof script.type === "string" ? script.type : "";
+    const listen = type === "beforeRequest" || type === "http:beforeRequest" ? "prerequest" : type === "afterResponse" || type === "http:afterRequest" ? "test" : "";
+    if (!listen) return null;
+    const code = typeof script.code === "string" ? script.code : "";
+    return {
+      listen,
+      script: { exec: code.split("\n"), type: "text/javascript" }
+    };
+  }).filter((event) => Boolean(event));
+}
+function v3NodeToV2Item(node) {
+  const name = typeof node.name === "string" ? node.name : "";
+  if (String(node.$kind ?? "") === "folder") {
+    return { name, item: asArray(node.items).map(v3NodeToV2Item) };
+  }
+  const request = {
+    method: typeof node.method === "string" ? node.method : "GET",
+    url: typeof node.url === "string" ? node.url : ""
+  };
+  const headers = Array.isArray(node.headers) ? node.headers : [];
+  request.header = headers;
+  const body = v3BodyToV2(asRecord3(node.body));
+  if (body) request.body = body;
+  const auth = v3AuthToV2(asRecord3(node.auth));
+  if (auth) request.auth = auth;
+  const item = { name, request };
+  const events2 = v3ScriptsToV2Events(node.scripts);
+  if (events2.length > 0) item.event = events2;
+  return item;
+}
+function v3ExportToV2Collection(v3) {
+  const name = typeof v3.name === "string" ? v3.name : "";
+  const collection = {
+    info: { name, schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+    item: asArray(v3.items).map(v3NodeToV2Item)
+  };
+  const auth = v3AuthToV2(v3.auth);
+  if (auth) collection.auth = auth;
+  if (Array.isArray(v3.variables)) collection.variable = v3.variables;
+  const events2 = v3ScriptsToV2Events(v3.scripts);
+  if (events2.length > 0) collection.event = events2;
+  return collection;
+}
+function v2UrlToRaw(url) {
+  if (typeof url === "string") return url;
+  const record = asRecord3(url);
+  if (record && typeof record.raw === "string") return record.raw;
+  return "";
+}
+function v2AuthToV3(auth) {
+  if (!auth) return void 0;
+  const type = typeof auth.type === "string" ? auth.type : "";
+  if (!type || type === "noauth") return void 0;
+  const entries = Array.isArray(auth[type]) ? auth[type] : [];
+  const credentials = entries.map(asRecord3).filter((entry) => Boolean(entry)).map((entry) => ({ key: String(entry.key ?? ""), value: entry.value ?? "" }));
+  return { type, credentials };
+}
+function looksLikeJson(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+  if (!/^[[{]/.test(trimmed)) return false;
+  try {
+    JSON.parse(trimmed);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function v2BodyToV3(body) {
+  if (!body) return void 0;
+  if (body.mode !== "raw" || typeof body.raw !== "string") return void 0;
+  const raw = body.raw;
+  return { type: looksLikeJson(raw) ? "json" : "text", content: raw };
+}
+function v2HeadersToV3(header) {
+  return asArray(header).map((entry) => ({ key: String(entry.key ?? ""), value: entry.value ?? "" }));
+}
+function v2EventsToV3Scripts(events2) {
+  return asArray(events2).map((event) => {
+    const listen = typeof event.listen === "string" ? event.listen : "";
+    const type = listen === "prerequest" ? "beforeRequest" : listen === "test" ? "afterResponse" : "";
+    if (!type) return null;
+    const script = asRecord3(event.script);
+    const exec2 = Array.isArray(script?.exec) ? script.exec.map(String) : [];
+    return { type, code: exec2.join("\n"), language: "text/javascript" };
+  }).filter((script) => Boolean(script));
+}
+function v2EventsToV3CollectionScripts(events2) {
+  return asArray(events2).map((event) => {
+    const listen = typeof event.listen === "string" ? event.listen : "";
+    const type = listen === "prerequest" ? "http:beforeRequest" : listen === "test" ? "http:afterRequest" : "";
+    if (!type) return null;
+    const script = asRecord3(event.script);
+    const exec2 = Array.isArray(script?.exec) ? script.exec.map(String) : [];
+    return { type, code: exec2.join("\n"), language: "text/javascript" };
+  }).filter((script) => Boolean(script));
+}
+var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
+  static GENERATION_LOCKED_MAX_RETRIES = 5;
+  static GENERATION_POLL_ATTEMPTS = 45;
+  static GENERATION_POLL_DELAY_MS = 2e3;
+  gateway;
+  sleepImpl;
+  constructor(options) {
+    this.gateway = new AccessTokenGatewayClient({
+      tokenProvider: options.tokenProvider,
+      ...options.bifrostBaseUrl ? { bifrostBaseUrl: options.bifrostBaseUrl } : {},
+      ...options.teamId ? { teamId: options.teamId } : {},
+      ...options.orgMode !== void 0 ? { orgMode: options.orgMode } : {},
+      ...options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}
+    });
+    this.sleepImpl = options.sleepImpl ?? sleep;
   }
   async generateCollection(specId, projectName, prefix) {
-    const payload = {
-      name: `${prefix} ${projectName}`,
-      options: {
-        requestNameSource: "Fallback"
+    const name = [prefix.trim(), projectName.trim()].filter(Boolean).join(" ");
+    const body = { name, options: { requestNameSource: "Fallback" } };
+    const taskId = await this.postGenerationWithLockRetry(specId, body);
+    if (taskId) {
+      for (let attempt = 0; attempt < _PostmanGatewaySmokeClient.GENERATION_POLL_ATTEMPTS; attempt += 1) {
+        await this.sleepImpl(_PostmanGatewaySmokeClient.GENERATION_POLL_DELAY_MS);
+        const task = await this.gateway.requestJson({
+          service: "specification",
+          method: "get",
+          path: "/tasks",
+          query: { entityId: specId, entityType: "specification", type: "collection-generation" }
+        });
+        const status = String(asRecord3(task?.data)?.[taskId] ?? "").toLowerCase();
+        if (status === "failed" || status === "error") {
+          throw new Error(`Collection generation task failed for ${prefix}`);
+        }
+        if (status && status !== "in-progress" && status !== "pending" && status !== "queued") {
+          break;
+        }
+        if (attempt === _PostmanGatewaySmokeClient.GENERATION_POLL_ATTEMPTS - 1) {
+          throw new Error(`Collection generation timed out for ${prefix}`);
+        }
       }
-    };
-    let generationResponse;
-    const maxLockedRetries = 5;
+    }
+    const list = await this.gateway.requestJson({
+      service: "specification",
+      method: "get",
+      path: `/specifications/${specId}/collections`
+    });
+    const entries = asArray(asRecord3(list)?.data);
+    for (let i = entries.length - 1; i >= 0; i -= 1) {
+      const uid = String(entries[i]?.collection ?? entries[i]?.collectionId ?? entries[i]?.id ?? "").trim();
+      if (uid) return uid;
+    }
+    throw new Error(`Collection generation did not yield a collection uid for ${prefix}`);
+  }
+  /** POST the generation request, retrying a 423-locked spec; returns the task id. */
+  async postGenerationWithLockRetry(specId, body) {
     for (let lockedAttempt = 0; ; lockedAttempt += 1) {
       try {
-        generationResponse = await this.request(
-          `/specs/${specId}/generations/collection`,
-          { method: "POST", body: JSON.stringify(payload) },
-          "write",
-          specId
-        );
-        break;
+        const created = await this.gateway.requestJson({
+          service: "specification",
+          method: "post",
+          path: `/specifications/${specId}/collections`,
+          body
+        });
+        return String(asRecord3(created?.data)?.taskId ?? "").trim();
       } catch (error2) {
-        const message = error2 instanceof Error ? error2.message : String(error2);
-        const isLocked = message.includes("423");
-        if (!isLocked || lockedAttempt >= maxLockedRetries) {
+        const locked = error2 instanceof HttpError && error2.status === 423;
+        if (!locked || lockedAttempt >= _PostmanGatewaySmokeClient.GENERATION_LOCKED_MAX_RETRIES) {
           throw error2;
         }
         await this.sleepImpl(5e3 * Math.pow(2, lockedAttempt));
       }
     }
-    if (!generationResponse) {
-      throw new Error(`Collection generation request did not return a response for ${prefix}`);
-    }
-    const directUid = this.extractCollectionUid(generationResponse);
-    if (directUid) {
-      return directUid;
-    }
-    let taskUrl = String(generationResponse.url ?? "") || String(generationResponse.task_url ?? "") || String(generationResponse.taskUrl ?? "") || String(asRecord3(generationResponse.links)?.task ?? "");
-    if (!taskUrl) {
-      const task = asRecord3(generationResponse.task);
-      const taskId = generationResponse.taskId ?? task?.id ?? generationResponse.id;
-      if (!taskId) {
-        throw new Error(`Collection generation did not return a task URL or ID for ${prefix}`);
-      }
-      taskUrl = `/specs/${specId}/tasks/${taskId}`;
-    }
-    for (let attempt = 0; attempt < 45; attempt += 1) {
-      await this.sleepImpl(2e3);
-      const task = await this.request(taskUrl);
-      const taskRecord = asRecord3(task);
-      const nestedTask = asRecord3(taskRecord?.task);
-      const status = String(taskRecord?.status ?? nestedTask?.status ?? "").toLowerCase();
-      if (status === "completed") {
-        const taskUid = this.extractCollectionUid(task);
-        if (!taskUid) {
-          throw new Error(`Task completed but no collection UID was returned for ${prefix}`);
-        }
-        return taskUid;
-      }
-      if (status === "failed") {
-        throw new Error(`Collection generation task failed for ${prefix}`);
-      }
-    }
-    throw new Error(`Collection generation timed out for ${prefix}`);
   }
   async getCollection(collectionUid) {
-    const response = await this.request(
-      `/collections/${collectionUid}`,
-      {},
-      "read",
-      collectionUid
-    );
-    const collection = asRecord3(response?.collection);
-    if (!collection) {
-      throw new Error(`Failed to fetch collection ${collectionUid}`);
+    const cid = bareModelId(collectionUid);
+    const exported = await this.gateway.requestJson({
+      service: "collection",
+      method: "get",
+      path: `/v3/collections/${cid}/export`
+    });
+    const v3 = asRecord3(asRecord3(exported?.data)?.collection) ?? asRecord3(exported?.data);
+    if (!v3) {
+      throw new Error(`Failed to export collection ${collectionUid}`);
     }
-    return collection;
+    return v3ExportToV2Collection(v3);
   }
   async updateCollection(collectionUid, collection) {
-    const maxDeepUpdateRetries = 8;
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        await this.request(
-          `/collections/${collectionUid}`,
-          { method: "PUT", body: JSON.stringify({ collection }) },
-          "write",
-          collectionUid
-        );
-        return;
-      } catch (error2) {
-        if (!isDeepUpdateConflict(error2) || attempt >= maxDeepUpdateRetries) {
-          throw error2;
+    const cid = bareModelId(collectionUid);
+    const desired = asRecord3(collection);
+    if (!desired) {
+      throw new Error(`updateCollection: invalid collection payload for ${collectionUid}`);
+    }
+    await this.deleteAllItems(cid);
+    for (const leaf of asArray(desired.item)) {
+      const request = asRecord3(leaf.request) ?? {};
+      const createBody = {
+        $kind: "http-request",
+        name: typeof leaf.name === "string" ? leaf.name : "",
+        method: typeof request.method === "string" ? request.method : "GET",
+        url: v2UrlToRaw(request.url),
+        headers: v2HeadersToV3(request.header),
+        position: { parent: { id: cid, $kind: "collection" } }
+      };
+      const body = v2BodyToV3(asRecord3(request.body));
+      if (body) createBody.body = body;
+      const auth = v2AuthToV3(asRecord3(request.auth));
+      if (auth) createBody.auth = auth;
+      const created = await this.gateway.requestJson({
+        service: "collection",
+        method: "post",
+        path: `/v3/collections/${cid}/items/`,
+        headers: { "X-Entity-Type": "http-request" },
+        body: createBody
+      });
+      const newItemId = String(asRecord3(created?.data)?.id ?? "").trim();
+      const scripts = v2EventsToV3Scripts(leaf.event);
+      if (newItemId && scripts.length > 0) {
+        await this.gateway.request({
+          service: "collection",
+          method: "patch",
+          path: `/v3/collections/${cid}/items/${newItemId}`,
+          headers: { "X-Entity-Type": "http-request" },
+          body: [{ op: "add", path: "/scripts", value: scripts }]
+        });
+      }
+    }
+    const ops = [];
+    const info2 = asRecord3(desired.info);
+    const name = typeof info2?.name === "string" ? info2.name : void 0;
+    if (name !== void 0) ops.push({ op: "replace", path: "/name", value: name });
+    const collAuth = v2AuthToV3(asRecord3(desired.auth));
+    if (collAuth) ops.push({ op: "add", path: "/auth", value: collAuth });
+    if (Array.isArray(desired.variable)) {
+      const variables = desired.variable.map(asRecord3).filter((v) => Boolean(v)).map((v) => ({ key: String(v.key ?? ""), value: v.value ?? "" }));
+      if (variables.length > 0) ops.push({ op: "add", path: "/variables", value: variables });
+    }
+    if (ops.length > 0) {
+      await this.gateway.request({
+        service: "collection",
+        method: "patch",
+        path: `/v3/collections/${cid}`,
+        body: ops
+      });
+    }
+    const collScripts = v2EventsToV3CollectionScripts(desired.event);
+    if (collScripts.length > 0) {
+      await this.gateway.request({
+        service: "collection",
+        method: "patch",
+        path: `/v3/collections/${cid}`,
+        body: [{ op: "add", path: "/scripts", value: collScripts }]
+      }).catch(() => void 0);
+    }
+  }
+  /**
+   * Delete every item (leaves + folders) from a collection, then verify the
+   * collection is empty. The gateway's item-delete returns a spurious `500
+   * GENERIC_ERROR` even though the delete lands server-side (live-observed); a
+   * blind throw would abort the reconcile mid-replace. So per-item delete errors
+   * are tolerated and the *end state* is the source of truth: re-list and retry
+   * any survivors across a few rounds, throwing only if items genuinely persist.
+   */
+  async deleteAllItems(cid) {
+    const maxRounds = 4;
+    for (let round = 0; round < maxRounds; round += 1) {
+      const listed = await this.gateway.requestJson({
+        service: "collection",
+        method: "get",
+        path: `/v3/collections/${cid}/items/`
+      });
+      const items = asArray(listed?.data);
+      if (items.length === 0) return;
+      if (round === maxRounds - 1) {
+        throw new Error(`updateCollection: ${items.length} item(s) survived delete on collection ${cid}`);
+      }
+      for (const item of items) {
+        const itemId = String(item.id ?? "").trim();
+        if (!itemId) continue;
+        const kind = String(item.$kind ?? "http-request");
+        try {
+          await this.gateway.request({
+            service: "collection",
+            method: "delete",
+            path: `/v3/collections/${cid}/items/${itemId}`,
+            headers: { "X-Entity-Type": kind }
+          });
+        } catch {
         }
-        await this.sleepImpl(Math.min(3e4, 5e3 * Math.pow(2, attempt)));
       }
     }
   }
   async deleteCollection(collectionUid) {
+    const cid = bareModelId(collectionUid);
     try {
-      await this.request(`/collections/${collectionUid}`, { method: "DELETE" });
+      await this.gateway.request({
+        service: "collection",
+        method: "delete",
+        path: `/v3/collections/${cid}`
+      });
     } catch (error2) {
       if (error2 instanceof HttpError && error2.status === 404) {
         return;
       }
       throw error2;
     }
+  }
+};
+
+// src/lib/retry.ts
+function sleep2(delayMs) {
+  return new Promise((resolve2) => {
+    setTimeout(resolve2, delayMs);
+  });
+}
+function normalizeRetryOptions(options) {
+  return {
+    maxAttempts: Math.max(1, options.maxAttempts ?? 3),
+    delayMs: Math.max(0, options.delayMs ?? 2e3),
+    backoffMultiplier: Math.max(1, options.backoffMultiplier ?? 1),
+    maxDelayMs: options.maxDelayMs === void 0 ? Number.POSITIVE_INFINITY : Math.max(0, options.maxDelayMs),
+    onRetry: options.onRetry ?? (async () => void 0),
+    shouldRetry: options.shouldRetry ?? (() => true),
+    sleep: options.sleep ?? sleep2
+  };
+}
+async function retry(operation, options = {}) {
+  const normalized = normalizeRetryOptions(options);
+  let nextDelayMs = normalized.delayMs;
+  for (let attempt = 1; attempt <= normalized.maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error2) {
+      const shouldRetry = attempt < normalized.maxAttempts && normalized.shouldRetry(error2, {
+        attempt,
+        maxAttempts: normalized.maxAttempts
+      });
+      if (!shouldRetry) {
+        throw error2;
+      }
+      await normalized.onRetry({
+        attempt,
+        maxAttempts: normalized.maxAttempts,
+        delayMs: nextDelayMs,
+        error: error2
+      });
+      await normalized.sleep(nextDelayMs);
+      nextDelayMs = Math.min(
+        normalized.maxDelayMs,
+        Math.round(nextDelayMs * normalized.backoffMultiplier)
+      );
+    }
+  }
+  throw new Error("Retry exhausted without returning or throwing");
+}
+
+// src/lib/postman/token-provider.ts
+var MintError = class extends Error {
+  permanent;
+  constructor(message, permanent) {
+    super(message);
+    this.name = "MintError";
+    this.permanent = permanent;
+  }
+};
+function extractAccessToken(payload) {
+  if (!payload || typeof payload !== "object") return void 0;
+  const record = payload;
+  const direct = record.access_token;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  const session = record.session;
+  if (session && typeof session === "object") {
+    const token = session.token;
+    if (typeof token === "string" && token.trim()) return token.trim();
+  }
+  return void 0;
+}
+var AccessTokenProvider = class {
+  token;
+  apiKey;
+  apiBaseUrl;
+  fetchImpl;
+  maxAttempts;
+  onToken;
+  sleep;
+  inflight;
+  constructor(options) {
+    this.token = String(options.accessToken || "").trim();
+    this.apiKey = String(options.apiKey || "").trim();
+    this.apiBaseUrl = String(
+      options.apiBaseUrl || POSTMAN_ENDPOINT_PROFILES.prod.apiBaseUrl
+    ).replace(/\/+$/, "");
+    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.maxAttempts = Math.max(1, options.maxAttempts ?? 2);
+    this.onToken = options.onToken;
+    this.sleep = options.sleep;
+  }
+  current() {
+    return this.token;
+  }
+  /** True when a PMAK is present, so an expired token can be re-minted. */
+  canRefresh() {
+    return Boolean(this.apiKey);
+  }
+  refresh() {
+    this.inflight ??= this.mintWithRetry().finally(() => {
+      this.inflight = void 0;
+    });
+    return this.inflight;
+  }
+  async mintWithRetry() {
+    if (!this.apiKey) {
+      throw new Error(
+        "postman: the access token expired and cannot be refreshed because no postman-api-key is present. Service-account access tokens expire after about 1 to 1.5 hours. Re-mint a fresh token (postman-resolve-service-token-action) and re-run."
+      );
+    }
+    const token = await retry(() => this.mintOnce(), {
+      maxAttempts: this.maxAttempts,
+      delayMs: 1e3,
+      backoffMultiplier: 2,
+      ...this.sleep ? { sleep: this.sleep } : {},
+      shouldRetry: (error2) => !(error2 instanceof MintError && error2.permanent)
+    });
+    this.token = token;
+    this.onToken?.(token);
+    return token;
+  }
+  async mintOnce() {
+    const response = await this.fetchImpl(`${this.apiBaseUrl}/service-account-tokens`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": this.apiKey
+      },
+      body: JSON.stringify({ apiKey: this.apiKey })
+    });
+    const body = await response.text().catch(() => "");
+    if (!response.ok) {
+      const status = response.status;
+      if (status === 401 || status === 403) {
+        throw new MintError(
+          `postman: re-mint failed because the postman-api-key was rejected (PMAK rejected, HTTP ${status}); confirm it is a valid, enabled service-account PMAK for the intended team.`,
+          true
+        );
+      }
+      if (status === 400 && body.toLowerCase().includes("service accounts not enabled")) {
+        throw new MintError(
+          "postman: re-mint failed because service accounts are not enabled for this team; enable them in Team Settings or use a team where they are.",
+          true
+        );
+      }
+      throw new MintError(`postman: re-mint failed (service-account-tokens HTTP ${status}).`, false);
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      parsed = void 0;
+    }
+    const token = extractAccessToken(parsed);
+    if (!token) {
+      throw new MintError("postman: re-mint succeeded but no access token was returned.", false);
+    }
+    return token;
   }
 };
 
@@ -29880,7 +30455,7 @@ function createTelemetryContext(options) {
 var STABLE_COLLECTION_UPDATE_MAX_ATTEMPTS = 6;
 var STABLE_COLLECTION_UPDATE_VERIFY_COUNT = 3;
 var STABLE_COLLECTION_UPDATE_VERIFY_DELAY_MS = 5e3;
-function sleep2(ms) {
+function sleep3(ms) {
   return new Promise((resolve2) => {
     setTimeout(resolve2, ms);
   });
@@ -29972,7 +30547,7 @@ function writeDebugDump(debugDumpPath, collection, actionCore) {
   actionCore.info(`Wrote transformed collection debug dump to ${resolvedPath}`);
 }
 async function verifyCanonicalCollectionIsStable(collectionId, dependencies, verifyCollection) {
-  const sleepImpl = dependencies.sleep ?? sleep2;
+  const sleepImpl = dependencies.sleep ?? sleep3;
   let latestCollection;
   let latestVerification = {
     ok: false,
@@ -30106,12 +30681,11 @@ async function runWithoutFlowManifest(inputs, dependencies) {
   });
 }
 async function runSmokeFlow(inputs, dependencies) {
-  dependencies.core.setSecret?.(inputs.postmanApiKey);
+  if (inputs.postmanApiKey) {
+    dependencies.core.setSecret?.(inputs.postmanApiKey);
+  }
   if (inputs.postmanAccessToken) {
     dependencies.core.setSecret?.(inputs.postmanAccessToken);
-    dependencies.core.info(
-      "postman-access-token is used for telemetry identity enrichment; the Smoke collection reshape authenticates with postman-api-key."
-    );
   }
   ensureRequiredInputs(inputs);
   if (inputs.collectionSyncMode !== "refresh") {
@@ -30209,6 +30783,25 @@ async function runSmokeFlow(inputs, dependencies) {
     }
   }
 }
+function createSmokeClient(inputs, actionCore) {
+  const accessToken = String(inputs.postmanAccessToken ?? "").trim();
+  if (!accessToken) {
+    throw new Error(
+      "postman-access-token is required: the Smoke collection reshape runs access-token-only through the Postman gateway. Mint one with postman-resolve-service-token-action and pass it as postman-access-token (postman-api-key alone no longer drives the reshape)."
+    );
+  }
+  const provider = new AccessTokenProvider({
+    accessToken,
+    apiKey: inputs.postmanApiKey || void 0,
+    apiBaseUrl: inputs.postmanApiBaseUrl,
+    onToken: (token) => actionCore.setSecret?.(token)
+  });
+  const teamId = String(inputs.teamId ?? "").trim();
+  return new PostmanGatewaySmokeClient({
+    tokenProvider: provider,
+    ...teamId ? { teamId, orgMode: true } : {}
+  });
+}
 async function runAction(actionCore = core_exports, env = process.env) {
   const inputs = readActionInputs(env);
   const telemetry = createTelemetryContext({ action: "postman-smoke-flow-action", logger: actionCore });
@@ -30220,7 +30813,7 @@ async function runAction(actionCore = core_exports, env = process.env) {
     }).catch(() => void 0);
   }
   try {
-    const postman = new PostmanSmokeClient(inputs.postmanApiKey, inputs.postmanApiBaseUrl);
+    const postman = createSmokeClient(inputs, actionCore);
     const outputs2 = await runSmokeFlow(inputs, {
       core: actionCore,
       postman

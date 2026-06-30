@@ -181,14 +181,14 @@ See [docs/cli.md](docs/cli.md) for GitLab CI, Bitbucket Pipelines, Azure DevOps,
 | `spec-id` | Postman spec ID produced by bootstrap. | yes |  |
 | `smoke-collection-id` | Canonical Smoke collection ID to refresh in place. | yes |  |
 | `flow-path` | Optional repo-root-relative path to the curated flow.yaml manifest. When omitted, OAuth config can still be applied to the existing Smoke collection. | no |  |
-| `postman-api-key` | Postman API key used for collection generation and mutation. | yes |  |
+| `postman-api-key` | Optional service-account API key. Only used to re-mint an expired postman-access-token; the collection reshape itself runs access-token-only through the Postman gateway. | no |  |
 | `postman-region` | Postman data residency region for public API calls. Supported values are us and eu. | no | `us` |
 | `auth-config-json` | Optional JSON config for Smoke collection OAuth2 client-credentials token acquisition. | no |  |
 | `secrets-resolver-enabled` | Whether to include the legacy AWS Secrets Manager resolver item at the start of the generated Smoke collection. Defaults to true for backward compatibility; set to false to opt out. | no | `true` |
 | `spec-path` | Optional repo-root-relative path to the local OpenAPI spec for validation and debug context. | no |  |
 | `debug-dump-path` | Optional repo-root-relative or absolute path to write the transformed collection JSON before update. | no |  |
 | `collection-sync-mode` | Collection lifecycle policy. Refresh is the supported v1 mode. | no | `refresh` |
-| `postman-access-token` | Compatibility input for broader onboarding pipelines. Smoke Flow does not use it; when provided, the value is masked and a deprecation warning is logged. | no |  |
+| `postman-access-token` | Service-account access token (x-access-token) that authenticates the Smoke collection reshape against the Postman gateway. Required for the reshape. | no |  |
 | `fail-on-flow-warning` | Whether non-blocking flow warnings should fail the action. | no | `false` |
 | `keep-temp-collection-on-failure` | Whether to keep the generated temporary smoke collection for debugging after a failed apply. | no | `false` |
 | `temp-collection-prefix` | Prefix used when generating the temporary smoke collection from the spec. | no | `[Smoke][Temp]` |
