@@ -45,6 +45,7 @@ export type ActionInputs = {
   flowPath?: string;
   postmanApiKey: string;
   postmanApiBaseUrl: string;
+  postmanIapubBaseUrl: string;
   authConfig?: SmokeAuthConfig;
   secretsResolverEnabled: boolean;
   specPath?: string;

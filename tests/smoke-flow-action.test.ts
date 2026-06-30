@@ -64,6 +64,7 @@ function createInputs(tempDir: string): ActionInputs {
     flowPath: 'flow.yaml',
     postmanApiKey: 'PMAK-123',
     postmanApiBaseUrl: 'https://api.getpostman.com',
+    postmanIapubBaseUrl: 'https://iapub.postman.co',
     secretsResolverEnabled: true,
     specPath: 'openapi.yaml',
     collectionSyncMode: 'refresh',
@@ -198,8 +199,8 @@ describe('runSmokeFlow', () => {
 
       expect(core.setSecret).toHaveBeenCalledWith('PMAK-123');
       expect(core.setSecret).toHaveBeenCalledWith('pma_at_user_session');
-      expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('postman-access-token is accepted only for compatibility'));
-      expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('postman-cs/postman-resolve-service-token-action'));
+      expect(core.info).toHaveBeenCalledWith(expect.stringContaining('postman-access-token is used for telemetry identity enrichment'));
+      expect(core.info).toHaveBeenCalledWith(expect.stringContaining('authenticates with postman-api-key'));
     } finally {
       process.chdir(previousCwd);
       rmSync(tempDir, { recursive: true, force: true });

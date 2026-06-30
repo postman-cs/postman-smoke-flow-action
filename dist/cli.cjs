@@ -29423,6 +29423,83 @@ var PostmanSmokeClient = class {
   }
 };
 
+// src/postman/credential-identity.ts
+var sessionPath = "/api/sessions/current";
+var sessionMemo = /* @__PURE__ */ new Map();
+var memoizedSessionIdentity;
+function getMemoizedSessionIdentity() {
+  return memoizedSessionIdentity;
+}
+function asRecord4(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return void 0;
+  }
+  return value;
+}
+function coerceId(raw) {
+  return raw ? String(raw) : void 0;
+}
+function coerceText(raw) {
+  if (typeof raw !== "string") {
+    return void 0;
+  }
+  const trimmed = raw.trim();
+  return trimmed ? trimmed : void 0;
+}
+function normalizeBaseUrl(raw) {
+  return String(raw || "").replace(/\/+$/, "");
+}
+async function resolveSessionIdentity(opts) {
+  const accessToken = String(opts.accessToken || "").trim();
+  if (!accessToken) {
+    return void 0;
+  }
+  const baseUrl = normalizeBaseUrl(opts.iapubBaseUrl);
+  const memoKey = `${baseUrl}::${accessToken}`;
+  let pending = sessionMemo.get(memoKey);
+  if (!pending) {
+    pending = probeSessionIdentity(baseUrl, accessToken, opts.fetchImpl ?? fetch);
+    sessionMemo.set(memoKey, pending);
+  }
+  return pending;
+}
+async function probeSessionIdentity(baseUrl, accessToken, fetchImpl) {
+  try {
+    const response = await fetchImpl(`${baseUrl}${sessionPath}`, {
+      method: "GET",
+      headers: { "x-access-token": accessToken }
+    });
+    if (!response.ok) {
+      return void 0;
+    }
+    const payload = asRecord4(await response.json());
+    if (!payload) {
+      return void 0;
+    }
+    const root = asRecord4(payload.session) ?? payload;
+    const identity = asRecord4(root.identity);
+    const data = asRecord4(root.data);
+    const user = asRecord4(data?.user);
+    const roleEntries = Array.isArray(user?.roles) ? user.roles.map((entry) => coerceText(entry) ?? coerceId(entry)).filter((entry) => Boolean(entry)) : [];
+    const singleRole = coerceText(user?.role);
+    const roles = roleEntries.length > 0 ? roleEntries : singleRole ? [singleRole] : void 0;
+    const resolved = {
+      source: "iapub/sessions",
+      userId: coerceId(identity?.user) ?? coerceId(user?.id),
+      fullName: coerceText(user?.fullName) ?? coerceText(user?.name) ?? coerceText(user?.username),
+      teamId: coerceId(identity?.team),
+      teamName: coerceText(user?.teamName),
+      teamDomain: coerceText(identity?.domain),
+      ...roles ? { roles } : {},
+      consumerType: coerceText(root.consumerType) ?? coerceText(data?.consumerType) ?? coerceText(user?.consumerType)
+    };
+    memoizedSessionIdentity = resolved;
+    return resolved;
+  } catch {
+    return void 0;
+  }
+}
+
 // node_modules/@postman-cse/automation-telemetry-core/dist/ci-context.js
 function norm(value) {
   const trimmed = (value ?? "").trim();
@@ -29820,6 +29897,10 @@ function resolvePostmanApiBaseUrl(regionInput) {
   if (region === "eu") return "https://api.eu.postman.com";
   throw new Error(`postman-region must be one of: us, eu; got: ${region}`);
 }
+function resolvePostmanIapubBaseUrl(regionInput) {
+  resolvePostmanApiBaseUrl(regionInput);
+  return "https://iapub.postman.co";
+}
 function getInput2(name, env) {
   const canonicalEnvName = `INPUT_${name.replace(/ /g, "_").toUpperCase()}`;
   const legacyEnvName = `INPUT_${name.replace(/ /g, "_").replace(/-/g, "_").toUpperCase()}`;
@@ -29867,6 +29948,7 @@ function readActionInputs(env = process.env) {
     flowPath: getInput2("flow-path", env) || void 0,
     postmanApiKey: getInput2("postman-api-key", env),
     postmanApiBaseUrl: resolvePostmanApiBaseUrl(getInput2("postman-region", env)),
+    postmanIapubBaseUrl: resolvePostmanIapubBaseUrl(getInput2("postman-region", env)),
     authConfig: parseAuthConfig(getInput2("auth-config-json", env)),
     secretsResolverEnabled: parseBooleanInput(getInput2("secrets-resolver-enabled", env), true),
     specPath: getInput2("spec-path", env) || void 0,
@@ -30027,8 +30109,8 @@ async function runSmokeFlow(inputs, dependencies) {
   dependencies.core.setSecret?.(inputs.postmanApiKey);
   if (inputs.postmanAccessToken) {
     dependencies.core.setSecret?.(inputs.postmanAccessToken);
-    dependencies.core.warning(
-      "postman-access-token is accepted only for compatibility with broader onboarding pipelines and is not used by postman-smoke-flow-action. Remove it from standalone Smoke Flow jobs; for pipeline steps that need an access token, mint a service-account token with postman-cs/postman-resolve-service-token-action."
+    dependencies.core.info(
+      "postman-access-token is used for telemetry identity enrichment; the Smoke collection reshape authenticates with postman-api-key."
     );
   }
   ensureRequiredInputs(inputs);
@@ -30131,6 +30213,12 @@ async function runAction(actionCore = core_exports, env = process.env) {
   const inputs = readActionInputs(env);
   const telemetry = createTelemetryContext({ action: "postman-smoke-flow-action", logger: actionCore });
   telemetry.setTeamId(inputs.teamId);
+  if (inputs.postmanAccessToken) {
+    await resolveSessionIdentity({
+      iapubBaseUrl: inputs.postmanIapubBaseUrl,
+      accessToken: inputs.postmanAccessToken
+    }).catch(() => void 0);
+  }
   try {
     const postman = new PostmanSmokeClient(inputs.postmanApiKey, inputs.postmanApiBaseUrl);
     const outputs2 = await runSmokeFlow(inputs, {
@@ -30140,9 +30228,11 @@ async function runAction(actionCore = core_exports, env = process.env) {
     for (const [name, value] of Object.entries(outputs2)) {
       actionCore.setOutput(name, value);
     }
+    telemetry.setAccountType(getMemoizedSessionIdentity()?.consumerType);
     telemetry.emitCompletion("success");
     return outputs2;
   } catch (error2) {
+    telemetry.setAccountType(getMemoizedSessionIdentity()?.consumerType);
     telemetry.emitCompletion("failure");
     throw error2;
   }

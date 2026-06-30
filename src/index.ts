@@ -16,6 +16,10 @@ import {
   type CollectionVerification
 } from './postman/collection-transform.js';
 import { PostmanSmokeClient } from './postman/postman-smoke-client.js';
+import {
+  getMemoizedSessionIdentity,
+  resolveSessionIdentity
+} from './postman/credential-identity.js';
 import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
 
 type JsonRecord = Record<string, unknown>;
@@ -52,6 +56,14 @@ function resolvePostmanApiBaseUrl(regionInput: string): string {
   if (region === 'us') return 'https://api.getpostman.com';
   if (region === 'eu') return 'https://api.eu.postman.com';
   throw new Error(`postman-region must be one of: us, eu; got: ${region}`);
+}
+
+/** iapub serves the session-identity probe globally; it is region-independent. */
+function resolvePostmanIapubBaseUrl(regionInput: string): string {
+  // Validate the region for parity with the API base resolver, then return the
+  // shared identity-pub host used for both us and eu.
+  resolvePostmanApiBaseUrl(regionInput);
+  return 'https://iapub.postman.co';
 }
 
 function getInput(name: string, env: NodeJS.ProcessEnv): string {
@@ -108,6 +120,7 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
     flowPath: getInput('flow-path', env) || undefined,
     postmanApiKey: getInput('postman-api-key', env),
     postmanApiBaseUrl: resolvePostmanApiBaseUrl(getInput('postman-region', env)),
+    postmanIapubBaseUrl: resolvePostmanIapubBaseUrl(getInput('postman-region', env)),
     authConfig: parseAuthConfig(getInput('auth-config-json', env)),
     secretsResolverEnabled: parseBooleanInput(getInput('secrets-resolver-enabled', env), true),
     specPath: getInput('spec-path', env) || undefined,
@@ -304,8 +317,14 @@ export async function runSmokeFlow(
   dependencies.core.setSecret?.(inputs.postmanApiKey);
   if (inputs.postmanAccessToken) {
     dependencies.core.setSecret?.(inputs.postmanAccessToken);
-    dependencies.core.warning(
-      'postman-access-token is accepted only for compatibility with broader onboarding pipelines and is not used by postman-smoke-flow-action. Remove it from standalone Smoke Flow jobs; for pipeline steps that need an access token, mint a service-account token with postman-cs/postman-resolve-service-token-action.'
+    // The access token enriches telemetry identity (session consumerType ->
+    // account_type). The Smoke collection reshape itself runs on the Postman
+    // collection API, which authenticates with postman-api-key: the collection
+    // routes reject x-access-token and the gateway collection service 404s on a
+    // public collection uid (verified live), so postman-api-key stays required
+    // here as a documented access-token-primary exception.
+    dependencies.core.info(
+      'postman-access-token is used for telemetry identity enrichment; the Smoke collection reshape authenticates with postman-api-key.'
     );
   }
   ensureRequiredInputs(inputs);
@@ -420,6 +439,16 @@ export async function runAction(actionCore: CoreLike = core, env: NodeJS.Process
   const inputs = readActionInputs(env);
   const telemetry = createTelemetryContext({ action: 'postman-smoke-flow-action', logger: actionCore });
   telemetry.setTeamId(inputs.teamId);
+  // Resolve the access-token session identity once (memoized) so telemetry can
+  // emit `account_type` from the session `consumerType`, closing the gap where
+  // smoke-flow only set team_id. Best-effort: a failed probe leaves account_type
+  // unknown rather than blocking the run.
+  if (inputs.postmanAccessToken) {
+    await resolveSessionIdentity({
+      iapubBaseUrl: inputs.postmanIapubBaseUrl,
+      accessToken: inputs.postmanAccessToken
+    }).catch(() => undefined);
+  }
   try {
     const postman = new PostmanSmokeClient(inputs.postmanApiKey, inputs.postmanApiBaseUrl);
     const outputs = await runSmokeFlow(inputs, {
@@ -429,9 +458,11 @@ export async function runAction(actionCore: CoreLike = core, env: NodeJS.Process
     for (const [name, value] of Object.entries(outputs)) {
       actionCore.setOutput(name, value);
     }
+    telemetry.setAccountType(getMemoizedSessionIdentity()?.consumerType);
     telemetry.emitCompletion('success');
     return outputs;
   } catch (error) {
+    telemetry.setAccountType(getMemoizedSessionIdentity()?.consumerType);
     telemetry.emitCompletion('failure');
     throw error;
   }
