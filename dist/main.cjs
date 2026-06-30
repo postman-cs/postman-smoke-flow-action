@@ -29528,7 +29528,8 @@ function v3ScriptsToV2Events(scripts) {
 }
 function v3NodeToV2Item(node) {
   const name = typeof node.name === "string" ? node.name : "";
-  if (String(node.$kind ?? "") === "folder") {
+  const kind = String(node.$kind ?? "");
+  if (kind === "folder" || kind === "collection" || Array.isArray(node.items)) {
     return { name, item: asArray(node.items).map(v3NodeToV2Item) };
   }
   const request = {

@@ -71,7 +71,12 @@ function v3ScriptsToV2Events(scripts: unknown): JsonRecord[] {
 /** Map one v3 export node (folder or http-request leaf) to a v2.1 collection item. */
 function v3NodeToV2Item(node: JsonRecord): JsonRecord {
   const name = typeof node.name === 'string' ? node.name : '';
-  if (String(node.$kind ?? '') === 'folder') {
+  // Container node: a request folder/group. The v3 export marks folders as
+  // `$kind:'collection'` (NOT 'folder') with child requests under `items`; an
+  // http-request leaf has no `items` (it carries `examples`). Recurse on either
+  // signal so nested requests aren't lost as a `method:'GET', url:''` pseudo-leaf.
+  const kind = String(node.$kind ?? '');
+  if (kind === 'folder' || kind === 'collection' || Array.isArray(node.items)) {
     return { name, item: asArray(node.items).map(v3NodeToV2Item) };
   }
   const request: JsonRecord = {

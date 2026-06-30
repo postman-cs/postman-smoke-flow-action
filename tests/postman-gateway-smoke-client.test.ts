@@ -49,7 +49,9 @@ describe('PostmanGatewaySmokeClient', () => {
           variables: [{ key: 'baseUrl', value: 'https://x' }],
           items: [
             {
-              $kind: 'folder',
+              // Real export marks request folders as $kind:'collection' (not
+              // 'folder'); the adapter must still recurse into `items`.
+              $kind: 'collection',
               name: 'Group',
               items: [
                 {
