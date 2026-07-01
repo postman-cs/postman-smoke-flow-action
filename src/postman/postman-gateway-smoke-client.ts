@@ -404,12 +404,17 @@ export class PostmanGatewaySmokeClient {
   }
 
   /**
-   * PATCH a freshly-created item's `/scripts`, tolerating a transient `404
-   * RESOURCE_NOT_FOUND` immediately after create. The item-create write returns
-   * the assigned id, but a subsequent immediate PATCH can hit a replica that has
-   * not yet observed the create (read-after-write lag, live-observed on org-mode
-   * teams), so retry on 404 with backoff. `op:add /scripts` is idempotent
-   * (overwrites), so retrying is safe. Non-404 errors surface immediately.
+   * PATCH a freshly-created item's `/scripts`, tolerating the two transient
+   * failures this immediate-after-create write is prone to on the shared gateway:
+   *   - `404 RESOURCE_NOT_FOUND` — the create write returns the assigned id, but
+   *     an immediate PATCH can hit a replica that has not yet observed the create
+   *     (read-after-write lag, live-observed on org-mode teams).
+   *   - a downstream `5xx` (e.g. `500 ESOCKETTIMEDOUT`) — a Bifrost/gateway read
+   *     timeout, not a durable rejection.
+   * `op:add /scripts` is idempotent (overwrites), so retrying either is safe.
+   * This is a deeper, longer-backoff budget than the gateway client's inner
+   * transient retry, to wait out a longer platform hiccup on this fragile write.
+   * Non-transient errors (e.g. 4xx schema rejections) surface immediately.
    */
   private async patchItemScripts(cid: string, itemId: string, scripts: JsonRecord[]): Promise<void> {
     const maxAttempts = 6;
@@ -424,8 +429,8 @@ export class PostmanGatewaySmokeClient {
         });
         return;
       } catch (error) {
-        const notFound = error instanceof HttpError && error.status === 404;
-        if (!notFound || attempt === maxAttempts - 1) {
+        const retriable = error instanceof HttpError && (error.status === 404 || error.status >= 500);
+        if (!retriable || attempt === maxAttempts - 1) {
           throw error;
         }
         await this.sleepImpl(Math.min(2000, 300 * 2 ** attempt));
