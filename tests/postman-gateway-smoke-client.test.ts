@@ -170,6 +170,73 @@ describe('PostmanGatewaySmokeClient', () => {
     expect(collScripts[0].type).toBe('http:beforeRequest');
   });
 
+  it('retries the new-item scripts patch on a transient 404 (read-after-write lag)', async () => {
+    let itemPatchAttempts = 0;
+    const { fetchImpl, calls } = gatewayFetch((env) => {
+      if (env.method === 'get' && env.path.endsWith('/items/')) return jsonResponse({ data: [] });
+      if (env.method === 'post' && env.path.endsWith('/items/')) return jsonResponse({ data: { id: '55363555-new' } });
+      if (env.method === 'patch' && env.path.endsWith('/items/55363555-new')) {
+        itemPatchAttempts += 1;
+        // First read-after-write hits a replica that has not seen the create.
+        return itemPatchAttempts === 1
+          ? jsonResponse({ error: { code: 'RESOURCE_NOT_FOUND', message: 'Item not found' } }, 404)
+          : jsonResponse({ data: {} });
+      }
+      return jsonResponse({});
+    });
+    const sleep = vi.fn(async () => undefined);
+    const provider = new AccessTokenProvider({ accessToken: 'tok' });
+    const client = new PostmanGatewaySmokeClient({ tokenProvider: provider, fetchImpl, sleepImpl: sleep });
+
+    await client.updateCollection('55363555-cid', {
+      info: { name: '[Smoke] Reshaped' },
+      item: [
+        {
+          name: 'Echo',
+          request: { method: 'GET', url: 'https://postman-echo.com/get' },
+          event: [{ listen: 'test', script: { exec: ['pm.test("a", () => {});'] } }]
+        }
+      ]
+    });
+
+    // create once, patch twice (404 then 200), one backoff sleep between.
+    expect(itemPatchAttempts).toBe(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+    const itemPatches = calls.filter((c) => c.method === 'patch' && c.path.endsWith('/items/55363555-new'));
+    expect(itemPatches).toHaveLength(2);
+  });
+
+  it('surfaces a non-404 error from the new-item scripts patch without retrying', async () => {
+    let itemPatchAttempts = 0;
+    const { fetchImpl } = gatewayFetch((env) => {
+      if (env.method === 'get' && env.path.endsWith('/items/')) return jsonResponse({ data: [] });
+      if (env.method === 'post' && env.path.endsWith('/items/')) return jsonResponse({ data: { id: '55363555-new' } });
+      if (env.method === 'patch' && env.path.endsWith('/items/55363555-new')) {
+        itemPatchAttempts += 1;
+        return jsonResponse({ error: { code: 'SCHEMA_ENFORCED' } }, 400);
+      }
+      return jsonResponse({});
+    });
+    const sleep = vi.fn(async () => undefined);
+    const provider = new AccessTokenProvider({ accessToken: 'tok' });
+    const client = new PostmanGatewaySmokeClient({ tokenProvider: provider, fetchImpl, sleepImpl: sleep });
+
+    await expect(
+      client.updateCollection('55363555-cid', {
+        info: { name: '[Smoke] Reshaped' },
+        item: [
+          {
+            name: 'Echo',
+            request: { method: 'GET', url: 'https://postman-echo.com/get' },
+            event: [{ listen: 'test', script: { exec: ['pm.test("a", () => {});'] } }]
+          }
+        ]
+      })
+    ).rejects.toThrow('400');
+    expect(itemPatchAttempts).toBe(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it('deleteCollection swallows a 404', async () => {
     const { client, calls } = makeClient((env) => {
       if (env.method === 'delete') return jsonResponse({ error: 'not found' }, 404);

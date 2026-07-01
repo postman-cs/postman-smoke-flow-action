@@ -29616,7 +29616,7 @@ function v2EventsToV3CollectionScripts(events2) {
 }
 var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
   static GENERATION_LOCKED_MAX_RETRIES = 5;
-  static GENERATION_POLL_ATTEMPTS = 45;
+  static GENERATION_POLL_ATTEMPTS = 90;
   static GENERATION_POLL_DELAY_MS = 2e3;
   gateway;
   sleepImpl;
@@ -29731,13 +29731,7 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
       const newItemId = String(asRecord3(created?.data)?.id ?? "").trim();
       const scripts = v2EventsToV3Scripts(leaf.event);
       if (newItemId && scripts.length > 0) {
-        await this.gateway.request({
-          service: "collection",
-          method: "patch",
-          path: `/v3/collections/${cid}/items/${newItemId}`,
-          headers: { "X-Entity-Type": "http-request" },
-          body: [{ op: "add", path: "/scripts", value: scripts }]
-        });
+        await this.patchItemScripts(cid, newItemId, scripts);
       }
     }
     const ops = [];
@@ -29766,6 +29760,35 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         path: `/v3/collections/${cid}`,
         body: [{ op: "add", path: "/scripts", value: collScripts }]
       }).catch(() => void 0);
+    }
+  }
+  /**
+   * PATCH a freshly-created item's `/scripts`, tolerating a transient `404
+   * RESOURCE_NOT_FOUND` immediately after create. The item-create write returns
+   * the assigned id, but a subsequent immediate PATCH can hit a replica that has
+   * not yet observed the create (read-after-write lag, live-observed on org-mode
+   * teams), so retry on 404 with backoff. `op:add /scripts` is idempotent
+   * (overwrites), so retrying is safe. Non-404 errors surface immediately.
+   */
+  async patchItemScripts(cid, itemId, scripts) {
+    const maxAttempts = 6;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        await this.gateway.request({
+          service: "collection",
+          method: "patch",
+          path: `/v3/collections/${cid}/items/${itemId}`,
+          headers: { "X-Entity-Type": "http-request" },
+          body: [{ op: "add", path: "/scripts", value: scripts }]
+        });
+        return;
+      } catch (error2) {
+        const notFound = error2 instanceof HttpError && error2.status === 404;
+        if (!notFound || attempt === maxAttempts - 1) {
+          throw error2;
+        }
+        await this.sleepImpl(Math.min(2e3, 300 * 2 ** attempt));
+      }
     }
   }
   /**
@@ -30487,7 +30510,7 @@ function resolveActionVersion(explicit) {
   if (explicit) {
     return explicit;
   }
-  return "2.0.0" ? "2.0.0" : "unknown";
+  return "2.0.1" ? "2.0.1" : "unknown";
 }
 function telemetryDisabled(env) {
   const flag = String(env.POSTMAN_ACTIONS_TELEMETRY ?? "").trim().toLowerCase();

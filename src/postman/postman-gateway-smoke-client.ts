@@ -226,7 +226,7 @@ export interface PostmanGatewaySmokeClientOptions {
  */
 export class PostmanGatewaySmokeClient {
   private static readonly GENERATION_LOCKED_MAX_RETRIES = 5;
-  private static readonly GENERATION_POLL_ATTEMPTS = 45;
+  private static readonly GENERATION_POLL_ATTEMPTS = 90;
   private static readonly GENERATION_POLL_DELAY_MS = 2000;
 
   private readonly gateway: AccessTokenGatewayClient;
@@ -358,13 +358,7 @@ export class PostmanGatewaySmokeClient {
       const newItemId = String(asRecord(created?.data)?.id ?? '').trim();
       const scripts = v2EventsToV3Scripts(leaf.event);
       if (newItemId && scripts.length > 0) {
-        await this.gateway.request({
-          service: 'collection',
-          method: 'patch',
-          path: `/v3/collections/${cid}/items/${newItemId}`,
-          headers: { 'X-Entity-Type': 'http-request' },
-          body: [{ op: 'add', path: '/scripts', value: scripts }]
-        });
+        await this.patchItemScripts(cid, newItemId, scripts);
       }
     }
 
@@ -406,6 +400,36 @@ export class PostmanGatewaySmokeClient {
           body: [{ op: 'add', path: '/scripts', value: collScripts }]
         })
         .catch(() => undefined);
+    }
+  }
+
+  /**
+   * PATCH a freshly-created item's `/scripts`, tolerating a transient `404
+   * RESOURCE_NOT_FOUND` immediately after create. The item-create write returns
+   * the assigned id, but a subsequent immediate PATCH can hit a replica that has
+   * not yet observed the create (read-after-write lag, live-observed on org-mode
+   * teams), so retry on 404 with backoff. `op:add /scripts` is idempotent
+   * (overwrites), so retrying is safe. Non-404 errors surface immediately.
+   */
+  private async patchItemScripts(cid: string, itemId: string, scripts: JsonRecord[]): Promise<void> {
+    const maxAttempts = 6;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        await this.gateway.request({
+          service: 'collection',
+          method: 'patch',
+          path: `/v3/collections/${cid}/items/${itemId}`,
+          headers: { 'X-Entity-Type': 'http-request' },
+          body: [{ op: 'add', path: '/scripts', value: scripts }]
+        });
+        return;
+      } catch (error) {
+        const notFound = error instanceof HttpError && error.status === 404;
+        if (!notFound || attempt === maxAttempts - 1) {
+          throw error;
+        }
+        await this.sleepImpl(Math.min(2000, 300 * 2 ** attempt));
+      }
     }
   }
 
