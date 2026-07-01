@@ -28299,8 +28299,8 @@ function getIDToken(aud) {
 }
 
 // src/index.ts
-var import_node_fs3 = require("node:fs");
-var import_node_path2 = __toESM(require("node:path"), 1);
+var import_node_fs4 = require("node:fs");
+var import_node_path3 = __toESM(require("node:path"), 1);
 
 // src/contracts.ts
 var smokeFlowActionContract = {
@@ -30639,7 +30639,7 @@ function resolveActionVersion(explicit) {
   if (explicit) {
     return explicit;
   }
-  return "2.0.1" ? "2.0.1" : "unknown";
+  return typeof __ACTION_VERSION__ !== "undefined" && __ACTION_VERSION__ ? __ACTION_VERSION__ : "unknown";
 }
 function telemetryDisabled(env) {
   const flag = String(env.POSTMAN_ACTIONS_TELEMETRY ?? "").trim().toLowerCase();
@@ -30761,6 +30761,18 @@ function createTelemetryContext(options) {
   };
 }
 
+// src/action-version.ts
+var import_node_fs3 = require("node:fs");
+var import_node_path2 = require("node:path");
+function resolveActionVersion2() {
+  try {
+    const raw = (0, import_node_fs3.readFileSync)((0, import_node_path2.join)(__dirname, "..", "package.json"), "utf8");
+    return JSON.parse(raw).version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 // src/index.ts
 var STABLE_COLLECTION_UPDATE_MAX_ATTEMPTS = 6;
 var STABLE_COLLECTION_UPDATE_VERIFY_COUNT = 3;
@@ -30850,9 +30862,9 @@ function writeDebugDump(debugDumpPath, collection, actionCore) {
   if (!debugDumpPath) {
     return;
   }
-  const resolvedPath = import_node_path2.default.isAbsolute(debugDumpPath) ? debugDumpPath : import_node_path2.default.resolve(process.cwd(), debugDumpPath);
-  (0, import_node_fs3.mkdirSync)(import_node_path2.default.dirname(resolvedPath), { recursive: true });
-  (0, import_node_fs3.writeFileSync)(resolvedPath, `${JSON.stringify(collection, null, 2)}
+  const resolvedPath = import_node_path3.default.isAbsolute(debugDumpPath) ? debugDumpPath : import_node_path3.default.resolve(process.cwd(), debugDumpPath);
+  (0, import_node_fs4.mkdirSync)(import_node_path3.default.dirname(resolvedPath), { recursive: true });
+  (0, import_node_fs4.writeFileSync)(resolvedPath, `${JSON.stringify(collection, null, 2)}
 `, "utf8");
   actionCore.info(`Wrote transformed collection debug dump to ${resolvedPath}`);
 }
@@ -31114,7 +31126,7 @@ function createSmokeClient(inputs, actionCore) {
 }
 async function runAction(actionCore = core_exports, env = process.env) {
   const inputs = readActionInputs(env);
-  const telemetry = createTelemetryContext({ action: "postman-smoke-flow-action", logger: actionCore });
+  const telemetry = createTelemetryContext({ action: "postman-smoke-flow-action", actionVersion: resolveActionVersion2(), logger: actionCore });
   telemetry.setTeamId(inputs.teamId);
   if (inputs.postmanApiKey) {
     actionCore.setSecret?.(inputs.postmanApiKey);

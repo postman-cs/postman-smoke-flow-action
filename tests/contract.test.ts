@@ -113,7 +113,7 @@ describe('postman-smoke-flow-action contract', () => {
     const packageJson = loadPackageJson();
     expect(packageJson.scripts).toMatchObject({
       build: expect.any(String),
-      'check:dist': expect.any(String),
+      'verify:dist': expect.any(String),
       lint: 'eslint .',
       'lint:fix': 'eslint . --fix',
       test: 'vitest run',

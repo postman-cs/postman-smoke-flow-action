@@ -24,6 +24,7 @@ import {
   runCredentialPreflight
 } from './postman/credential-identity.js';
 import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
+import { resolveActionVersion } from './action-version.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -467,7 +468,7 @@ function createSmokeClient(
 
 export async function runAction(actionCore: CoreLike = core, env: NodeJS.ProcessEnv = process.env): Promise<ActionOutputs> {
   const inputs = readActionInputs(env);
-  const telemetry = createTelemetryContext({ action: 'postman-smoke-flow-action', logger: actionCore });
+  const telemetry = createTelemetryContext({ action: 'postman-smoke-flow-action', actionVersion: resolveActionVersion(), logger: actionCore });
   telemetry.setTeamId(inputs.teamId);
   if (inputs.postmanApiKey) {
     actionCore.setSecret?.(inputs.postmanApiKey);

@@ -19,7 +19,8 @@ npm ci
 npm run lint
 npm test
 npm run typecheck
-npm run check:dist
+npm run build
+npm run verify:dist
 ```
 
 Then lint workflows with [`actionlint`](https://github.com/rhysd/actionlint):
@@ -34,7 +35,7 @@ $(go env GOPATH)/bin/actionlint
 ## Before Submitting a PR
 
 - [ ] `actionlint` passes locally.
-- [ ] `npm run lint`, `npm test`, `npm run typecheck`, and `npm run check:dist` pass locally.
+- [ ] `npm run lint`, `npm test`, `npm run typecheck`, and `npm run verify:dist` pass locally.
 - [ ] The `Live E2E` PR check passes; PRs should not be approved or merged until the correlated `postman-actions-e2e` run succeeds.
 - [ ] Changes are focused and address a single concern.
 - [ ] README inputs/outputs tables match `action.yml`.
