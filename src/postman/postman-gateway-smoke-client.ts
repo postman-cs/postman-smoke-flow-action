@@ -203,8 +203,8 @@ export interface PostmanGatewaySmokeClientOptions {
 }
 
 /**
- * Access-token-only Smoke collection client. Replaces the PMAK
- * {@link PostmanSmokeClient} surface (`generateCollection`/`getCollection`/
+ * Access-token-only Smoke collection client implementing the
+ * `SmokeCollectionClient` surface (`generateCollection`/`getCollection`/
  * `updateCollection`/`deleteCollection`) with gateway operations so the reshape
  * runs without a postman-api-key:
  *

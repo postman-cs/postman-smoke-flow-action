@@ -16,7 +16,7 @@ import {
   verifySmokeCollectionAuth,
   type CollectionVerification
 } from './postman/collection-transform.js';
-import { PostmanSmokeClient } from './postman/postman-smoke-client.js';
+import type { SmokeCollectionClient } from './postman/smoke-client-contract.js';
 import { PostmanGatewaySmokeClient } from './postman/postman-gateway-smoke-client.js';
 import { AccessTokenProvider } from './lib/postman/token-provider.js';
 import {
@@ -29,7 +29,7 @@ type JsonRecord = Record<string, unknown>;
 
 type SmokeFlowDependencies = {
   core: CoreLike;
-  postman: Pick<PostmanSmokeClient, 'generateCollection' | 'getCollection' | 'updateCollection' | 'deleteCollection'>;
+  postman: SmokeCollectionClient;
   sleep?: (ms: number) => Promise<void>;
 };
 
@@ -443,7 +443,7 @@ export async function runSmokeFlow(
 function createSmokeClient(
   inputs: ActionInputs,
   actionCore: CoreLike
-): Pick<PostmanSmokeClient, 'generateCollection' | 'getCollection' | 'updateCollection' | 'deleteCollection'> {
+): SmokeCollectionClient {
   const accessToken = String(inputs.postmanAccessToken ?? '').trim();
   if (!accessToken) {
     throw new Error(
