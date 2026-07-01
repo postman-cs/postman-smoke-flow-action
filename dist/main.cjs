@@ -30010,11 +30010,61 @@ var AccessTokenProvider = class {
 
 // src/postman/credential-identity.ts
 var sessionPath = "/api/sessions/current";
+var SESSION_MAX_ATTEMPTS = 3;
+var SESSION_RETRY_BASE_DELAY_MS = 500;
+var SESSION_RETRY_MAX_DELAY_MS = 8e3;
 var pmakMemo = /* @__PURE__ */ new Map();
 var sessionMemo = /* @__PURE__ */ new Map();
 var memoizedSessionIdentity;
+var memoizedSessionFailure;
+function defaultSessionSleep(ms) {
+  return new Promise((resolve2) => setTimeout(resolve2, ms));
+}
+function defaultRandom() {
+  return Math.random();
+}
+function parseRetryAfterMs(value) {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return void 0;
+  }
+  if (/^\d+$/.test(trimmed)) {
+    return Number(trimmed) * 1e3;
+  }
+  const dateMs = Date.parse(trimmed);
+  if (!Number.isNaN(dateMs)) {
+    return Math.max(0, dateMs - Date.now());
+  }
+  return void 0;
+}
+function parseRateLimitResetMs(value) {
+  const trimmed = value?.trim();
+  if (!trimmed || !/^\d+$/.test(trimmed)) {
+    return void 0;
+  }
+  const seconds = Number(trimmed);
+  const nowSeconds = Date.now() / 1e3;
+  if (seconds > nowSeconds) {
+    return Math.max(0, (seconds - nowSeconds) * 1e3);
+  }
+  return seconds * 1e3;
+}
+function computeSessionRetryDelayMs(response, attempt, random) {
+  const headers = response?.headers;
+  const signal = parseRetryAfterMs(headers?.get("retry-after") ?? null) ?? parseRateLimitResetMs(
+    headers?.get("ratelimit-reset") ?? headers?.get("x-ratelimit-reset") ?? null
+  );
+  if (signal !== void 0) {
+    return Math.min(Math.max(0, signal), SESSION_RETRY_MAX_DELAY_MS);
+  }
+  const ceiling = Math.min(SESSION_RETRY_MAX_DELAY_MS, SESSION_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1));
+  return Math.round(random() * ceiling);
+}
 function getMemoizedSessionIdentity() {
   return memoizedSessionIdentity;
+}
+function getSessionResolutionFailure() {
+  return memoizedSessionFailure;
 }
 function asRecord4(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -30084,46 +30134,90 @@ async function resolveSessionIdentity(opts) {
   const memoKey = `${baseUrl}::${accessToken}`;
   let pending = sessionMemo.get(memoKey);
   if (!pending) {
-    pending = probeSessionIdentity(baseUrl, accessToken, opts.fetchImpl ?? fetch);
+    pending = probeSessionIdentity(
+      baseUrl,
+      accessToken,
+      opts.fetchImpl ?? fetch,
+      Math.max(1, opts.maxAttempts ?? SESSION_MAX_ATTEMPTS),
+      opts.sleepImpl ?? defaultSessionSleep,
+      opts.randomImpl ?? defaultRandom
+    );
     sessionMemo.set(memoKey, pending);
   }
   return pending;
 }
-async function probeSessionIdentity(baseUrl, accessToken, fetchImpl) {
+async function parseSessionResponse(response) {
+  let payload;
   try {
-    const response = await fetchImpl(`${baseUrl}${sessionPath}`, {
-      method: "GET",
-      headers: { "x-access-token": accessToken }
-    });
-    if (!response.ok) {
-      return void 0;
-    }
-    const payload = asRecord4(await response.json());
-    if (!payload) {
-      return void 0;
-    }
-    const root = asRecord4(payload.session) ?? payload;
-    const identity = asRecord4(root.identity);
-    const data = asRecord4(root.data);
-    const user = asRecord4(data?.user);
-    const roleEntries = Array.isArray(user?.roles) ? user.roles.map((entry) => coerceText(entry) ?? coerceId(entry)).filter((entry) => Boolean(entry)) : [];
-    const singleRole = coerceText(user?.role);
-    const roles = roleEntries.length > 0 ? roleEntries : singleRole ? [singleRole] : void 0;
-    const resolved = {
-      source: "iapub/sessions",
-      userId: coerceId(identity?.user) ?? coerceId(user?.id),
-      fullName: coerceText(user?.fullName) ?? coerceText(user?.name) ?? coerceText(user?.username),
-      teamId: coerceId(identity?.team),
-      teamName: coerceText(user?.teamName),
-      teamDomain: coerceText(identity?.domain),
-      ...roles ? { roles } : {},
-      consumerType: coerceText(root.consumerType) ?? coerceText(data?.consumerType) ?? coerceText(user?.consumerType)
-    };
-    memoizedSessionIdentity = resolved;
-    return resolved;
+    payload = asRecord4(await response.json());
   } catch {
     return void 0;
   }
+  if (!payload) {
+    return void 0;
+  }
+  const root = asRecord4(payload.session) ?? payload;
+  const identity = asRecord4(root.identity);
+  const data = asRecord4(root.data);
+  const user = asRecord4(data?.user);
+  const roleEntries = Array.isArray(user?.roles) ? user.roles.map((entry) => coerceText(entry) ?? coerceId(entry)).filter((entry) => Boolean(entry)) : [];
+  const singleRole = coerceText(user?.role);
+  const roles = roleEntries.length > 0 ? roleEntries : singleRole ? [singleRole] : void 0;
+  return {
+    source: "iapub/sessions",
+    userId: coerceId(identity?.user) ?? coerceId(user?.id),
+    fullName: coerceText(user?.fullName) ?? coerceText(user?.name) ?? coerceText(user?.username),
+    teamId: coerceId(identity?.team),
+    teamName: coerceText(user?.teamName),
+    teamDomain: coerceText(identity?.domain),
+    ...roles ? { roles } : {},
+    consumerType: coerceText(root.consumerType) ?? coerceText(data?.consumerType) ?? coerceText(user?.consumerType)
+  };
+}
+async function probeSessionIdentity(baseUrl, accessToken, fetchImpl, maxAttempts, sleepImpl, random) {
+  let failure = "unavailable";
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    let response;
+    try {
+      response = await fetchImpl(`${baseUrl}${sessionPath}`, {
+        method: "GET",
+        headers: { "x-access-token": accessToken }
+      });
+    } catch {
+      failure = "unavailable";
+      if (attempt < maxAttempts) {
+        await sleepImpl(computeSessionRetryDelayMs(void 0, attempt, random));
+        continue;
+      }
+      break;
+    }
+    if (response.ok) {
+      const resolved = await parseSessionResponse(response);
+      if (resolved) {
+        memoizedSessionIdentity = resolved;
+        memoizedSessionFailure = void 0;
+        return resolved;
+      }
+      failure = "unavailable";
+      break;
+    }
+    if (response.status === 401 || response.status === 403) {
+      failure = "auth";
+      break;
+    }
+    if (response.status === 429 || response.status >= 500) {
+      failure = "unavailable";
+      if (attempt < maxAttempts) {
+        await sleepImpl(computeSessionRetryDelayMs(response, attempt, random));
+        continue;
+      }
+      break;
+    }
+    failure = "unavailable";
+    break;
+  }
+  memoizedSessionFailure = failure;
+  return void 0;
 }
 function describeTeam(id) {
   const label = id?.teamName ?? id?.teamDomain;
@@ -30214,7 +30308,9 @@ async function runCredentialPreflight(args) {
     session = await resolveSessionIdentity({
       iapubBaseUrl: args.iapubBaseUrl,
       accessToken,
-      fetchImpl: args.fetchImpl
+      fetchImpl: args.fetchImpl,
+      ...args.sleepImpl ? { sleepImpl: args.sleepImpl } : {},
+      ...args.randomImpl ? { randomImpl: args.randomImpl } : {}
     });
   } catch (error2) {
     args.log.warning(
@@ -30234,11 +30330,20 @@ async function runCredentialPreflight(args) {
       );
     }
   } else {
+    const failure = getSessionResolutionFailure();
+    const detail = failure === "auth" ? "the access token was rejected by iapub (401/403), so it is invalid or expired. Re-mint it with postman-resolve-service-token-action (or POST https://api.getpostman.com/service-account-tokens) and re-run." : "iapub was unreachable after retries (network or 5xx). This is usually transient; re-run the job.";
+    const base = "postman: credential preflight could not resolve the access-token session identity from iapub: " + detail;
+    if (args.mode === "enforce") {
+      throw new Error(
+        mask(
+          `${base} (credential-preflight: enforce requires a resolvable session identity; use credential-preflight: warn to continue with reactive error guidance only.)`
+        )
+      );
+    }
     args.log.warning(
-      mask(
-        "postman: credential preflight could not resolve the access-token session identity from iapub; continuing with reactive error guidance only"
-      )
+      mask(`${base} Continuing with reactive error guidance only (credential-preflight: warn).`)
     );
+    return;
   }
   const result = crossCheckIdentities({
     pmak,
