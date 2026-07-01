@@ -28,12 +28,12 @@ jobs:
       - uses: actions/checkout@v5
 
       - id: postman_token
-        uses: postman-cs/postman-resolve-service-token-action@v1
+        uses: postman-cs/postman-resolve-service-token-action@v2
         with:
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
           postman-region: us
 
-      - uses: postman-cs/postman-smoke-flow-action@v1
+      - uses: postman-cs/postman-smoke-flow-action@v2
         with:
           project-name: core-payments
           workspace-id: ${{ vars.POSTMAN_WORKSPACE_ID }}
@@ -64,13 +64,13 @@ jobs:
       - uses: actions/checkout@v5
 
       - id: postman_token
-        uses: postman-cs/postman-resolve-service-token-action@v1
+        uses: postman-cs/postman-resolve-service-token-action@v2
         with:
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
           postman-region: us
 
       - id: bootstrap
-        uses: postman-cs/postman-bootstrap-action@v1
+        uses: postman-cs/postman-bootstrap-action@v2
         with:
           project-name: core-payments
           spec-url: https://raw.githubusercontent.com/postman-cs/postman-smoke-flow-action/main/examples/core-payments-openapi.yaml
@@ -79,7 +79,7 @@ jobs:
           postman-access-token: ${{ steps.postman_token.outputs.token }}
 
       - id: smoke_flow
-        uses: postman-cs/postman-smoke-flow-action@v1
+        uses: postman-cs/postman-smoke-flow-action@v2
         with:
           project-name: core-payments
           workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
@@ -90,7 +90,7 @@ jobs:
           postman-region: us
 
       - id: repo_sync
-        uses: postman-cs/postman-repo-sync-action@v1
+        uses: postman-cs/postman-repo-sync-action@v2
         with:
           project-name: core-payments
           workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
@@ -110,7 +110,7 @@ jobs:
 With `flow-path` set, the action generates a temporary Smoke collection from the current spec, reshapes it to match the curated flow, injects [pre-request](https://learning.postman.com/docs/tests-and-scripts/write-scripts/pre-request-scripts/) and [test scripts](https://learning.postman.com/docs/tests-and-scripts/write-scripts/test-scripts/) from bindings and extracts, updates the canonical Smoke collection in place, and deletes the temporary collection. The manifest format is documented in [docs/flow-manifest.md](docs/flow-manifest.md).
 
 ```yaml
-- uses: postman-cs/postman-smoke-flow-action@v1
+- uses: postman-cs/postman-smoke-flow-action@v2
   with:
     project-name: core-payments
     workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
@@ -127,7 +127,7 @@ With `flow-path` set, the action generates a temporary Smoke collection from the
 To inject Smoke-only [OAuth2](https://learning.postman.com/docs/use/send-requests/authorization/oauth-20/) client-credentials token acquisition into the existing Smoke collection before a `flow.yaml` exists, omit `flow-path` and pass `auth-config-json`. The existing collection is updated in place without recreating or reordering requests. Full configuration options are in [docs/smoke-oauth.md](docs/smoke-oauth.md).
 
 ```yaml
-- uses: postman-cs/postman-smoke-flow-action@v1
+- uses: postman-cs/postman-smoke-flow-action@v2
   with:
     project-name: core-payments
     workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
@@ -143,7 +143,7 @@ To inject Smoke-only [OAuth2](https://learning.postman.com/docs/use/send-request
 Set `debug-dump-path` to write the transformed collection JSON to disk before the update call, then upload it as a workflow artifact for inspection:
 
 ```yaml
-- uses: postman-cs/postman-smoke-flow-action@v1
+- uses: postman-cs/postman-smoke-flow-action@v2
   with:
     project-name: core-payments
     workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
