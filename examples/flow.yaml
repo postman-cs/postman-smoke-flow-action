@@ -1,0 +1,24 @@
+# Example smoke flow manifest for the bundled core-payments OpenAPI example.
+# Format reference: docs/flow-manifest.md; generated scripts: docs/generated-tests.md.
+spec:
+  fileName: core-payments-openapi.yaml
+  title: Core Payments API
+  version: 1.0.0
+flows:
+  - name: Core payments happy path
+    type: smoke
+    steps:
+      - stepKey: create-payment-1
+        operationId: createPayment
+        bindings: []
+        extract:
+          - variable: createPayment.paymentId
+            jsonPath: $.paymentId
+      - stepKey: get-payment-2
+        operationId: getPayment
+        bindings:
+          - fieldKey: paymentId
+            source: prior_output
+            sourceStepKey: create-payment-1
+            variable: createPayment.paymentId
+        extract: []
