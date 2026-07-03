@@ -221,6 +221,15 @@ See [docs/cli.md](docs/cli.md) for GitLab CI, Bitbucket Pipelines, Azure DevOps,
 
 ## How it works
 
+```mermaid
+flowchart LR
+    M["flow.yaml<br/>curated manifest"] --> R
+    S["OpenAPI spec (spec-id)"] -->|"generate temp collection"| R["resolve steps by operationId<br/>wire bindings + extracts"]
+    R --> C["canonical Smoke collection<br/>refreshed in place"]
+    R -.-> T["temp collection deleted"]
+    O["auth-config-json<br/>OAuth-only mode"] --> C
+```
+
 In flow mode (`flow-path` set), the action reads the curated manifest, generates a temporary Smoke collection from the spec, resolves each flow step against the generated requests by `operationId` (with an optional method-plus-path fallback when `spec-path` is provided), wires bindings and extracts into pre-request and test scripts, refreshes the canonical Smoke collection in place, and removes the temporary collection. The manifest schema and resolution rules are in [docs/flow-manifest.md](docs/flow-manifest.md).
 
 In OAuth-only mode (`flow-path` omitted, `auth-config-json` enabled), the action fetches the existing canonical Smoke collection and adds collection-level OAuth2 client-credentials token acquisition without touching request order or content. Details and runtime variable injection are in [docs/smoke-oauth.md](docs/smoke-oauth.md).
@@ -271,9 +280,13 @@ postman-region selects the Postman public API host used to re-mint the access to
 
 This action sends a single non-identifying usage event when a run completes, so the
 Postman team can measure adoption across CI systems. The event contains the
-action name and version, your Postman team ID, the detected CI provider and
-runner kind, the run outcome, the CI run identifier, an event timestamp, and a one-way SHA-256 hash of the repository
-identifier. Each event also carries a schema version and a constant event marker (always `completion`). The Postman team ID is sent in the clear on a legitimate-interest
+action name and version, your Postman team ID, the run outcome, an event
+timestamp, the detected CI provider, runner kind, and runner OS, the CI run
+identifier and event trigger, a one-way SHA-256 hash of the repository
+identifier, the detected git provider (github, gitlab, bitbucket, or
+azure-devops), a one-way SHA-256 hash of the VCS organization name, a coarse
+account type (service or user), and a coarse ref kind (default-branch, branch,
+or tag). Each event also carries a schema version and a constant event marker (always `completion`). The Postman team ID is sent in the clear on a legitimate-interest
 basis to measure product adoption.
 
 The `events.pm-cse.dev` endpoint is operated by the Postman Customer Success
