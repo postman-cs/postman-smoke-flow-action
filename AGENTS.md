@@ -50,3 +50,12 @@ npm run verify:dist  # CI/hook gate: rebuild + git diff (dev runs build)
 
 - `main.cjs` is the Action entry (not `index.cjs` as in sibling actions); the CLI is `cli.cjs`. Wire pre-write logic into both.
 - The flow is applied to the collection bootstrap generated; this action assumes that collection already exists (it does not generate one).
+
+## CI
+
+`.github/workflows/ci.yml` runs a single `gate` job that fans out lint, test, typecheck, dist, commitlint, and actionlint
+as backgrounded shell processes on one runner: wall-clock is `max(gate)`, not
+`sum`, setup runs once, and every gate prints its result under a `::group::`
+block even when another fails.
+
+See the workspace `docs/CI.md` for the shared rationale.
