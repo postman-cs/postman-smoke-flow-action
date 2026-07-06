@@ -1,6 +1,6 @@
 # Generated Test Scripts
 
-What `postman-smoke-flow-action` injects into the canonical Smoke collection when applying a `flow.yaml`. The manifest format is in [flow-manifest.md](flow-manifest.md); OAuth configuration is in [smoke-oauth.md](smoke-oauth.md).
+What `postman-smoke-flow-action` injects into the canonical Smoke collection when applying a `flow.yaml`. The manifest format is in [flow-manifest.md](flow-manifest.md); runtime auth configuration is in [smoke-oauth.md](smoke-oauth.md) and [smoke-api-key.md](smoke-api-key.md).
 
 ## Per-step tests
 
@@ -29,6 +29,10 @@ Each step also receives a pre-request script built from its bindings:
 ## OAuth2 pre-request (auth-config-json)
 
 When OAuth is enabled, a collection-level pre-request script acquires a client-credentials token with `pm.sendRequest`, caches it in the `access_token` / `access_token_expires_at` variables (names configurable), and refreshes it 60 seconds before expiry by default (`cache.refreshSkewSeconds`). Client ID and secret are read from runtime variables; the script throws a clear error when they are missing. The action writes placeholders only and never persists secrets to Postman. Full options are in [smoke-oauth.md](smoke-oauth.md).
+
+## API key auth (auth-config-json)
+
+When API key auth is enabled, the action adds a placeholder collection variable and applies Postman API Key auth to each Smoke request. It does not add a collection-level pre-request script. The API key value is read from runtime variables when the collection runs, and the action never persists the real API key to Postman. Full options are in [smoke-api-key.md](smoke-api-key.md).
 
 ## Tuning and where the tests run
 

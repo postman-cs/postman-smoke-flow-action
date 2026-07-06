@@ -18,7 +18,7 @@ inputs:
     description: Canonical Smoke collection ID to refresh in place.
     required: true
   flow-path:
-    description: Optional repo-root-relative path to the curated flow.yaml manifest. When omitted, OAuth config can still be applied to the existing Smoke collection.
+    description: Optional repo-root-relative path to the curated flow.yaml manifest. When omitted, auth config can still be applied to the existing Smoke collection.
     required: false
   postman-api-key:
     description: Optional service-account API key. Only used to re-mint an expired postman-access-token; the collection reshape itself runs access-token-only through the Postman gateway.
@@ -28,7 +28,7 @@ inputs:
     required: false
     default: us
   auth-config-json:
-    description: Optional JSON config for Smoke collection OAuth2 client-credentials token acquisition.
+    description: Optional JSON config for Smoke collection runtime auth injection. Supports OAuth2 client credentials and API key auth.
     required: false
   secrets-resolver-enabled:
     description: Whether to include the legacy AWS Secrets Manager resolver item at the start of the generated Smoke collection. Defaults to true for backward compatibility; set to false to opt out.

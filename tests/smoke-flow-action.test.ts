@@ -23,6 +23,16 @@ const oauthConfig: SmokeAuthConfig = {
   }
 };
 
+const apiKeyConfig: SmokeAuthConfig = {
+  enabled: true,
+  type: 'apiKey',
+  in: 'header',
+  name: 'X-API-Key',
+  variables: {
+    apiKey: 'service_api_key'
+  }
+};
+
 function createInputs(tempDir: string): ActionInputs {
   writeFileSync(
     path.join(tempDir, 'flow.yaml'),
@@ -304,6 +314,150 @@ describe('runSmokeFlow', () => {
       expect(request.header).toEqual([]);
       expect(JSON.stringify(updatedCollection)).toContain('Auto-generated OAuth2 client-credentials token cache');
       expect(JSON.stringify(updatedCollection)).not.toContain('00 - Resolve Secrets');
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('applies API key auth to the existing Smoke collection when flow-path is omitted', async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-'));
+    const previousCwd = process.cwd();
+    process.chdir(tempDir);
+
+    const core: CoreLike = {
+      setOutput: vi.fn(),
+      info: vi.fn(),
+      warning: vi.fn(),
+      setFailed: vi.fn()
+    };
+
+    const postman = createCanonicalPostmanMock({
+      info: { name: '[Smoke] payments' },
+      event: [
+        {
+          listen: 'prerequest',
+          script: {
+            type: 'text/javascript',
+            exec: ['// [Smoke Flow] Auto-generated OAuth2 client-credentials token cache.', '// old generated script']
+          }
+        }
+      ],
+      item: [
+        {
+          name: 'Payments',
+          item: [
+            {
+              name: 'createPayment',
+              request: {
+                method: 'POST',
+                header: [{ key: 'X-API-Key', value: 'old-static-key' }],
+                url: 'https://api.example.com/payments'
+              }
+            },
+            {
+              name: '00 - Resolve Secrets',
+              request: {
+                method: 'POST',
+                url: 'https://secretsmanager.us-west-2.amazonaws.com'
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    try {
+      const outputs = await runSmokeFlow({
+        ...createInputs(tempDir),
+        flowPath: undefined,
+        secretsResolverEnabled: false,
+        authConfig: apiKeyConfig
+      }, createDependencies(core, postman));
+      const summary = JSON.parse(outputs['flow-apply-summary-json']) as Record<string, unknown>;
+      const updatedCollection = postman.updateCollection.mock.calls[0]?.[1] as Record<string, unknown>;
+      const items = updatedCollection.item as Array<Record<string, unknown>>;
+      const nestedItems = items[0]?.item as Array<Record<string, unknown>>;
+      const request = nestedItems[0]?.request as Record<string, unknown>;
+
+      expect(outputs['smoke-collection-id']).toBe('col-smoke');
+      expect(outputs['flow-apply-status']).toBe('skipped');
+      expect(summary.authApplied).toBe(true);
+      expect(summary.authRequestCount).toBe(1);
+      expect(summary.warnings).toEqual([
+        'flow-path was not provided; applied API key auth to the existing Smoke collection without flow curation.'
+      ]);
+      expect(postman.generateCollection).not.toHaveBeenCalled();
+      expect(postman.updateCollection).toHaveBeenCalledOnce();
+      expect(request.auth).toEqual({
+        type: 'apikey',
+        apikey: [
+          { key: 'key', value: 'X-API-Key', type: 'string' },
+          { key: 'value', value: '{{service_api_key}}', type: 'string' },
+          { key: 'in', value: 'header', type: 'string' }
+        ]
+      });
+      expect(request.header).toEqual([]);
+      expect(JSON.stringify(updatedCollection)).toContain('service_api_key');
+      expect(JSON.stringify(updatedCollection)).not.toContain('old-static-key');
+      expect(JSON.stringify(updatedCollection)).not.toContain('Auto-generated OAuth2 client-credentials token cache');
+      expect(JSON.stringify(updatedCollection)).not.toContain('00 - Resolve Secrets');
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('applies API key auth while curating a flow', async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-'));
+    const previousCwd = process.cwd();
+    process.chdir(tempDir);
+
+    const core: CoreLike = {
+      setOutput: vi.fn(),
+      info: vi.fn(),
+      warning: vi.fn(),
+      setFailed: vi.fn()
+    };
+
+    const postman = createFlowPostmanMock({
+      info: { name: '[Smoke][Temp] payments' },
+      item: [
+        {
+          name: 'createPayment',
+          request: {
+            method: 'POST',
+            header: [{ key: 'X-API-Key', value: 'old-static-key' }],
+            url: 'https://api.example.com/payments'
+          }
+        }
+      ]
+    });
+
+    try {
+      const outputs = await runSmokeFlow({
+        ...createInputs(tempDir),
+        authConfig: apiKeyConfig
+      }, createDependencies(core, postman));
+      const updatedCollection = postman.updateCollection.mock.calls[0]?.[1] as Record<string, unknown>;
+      const items = updatedCollection.item as Array<Record<string, unknown>>;
+      const request = items[1]?.request as Record<string, unknown>;
+
+      expect(outputs['flow-apply-status']).toBe('success');
+      expect(postman.generateCollection).toHaveBeenCalledOnce();
+      expect(postman.updateCollection).toHaveBeenCalledOnce();
+      expect(postman.deleteCollection).toHaveBeenCalledWith('temp-123');
+      expect(request.auth).toEqual({
+        type: 'apikey',
+        apikey: [
+          { key: 'key', value: 'X-API-Key', type: 'string' },
+          { key: 'value', value: '{{service_api_key}}', type: 'string' },
+          { key: 'in', value: 'header', type: 'string' }
+        ]
+      });
+      expect(request.header).toEqual([]);
+      expect(JSON.stringify(updatedCollection)).toContain('Extract createPayment.paymentId');
+      expect(JSON.stringify(updatedCollection)).not.toContain('old-static-key');
     } finally {
       process.chdir(previousCwd);
       rmSync(tempDir, { recursive: true, force: true });

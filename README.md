@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/postman-cs/postman-smoke-flow-action/actions/workflows/ci.yml/badge.svg)](https://github.com/postman-cs/postman-smoke-flow-action/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/postman-cs/postman-smoke-flow-action?sort=semver)](https://github.com/postman-cs/postman-smoke-flow-action/releases) [![npm](https://img.shields.io/npm/v/%40postman-cse%2Fonboarding-smoke-flow)](https://www.npmjs.com/package/@postman-cse/onboarding-smoke-flow) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Reshapes the generated Postman Smoke collection to match a curated `flow.yaml`, with optional [OAuth2](https://learning.postman.com/docs/use/send-requests/authorization/oauth-20/) token acquisition.
+Reshapes the generated Postman Smoke collection to match a curated `flow.yaml`, with optional runtime auth injection for [OAuth2](https://learning.postman.com/docs/use/send-requests/authorization/oauth-20/) and API keys.
 
 Part of the [Postman API Onboarding suite](https://github.com/postman-cs/postman-api-onboarding-action); the composite action's README has the full [action-picker table](https://github.com/postman-cs/postman-api-onboarding-action#which-action-should-i-use).
 
@@ -132,6 +132,22 @@ To inject Smoke-only [OAuth2](https://learning.postman.com/docs/use/send-request
     auth-config-json: '{"enabled":true,"type":"oauth2","grantType":"client_credentials","tokenUrl":"{{auth_token_url}}","clientAuthentication":"body"}'
 ```
 
+### API key-only update without flow-path
+
+To inject Smoke-only API key auth into the existing Smoke collection before a `flow.yaml` exists, omit `flow-path` and pass `auth-config-json`. The action writes a placeholder variable only; inject the real API key when the Smoke collection runs. Full configuration options are in [docs/smoke-api-key.md](docs/smoke-api-key.md).
+
+```yaml
+- uses: postman-cs/postman-smoke-flow-action@v2
+  with:
+    project-name: core-payments
+    workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
+    spec-id: ${{ steps.bootstrap.outputs.spec-id }}
+    smoke-collection-id: ${{ steps.bootstrap.outputs.smoke-collection-id }}
+    postman-region: us
+    postman-access-token: ${{ steps.postman_token.outputs.token }}
+    auth-config-json: '{"enabled":true,"type":"apiKey","in":"header","name":"X-API-Key","variables":{"apiKey":"service_api_key"}}'
+```
+
 ### Debug the transformed collection with debug-dump-path
 
 Set `debug-dump-path` to write the transformed collection JSON to disk before the update call, then upload it as a workflow artifact for inspection:
@@ -182,10 +198,10 @@ See [docs/cli.md](docs/cli.md) for GitLab CI, Bitbucket Pipelines, Azure DevOps,
 | `workspace-id` | Postman workspace ID produced by bootstrap. | yes |  |
 | `spec-id` | Postman spec ID produced by bootstrap. | yes |  |
 | `smoke-collection-id` | Canonical Smoke collection ID to refresh in place. | yes |  |
-| `flow-path` | Optional repo-root-relative path to the curated flow.yaml manifest. When omitted, OAuth config can still be applied to the existing Smoke collection. | no |  |
+| `flow-path` | Optional repo-root-relative path to the curated flow.yaml manifest. When omitted, auth config can still be applied to the existing Smoke collection. | no |  |
 | `postman-api-key` | Optional service-account API key. Only used to re-mint an expired postman-access-token; the collection reshape itself runs access-token-only through the Postman gateway. | no |  |
 | `postman-region` | Postman data residency region for public API calls. Supported values are us and eu. | no | `us` |
-| `auth-config-json` | Optional JSON config for Smoke collection OAuth2 client-credentials token acquisition. | no |  |
+| `auth-config-json` | Optional JSON config for Smoke collection runtime auth injection. Supports OAuth2 client credentials and API key auth. | no |  |
 | `secrets-resolver-enabled` | Whether to include the legacy AWS Secrets Manager resolver item at the start of the generated Smoke collection. Defaults to true for backward compatibility; set to false to opt out. | no | `true` |
 | `spec-path` | Optional repo-root-relative path to the local OpenAPI spec for validation and debug context. | no |  |
 | `debug-dump-path` | Optional repo-root-relative or absolute path to write the transformed collection JSON before update. | no |  |
@@ -221,12 +237,12 @@ flowchart LR
     S["OpenAPI spec (spec-id)"] -->|"generate temp collection"| R["resolve steps by operationId<br/>wire bindings + extracts"]
     R --> C["canonical Smoke collection<br/>refreshed in place"]
     R -.-> T["temp collection deleted"]
-    O["auth-config-json<br/>OAuth-only mode"] --> C
+    O["auth-config-json<br/>runtime auth-only mode"] --> C
 ```
 
 In flow mode (`flow-path` set), the action reads the curated manifest, generates a temporary Smoke collection from the spec, resolves each flow step against the generated requests by `operationId` (with an optional method-plus-path fallback when `spec-path` is provided), wires bindings and extracts into pre-request and test scripts, refreshes the canonical Smoke collection in place, and removes the temporary collection. The manifest schema and resolution rules are in [docs/flow-manifest.md](docs/flow-manifest.md).
 
-In OAuth-only mode (`flow-path` omitted, `auth-config-json` enabled), the action fetches the existing canonical Smoke collection and adds collection-level OAuth2 client-credentials token acquisition without touching request order or content. Details and runtime variable injection are in [docs/smoke-oauth.md](docs/smoke-oauth.md).
+In auth-only mode (`flow-path` omitted, `auth-config-json` enabled), the action fetches the existing canonical Smoke collection and applies Smoke runtime auth without touching request order or content. OAuth2 client credentials are documented in [docs/smoke-oauth.md](docs/smoke-oauth.md), and API key auth is documented in [docs/smoke-api-key.md](docs/smoke-api-key.md).
 
 All collection operations — generating the temporary collection from the spec, reading it, reshaping the canonical collection, and deleting the temporary one — run through the Postman gateway under postman-access-token. The action never mutates baseline or contract collections, and it never writes runtime tokens or client secrets back to Postman environments.
 
@@ -237,14 +253,14 @@ All collection operations — generating the temporary collection from the spec,
 | Generate, read, reshape, and delete the Smoke collection | Pass postman-access-token. The reshape runs entirely through the Postman gateway under this token, so it is required. Mint it with postman-resolve-service-token-action. |
 | Re-mint the access token if it expires mid-run | Optionally pass postman-api-key from a GitHub Actions secret or CI secret. It is used only to refresh an expired postman-access-token and never drives an asset operation. |
 | Service-account access token and team ID for the broader onboarding pipeline | Run postman-resolve-service-token-action before bootstrap or the composite action, and reuse its token output across steps. |
-| Smoke collection OAuth at run time | Keep OAuth client credentials in CI secrets or runtime variables. This action writes placeholders only. |
+| Smoke collection runtime auth | Keep OAuth client credentials or target API keys in CI secrets or runtime variables. This action writes placeholders only. |
 
 postman-region selects the Postman public API host used to re-mint the access token and to run the identity preflight: us for https://api.getpostman.com and eu for https://api.eu.postman.com. The default is us. Use the same region as bootstrap and repo sync.
 
 ## Resources
 
 - npm package: [@postman-cse/onboarding-smoke-flow](https://www.npmjs.com/package/@postman-cse/onboarding-smoke-flow)
-- Docs in this repo: [flow.yaml manifest format](docs/flow-manifest.md), [Smoke OAuth configuration](docs/smoke-oauth.md), [generated tests](docs/generated-tests.md), [CLI usage for non-GitHub CI](docs/cli.md)
+- Docs in this repo: [flow.yaml manifest format](docs/flow-manifest.md), [Smoke OAuth configuration](docs/smoke-oauth.md), [Smoke API key configuration](docs/smoke-api-key.md), [generated tests](docs/generated-tests.md), [CLI usage for non-GitHub CI](docs/cli.md)
 - Marketplace docs: [Support](SUPPORT.md), [Security policy](SECURITY.md), [Release policy](RELEASE_POLICY.md), [Contributing](CONTRIBUTING.md)
 - Postman scripting references: [OAuth 2.0](https://learning.postman.com/docs/use/send-requests/authorization/oauth-20/), [pre-request scripts](https://learning.postman.com/docs/tests-and-scripts/write-scripts/pre-request-scripts/), [test scripts](https://learning.postman.com/docs/tests-and-scripts/write-scripts/test-scripts/), [pm variables](https://learning.postman.com/docs/tests-and-scripts/write-scripts/postman-sandbox-reference/pm-variables/)
 

@@ -58,7 +58,7 @@ export type ActionInputs = {
   teamId?: string;
 };
 
-export type SmokeAuthConfig = {
+export type SmokeOAuthConfig = {
   enabled: boolean;
   type: 'oauth2';
   grantType: 'client_credentials';
@@ -83,6 +83,18 @@ export type SmokeAuthConfig = {
     value?: string;
   };
 };
+
+export type SmokeApiKeyConfig = {
+  enabled: boolean;
+  type: 'apiKey';
+  in: 'header' | 'query';
+  name: string;
+  variables?: {
+    apiKey?: string;
+  };
+};
+
+export type SmokeAuthConfig = SmokeOAuthConfig | SmokeApiKeyConfig;
 
 export type FlowWarning = {
   message: string;

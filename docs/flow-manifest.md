@@ -39,7 +39,7 @@ Run this action after postman-bootstrap-action has created or refreshed the work
 - If `flow-path` is omitted, the action does not generate a temporary collection, apply flow scripts, or reorder existing Smoke requests.
 - If `flow-path` is provided but the file is missing, the action fails because the caller explicitly requested flow mode.
 - This action intentionally does not mutate baseline or contract collections.
-- OAuth support is optional and Smoke-only; contract collection auth is intentionally deferred.
+- Runtime auth support is optional and Smoke-only; contract collection auth is intentionally deferred.
 
 ## What flow mode does
 
@@ -49,8 +49,8 @@ When `flow-path` is provided, the action:
 - generates a temporary Smoke collection from the current spec
 - reshapes that generated collection to match the curated flow
 - injects prerequest and test scripts from bindings and extracts
-- optionally adds Smoke-only OAuth2 client-credentials token acquisition
+- optionally adds Smoke-only runtime auth, such as OAuth2 client credentials or API key auth
 - updates the canonical Smoke collection in place
 - deletes the temporary collection
 
-When `flow-path` is omitted and `auth-config-json` is enabled, it fetches the existing canonical Smoke collection and injects Smoke-only OAuth without recreating or reordering the collection.
+When `flow-path` is omitted and `auth-config-json` is enabled, it fetches the existing canonical Smoke collection and injects Smoke-only runtime auth without recreating or reordering the collection.

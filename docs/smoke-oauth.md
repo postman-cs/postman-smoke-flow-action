@@ -6,8 +6,8 @@
 
 | Credential | Purpose | Recommended source |
 | --- | --- | --- |
-| postman-api-key | Generates the temporary Smoke collection and updates the canonical Smoke collection. | GitHub Actions secret or CI secret. |
-| postman-access-token | Compatibility-only input from broader onboarding pipelines. Smoke Flow masks it, logs a deprecation warning, and does not use it for collection updates. | Omit in standalone Smoke Flow jobs. Use postman-resolve-service-token-action only for the broader pipeline steps that need a service-account access token and team ID. |
+| postman-access-token | Generates, reads, updates, and deletes Smoke collections through the Postman gateway. | Mint with postman-resolve-service-token-action and pass it to this action. |
+| postman-api-key | Optional service-account API key used only to re-mint an expired postman-access-token. It does not drive collection updates. | GitHub Actions secret or CI secret. |
 | OAuth client credentials | Used by the Smoke collection at collection run time. | CI secrets or runtime variables passed to the collection runner. |
 
 The Smoke collection:

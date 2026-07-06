@@ -29000,7 +29000,39 @@ function removeHeader(request, key) {
   const headers = Array.isArray(request.header) ? request.header.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)) : [];
   request.header = headers.filter((entry) => typeof entry.key !== "string" || entry.key.toLowerCase() !== key.toLowerCase());
 }
-function getAuthVariableNames2(authConfig) {
+function removeRawUrlQueryParam(rawUrl, key) {
+  const [withoutHash, hash = ""] = rawUrl.split("#", 2);
+  const queryIndex = withoutHash.indexOf("?");
+  if (queryIndex === -1) {
+    return rawUrl;
+  }
+  const base = withoutHash.slice(0, queryIndex);
+  const queryString = withoutHash.slice(queryIndex + 1);
+  const nextQuery = queryString.split("&").filter(Boolean).filter((entry) => decodeQueryKey(entry.split("=", 1)[0] ?? "").toLowerCase() !== key.toLowerCase()).join("&");
+  const nextWithoutHash = nextQuery ? `${base}?${nextQuery}` : base;
+  return hash ? `${nextWithoutHash}#${hash}` : nextWithoutHash;
+}
+function removeQueryParam(request, key) {
+  const url = request.url;
+  if (typeof url === "string") {
+    request.url = removeRawUrlQueryParam(url, key);
+    return;
+  }
+  const urlRecord = asRecord2(url);
+  if (!urlRecord) {
+    return;
+  }
+  if (typeof urlRecord.raw === "string") {
+    urlRecord.raw = removeRawUrlQueryParam(urlRecord.raw, key);
+  }
+  if (Array.isArray(urlRecord.query)) {
+    urlRecord.query = urlRecord.query.filter((entry) => {
+      const query = asRecord2(entry);
+      return !query || typeof query.key !== "string" || query.key.toLowerCase() !== key.toLowerCase();
+    });
+  }
+}
+function getOAuthVariableNames(authConfig) {
   return {
     tokenUrl: authConfig.variables?.tokenUrl || "auth_token_url",
     scope: authConfig.variables?.scope || "auth_scope",
@@ -29010,8 +29042,17 @@ function getAuthVariableNames2(authConfig) {
     expiresAt: authConfig.variables?.expiresAt || "access_token_expires_at"
   };
 }
+function isOAuthAuthConfig(authConfig) {
+  return authConfig.type === "oauth2";
+}
+function getApiKeyVariableName(authConfig) {
+  return authConfig.variables?.apiKey?.trim() || "api_key";
+}
+function getApiKeyName(authConfig) {
+  return authConfig.name.trim();
+}
 function setRequestBearerAuth(request, authConfig) {
-  const variables = getAuthVariableNames2(authConfig);
+  const variables = getOAuthVariableNames(authConfig);
   request.auth = {
     type: "bearer",
     bearer: [
@@ -29024,11 +29065,44 @@ function setRequestBearerAuth(request, authConfig) {
   };
   removeHeader(request, authConfig.apply?.header || "Authorization");
 }
+function setRequestApiKeyAuth(request, authConfig) {
+  const variableName = getApiKeyVariableName(authConfig);
+  const apiKeyName = getApiKeyName(authConfig);
+  request.auth = {
+    type: "apikey",
+    apikey: [
+      {
+        key: "key",
+        value: apiKeyName,
+        type: "string"
+      },
+      {
+        key: "value",
+        value: `{{${variableName}}}`,
+        type: "string"
+      },
+      {
+        key: "in",
+        value: authConfig.in,
+        type: "string"
+      }
+    ]
+  };
+  if (authConfig.in === "header") {
+    removeHeader(request, apiKeyName);
+  } else {
+    removeQueryParam(request, apiKeyName);
+  }
+}
 function applyAuthToRequest(request, authConfig) {
   if (!authConfig?.enabled) {
     return false;
   }
-  setRequestBearerAuth(request, authConfig);
+  if (isOAuthAuthConfig(authConfig)) {
+    setRequestBearerAuth(request, authConfig);
+  } else {
+    setRequestApiKeyAuth(request, authConfig);
+  }
   return true;
 }
 function upsertCollectionVariable(collection, key, value = "") {
@@ -29044,7 +29118,7 @@ function upsertCollectionVariable(collection, key, value = "") {
   collection.variable = variables;
 }
 function seedOAuthCollectionVariables(collection, authConfig) {
-  const variables = getAuthVariableNames2(authConfig);
+  const variables = getOAuthVariableNames(authConfig);
   const tokenUrlValue = authConfig.tokenUrl.includes("{{") ? "" : authConfig.tokenUrl;
   upsertCollectionVariable(collection, variables.tokenUrl, tokenUrlValue);
   upsertCollectionVariable(collection, variables.scope);
@@ -29052,6 +29126,9 @@ function seedOAuthCollectionVariables(collection, authConfig) {
   upsertCollectionVariable(collection, variables.clientSecret);
   upsertCollectionVariable(collection, variables.accessToken);
   upsertCollectionVariable(collection, variables.expiresAt);
+}
+function seedApiKeyCollectionVariables(collection, authConfig) {
+  upsertCollectionVariable(collection, getApiKeyVariableName(authConfig));
 }
 function getScriptExecText(event) {
   const script = asRecord2(event.script);
@@ -29071,12 +29148,19 @@ function applyCollectionAuth(collection, authConfig) {
   if (!authConfig?.enabled) {
     return;
   }
-  seedOAuthCollectionVariables(collection, authConfig);
   const existingEvents = Array.isArray(collection.event) ? collection.event : [];
-  collection.event = [
-    ...existingEvents.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)).filter((entry) => !isGeneratedOAuthEvent(entry)),
-    createOAuthPreRequestEvent(authConfig)
-  ];
+  const retainedEvents = existingEvents.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)).filter((entry) => !isGeneratedOAuthEvent(entry));
+  if (isOAuthAuthConfig(authConfig)) {
+    seedOAuthCollectionVariables(collection, authConfig);
+    collection.event = [...retainedEvents, createOAuthPreRequestEvent(authConfig)];
+    return;
+  }
+  seedApiKeyCollectionVariables(collection, authConfig);
+  if (retainedEvents.length > 0) {
+    collection.event = retainedEvents;
+  } else {
+    delete collection.event;
+  }
 }
 function applyAuthToCollectionItems(items, authConfig) {
   if (!Array.isArray(items)) {
@@ -29182,7 +29266,7 @@ function countBearerAuthRequests(items, authConfig) {
   if (!Array.isArray(items)) {
     return 0;
   }
-  const variables = getAuthVariableNames2(authConfig);
+  const variables = getOAuthVariableNames(authConfig);
   return items.reduce((count, entry) => {
     const item = asRecord2(entry);
     if (!item) {
@@ -29196,6 +29280,34 @@ function countBearerAuthRequests(items, authConfig) {
     return nextCount + countBearerAuthRequests(item.item, authConfig);
   }, 0);
 }
+function requestUsesApiKeyAuth(request, authConfig) {
+  const auth = asRecord2(request.auth);
+  if (!auth || auth.type !== "apikey") {
+    return false;
+  }
+  const apiKey = Array.isArray(auth.apikey) ? auth.apikey : [];
+  const entries = apiKey.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry));
+  const valueVariable = getApiKeyVariableName(authConfig);
+  const credentialByKey = new Map(entries.map((entry) => [String(entry.key ?? ""), entry.value]));
+  return credentialByKey.get("key") === getApiKeyName(authConfig) && credentialByKey.get("value") === `{{${valueVariable}}}` && String(credentialByKey.get("in") ?? "").toLowerCase() === authConfig.in;
+}
+function countApiKeyAuthRequests(items, authConfig) {
+  if (!Array.isArray(items)) {
+    return 0;
+  }
+  return items.reduce((count, entry) => {
+    const item = asRecord2(entry);
+    if (!item) {
+      return count;
+    }
+    let nextCount = count;
+    const request = asRecord2(item.request);
+    if (request && !isSecretsResolverItem(item) && requestUsesApiKeyAuth(request, authConfig)) {
+      nextCount += 1;
+    }
+    return nextCount + countApiKeyAuthRequests(item.item, authConfig);
+  }, 0);
+}
 function getTopLevelItems(collection) {
   return Array.isArray(collection.item) ? collection.item.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)) : [];
 }
@@ -29204,26 +29316,43 @@ function hasFlowRequestScripts(item) {
   return events2.some((entry) => entry.listen === "prerequest") && events2.some((entry) => entry.listen === "test");
 }
 function verifySmokeCollectionAuth(collection, authConfig, options = {}) {
-  const variables = getAuthVariableNames2(authConfig);
   const variableKeys = getCollectionVariableKeys(collection);
-  const missingVariables = Object.values(variables).filter((variableName) => !variableKeys.has(variableName));
-  const bearerAuthRequestCount = countBearerAuthRequests(collection.item, authConfig);
   const failures = [];
-  if (!hasGeneratedOAuthEvent(collection)) {
-    failures.push("missing generated OAuth pre-request script");
+  if (isOAuthAuthConfig(authConfig)) {
+    const variables = getOAuthVariableNames(authConfig);
+    const missingVariables = Object.values(variables).filter((variableName) => !variableKeys.has(variableName));
+    const bearerAuthRequestCount = countBearerAuthRequests(collection.item, authConfig);
+    if (!hasGeneratedOAuthEvent(collection)) {
+      failures.push("missing generated OAuth pre-request script");
+    }
+    if (missingVariables.length > 0) {
+      failures.push(`missing OAuth collection variable(s): ${missingVariables.join(", ")}`);
+    }
+    if (bearerAuthRequestCount === 0) {
+      failures.push("no requests use generated bearer auth");
+    }
+    if (options.secretsResolverEnabled === false && containsSecretsResolverItem(collection.item)) {
+      failures.push("secrets resolver request is still present");
+    }
+    return {
+      ok: failures.length === 0,
+      summary: failures.length > 0 ? failures.join("; ") : `OAuth persisted on ${bearerAuthRequestCount} request(s)`
+    };
   }
-  if (missingVariables.length > 0) {
-    failures.push(`missing OAuth collection variable(s): ${missingVariables.join(", ")}`);
+  const apiKeyVariable = getApiKeyVariableName(authConfig);
+  const apiKeyAuthRequestCount = countApiKeyAuthRequests(collection.item, authConfig);
+  if (!variableKeys.has(apiKeyVariable)) {
+    failures.push(`missing API key collection variable: ${apiKeyVariable}`);
   }
-  if (bearerAuthRequestCount === 0) {
-    failures.push("no requests use generated bearer auth");
+  if (apiKeyAuthRequestCount === 0) {
+    failures.push("no requests use generated API key auth");
   }
   if (options.secretsResolverEnabled === false && containsSecretsResolverItem(collection.item)) {
     failures.push("secrets resolver request is still present");
   }
   return {
     ok: failures.length === 0,
-    summary: failures.length > 0 ? failures.join("; ") : `OAuth persisted on ${bearerAuthRequestCount} request(s)`
+    summary: failures.length > 0 ? failures.join("; ") : `API key auth persisted on ${apiKeyAuthRequestCount} request(s)`
   };
 }
 function verifyCuratedSmokeCollection(collection, flow, authConfig, options = {}) {
@@ -30822,19 +30951,32 @@ function parseAuthConfig(value) {
   if (parsed.enabled !== true) {
     return void 0;
   }
-  if (parsed.type !== "oauth2") {
-    throw new Error("Invalid auth-config-json: only type=oauth2 is supported.");
+  if (parsed.type === "oauth2") {
+    if (parsed.grantType !== "client_credentials") {
+      throw new Error("Invalid auth-config-json: only grantType=client_credentials is supported.");
+    }
+    if (parsed.clientAuthentication !== "body") {
+      throw new Error("Invalid auth-config-json: only clientAuthentication=body is supported.");
+    }
+    if (typeof parsed.tokenUrl !== "string" || !parsed.tokenUrl.trim()) {
+      throw new Error("Invalid auth-config-json: tokenUrl is required.");
+    }
+    return parsed;
   }
-  if (parsed.grantType !== "client_credentials") {
-    throw new Error("Invalid auth-config-json: only grantType=client_credentials is supported.");
+  if (parsed.type === "apiKey") {
+    if (parsed.in !== "header" && parsed.in !== "query") {
+      throw new Error("Invalid auth-config-json: apiKey in must be one of: header, query.");
+    }
+    if (typeof parsed.name !== "string" || !parsed.name.trim()) {
+      throw new Error("Invalid auth-config-json: apiKey name is required.");
+    }
+    const variables = isRecord(parsed.variables) ? parsed.variables : void 0;
+    if (variables?.apiKey !== void 0 && (typeof variables.apiKey !== "string" || !variables.apiKey.trim())) {
+      throw new Error("Invalid auth-config-json: apiKey variables.apiKey must be a non-empty string when provided.");
+    }
+    return parsed;
   }
-  if (parsed.clientAuthentication !== "body") {
-    throw new Error("Invalid auth-config-json: only clientAuthentication=body is supported.");
-  }
-  if (typeof parsed.tokenUrl !== "string" || !parsed.tokenUrl.trim()) {
-    throw new Error("Invalid auth-config-json: tokenUrl is required.");
-  }
-  return parsed;
+  throw new Error("Invalid auth-config-json: supported auth types are oauth2 and apiKey.");
 }
 function readActionInputs(env = process.env) {
   return {
@@ -30956,6 +31098,9 @@ function createOutputs(summary2) {
     "assertion-count": String(summary2.assertionCount)
   };
 }
+function describeAuthConfig(authConfig) {
+  return authConfig.type === "apiKey" ? "API key" : "OAuth";
+}
 async function runWithoutFlowManifest(inputs, dependencies) {
   if (!inputs.authConfig?.enabled) {
     dependencies.core.info("No flow-path or enabled auth-config-json was provided; skipping Smoke collection update.");
@@ -30986,7 +31131,7 @@ async function runWithoutFlowManifest(inputs, dependencies) {
     })
   });
   dependencies.core.info(
-    `Updated canonical Smoke collection ${inputs.smokeCollectionId} with Smoke OAuth auth on ${transformed.authRequestCount} request(s).`
+    `Updated canonical Smoke collection ${inputs.smokeCollectionId} with Smoke ${describeAuthConfig(inputs.authConfig)} auth on ${transformed.authRequestCount} request(s).`
   );
   return createOutputs({
     flowName: "",
@@ -30999,7 +31144,9 @@ async function runWithoutFlowManifest(inputs, dependencies) {
     appliedBindingCount: 0,
     appliedExtractCount: 0,
     assertionCount: 0,
-    warnings: ["flow-path was not provided; applied OAuth to the existing Smoke collection without flow curation."]
+    warnings: [
+      `flow-path was not provided; applied ${describeAuthConfig(inputs.authConfig)} auth to the existing Smoke collection without flow curation.`
+    ]
   });
 }
 async function runSmokeFlow(inputs, dependencies) {

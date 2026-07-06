@@ -99,20 +99,34 @@ function parseAuthConfig(value: string): SmokeAuthConfig | undefined {
   if (parsed.enabled !== true) {
     return undefined;
   }
-  if (parsed.type !== 'oauth2') {
-    throw new Error('Invalid auth-config-json: only type=oauth2 is supported.');
-  }
-  if (parsed.grantType !== 'client_credentials') {
-    throw new Error('Invalid auth-config-json: only grantType=client_credentials is supported.');
-  }
-  if (parsed.clientAuthentication !== 'body') {
-    throw new Error('Invalid auth-config-json: only clientAuthentication=body is supported.');
-  }
-  if (typeof parsed.tokenUrl !== 'string' || !parsed.tokenUrl.trim()) {
-    throw new Error('Invalid auth-config-json: tokenUrl is required.');
+  if (parsed.type === 'oauth2') {
+    if (parsed.grantType !== 'client_credentials') {
+      throw new Error('Invalid auth-config-json: only grantType=client_credentials is supported.');
+    }
+    if (parsed.clientAuthentication !== 'body') {
+      throw new Error('Invalid auth-config-json: only clientAuthentication=body is supported.');
+    }
+    if (typeof parsed.tokenUrl !== 'string' || !parsed.tokenUrl.trim()) {
+      throw new Error('Invalid auth-config-json: tokenUrl is required.');
+    }
+    return parsed as SmokeAuthConfig;
   }
 
-  return parsed as SmokeAuthConfig;
+  if (parsed.type === 'apiKey') {
+    if (parsed.in !== 'header' && parsed.in !== 'query') {
+      throw new Error('Invalid auth-config-json: apiKey in must be one of: header, query.');
+    }
+    if (typeof parsed.name !== 'string' || !parsed.name.trim()) {
+      throw new Error('Invalid auth-config-json: apiKey name is required.');
+    }
+    const variables = isRecord(parsed.variables) ? parsed.variables : undefined;
+    if (variables?.apiKey !== undefined && (typeof variables.apiKey !== 'string' || !variables.apiKey.trim())) {
+      throw new Error('Invalid auth-config-json: apiKey variables.apiKey must be a non-empty string when provided.');
+    }
+    return parsed as SmokeAuthConfig;
+  }
+
+  throw new Error('Invalid auth-config-json: supported auth types are oauth2 and apiKey.');
 }
 
 export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionInputs {
@@ -260,6 +274,10 @@ function createOutputs(summary: FlowApplySummary): ActionOutputs {
   };
 }
 
+function describeAuthConfig(authConfig: SmokeAuthConfig): string {
+  return authConfig.type === 'apiKey' ? 'API key' : 'OAuth';
+}
+
 async function runWithoutFlowManifest(
   inputs: ActionInputs,
   dependencies: SmokeFlowDependencies
@@ -296,7 +314,7 @@ async function runWithoutFlowManifest(
       })
   });
   dependencies.core.info(
-    `Updated canonical Smoke collection ${inputs.smokeCollectionId} with Smoke OAuth auth on ${transformed.authRequestCount} request(s).`
+    `Updated canonical Smoke collection ${inputs.smokeCollectionId} with Smoke ${describeAuthConfig(inputs.authConfig)} auth on ${transformed.authRequestCount} request(s).`
   );
 
   return createOutputs({
@@ -310,7 +328,9 @@ async function runWithoutFlowManifest(
     appliedBindingCount: 0,
     appliedExtractCount: 0,
     assertionCount: 0,
-    warnings: ['flow-path was not provided; applied OAuth to the existing Smoke collection without flow curation.']
+    warnings: [
+      `flow-path was not provided; applied ${describeAuthConfig(inputs.authConfig!)} auth to the existing Smoke collection without flow curation.`
+    ]
   });
 }
 
