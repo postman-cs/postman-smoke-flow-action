@@ -5,7 +5,7 @@
 API key auth can be used with or without `flow-path`:
 
 - With `flow-path`, the action applies API key auth while curating the generated Smoke collection.
-- Without `flow-path`, the action updates the existing Smoke collection in place without recreating or reordering requests.
+- Without `flow-path`, the action still generates a temporary Smoke collection from the spec, refreshes the canonical Smoke collection from that generated collection, and then applies API key auth without flow scripts, bindings, extracts, or curated ordering.
 
 The action writes only placeholders to the collection. Inject the real API key at collection run time.
 

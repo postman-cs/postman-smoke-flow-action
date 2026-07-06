@@ -45,7 +45,7 @@ describe('readActionInputs', () => {
     expect(inputs.secretsResolverEnabled).toBe(true);
   });
 
-  it('treats missing flow-path as undefined for auth-only Smoke updates', () => {
+  it('treats missing flow-path as undefined for no-flow Smoke refreshes', () => {
     const inputs = readActionInputs({
       INPUT_PROJECT_NAME: 'providers-process-api',
       INPUT_WORKSPACE_ID: 'ws-123',

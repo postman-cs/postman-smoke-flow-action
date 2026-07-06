@@ -18,7 +18,7 @@ inputs:
     description: Canonical Smoke collection ID to refresh in place.
     required: true
   flow-path:
-    description: Optional repo-root-relative path to the curated flow.yaml manifest. When omitted, auth config can still be applied to the existing Smoke collection.
+    description: Optional repo-root-relative path to the curated flow.yaml manifest. When omitted, the canonical Smoke collection is refreshed from the generated spec collection without flow curation.
     required: false
   postman-api-key:
     description: Optional service-account API key. Only used to re-mint an expired postman-access-token; the collection reshape itself runs access-token-only through the Postman gateway.

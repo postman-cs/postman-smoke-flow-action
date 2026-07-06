@@ -88,8 +88,15 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
-function createFlowPostmanMock(generatedCollection: Record<string, unknown>, options: { overwriteFirstUpdate?: boolean } = {}) {
-  let canonicalCollection = clone(generatedCollection);
+function createFlowPostmanMock(
+  generatedCollection: Record<string, unknown>,
+  options: {
+    overwriteFirstUpdate?: boolean;
+    initialCanonicalCollection?: Record<string, unknown>;
+    overwriteFirstUpdateCollection?: Record<string, unknown>;
+  } = {}
+) {
+  let canonicalCollection = clone(options.initialCanonicalCollection ?? generatedCollection);
   let shouldOverwriteFirstUpdate = Boolean(options.overwriteFirstUpdate);
 
   return {
@@ -100,7 +107,7 @@ function createFlowPostmanMock(generatedCollection: Record<string, unknown>, opt
     updateCollection: vi.fn(async (_collectionId: string, collection: Record<string, unknown>) => {
       if (shouldOverwriteFirstUpdate) {
         shouldOverwriteFirstUpdate = false;
-        canonicalCollection = clone(generatedCollection);
+        canonicalCollection = clone(options.overwriteFirstUpdateCollection ?? generatedCollection);
         return;
       }
       canonicalCollection = clone(collection);
@@ -109,26 +116,7 @@ function createFlowPostmanMock(generatedCollection: Record<string, unknown>, opt
   };
 }
 
-function createCanonicalPostmanMock(existingCollection: Record<string, unknown>, options: { overwriteFirstUpdate?: boolean } = {}) {
-  let canonicalCollection = clone(existingCollection);
-  let shouldOverwriteFirstUpdate = Boolean(options.overwriteFirstUpdate);
-
-  return {
-    generateCollection: vi.fn(),
-    getCollection: vi.fn(async () => clone(canonicalCollection)),
-    updateCollection: vi.fn(async (_collectionId: string, collection: Record<string, unknown>) => {
-      if (shouldOverwriteFirstUpdate) {
-        shouldOverwriteFirstUpdate = false;
-        canonicalCollection = clone(existingCollection);
-        return;
-      }
-      canonicalCollection = clone(collection);
-    }),
-    deleteCollection: vi.fn()
-  };
-}
-
-function createDependencies(core: CoreLike, postman: ReturnType<typeof createFlowPostmanMock> | ReturnType<typeof createCanonicalPostmanMock>) {
+function createDependencies(core: CoreLike, postman: ReturnType<typeof createFlowPostmanMock>) {
   return {
     core,
     postman,
@@ -247,7 +235,7 @@ describe('runSmokeFlow', () => {
     }
   });
 
-  it('applies OAuth to the existing Smoke collection when flow-path is omitted', async () => {
+  it('refreshes from a generated Smoke collection and applies OAuth when flow-path is omitted', async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-'));
     const previousCwd = process.cwd();
     process.chdir(tempDir);
@@ -259,8 +247,8 @@ describe('runSmokeFlow', () => {
       setFailed: vi.fn()
     };
 
-    const postman = createCanonicalPostmanMock({
-      info: { name: '[Smoke] payments' },
+    const postman = createFlowPostmanMock({
+      info: { name: '[Smoke][Temp] payments' },
       item: [
         {
           name: 'Payments',
@@ -283,6 +271,31 @@ describe('runSmokeFlow', () => {
           ]
         }
       ]
+    }, {
+      initialCanonicalCollection: {
+        info: { name: '[Smoke] payments' },
+        item: [
+          {
+            name: 'Payments',
+            item: [
+              {
+                name: 'createPayment',
+                request: {
+                  method: 'POST',
+                  url: ''
+                }
+              },
+              {
+                name: '00 - Resolve Secrets',
+                request: {
+                  method: 'POST',
+                  url: 'https://secretsmanager.us-west-2.amazonaws.com'
+                }
+              }
+            ]
+          }
+        ]
+      }
     });
 
     try {
@@ -299,14 +312,17 @@ describe('runSmokeFlow', () => {
       const request = nestedItems[0]?.request as Record<string, unknown>;
 
       expect(outputs['smoke-collection-id']).toBe('col-smoke');
-      expect(outputs['flow-apply-status']).toBe('skipped');
-      expect(outputs['temporary-smoke-collection-id']).toBe('');
+      expect(outputs['flow-apply-status']).toBe('success');
+      expect(outputs['temporary-smoke-collection-id']).toBe('temp-123');
       expect(summary.authApplied).toBe(true);
       expect(summary.authRequestCount).toBe(1);
-      expect(postman.generateCollection).not.toHaveBeenCalled();
+      expect(postman.generateCollection).toHaveBeenCalledOnce();
       expect(postman.getCollection).toHaveBeenCalledWith('col-smoke');
+      expect(postman.getCollection).toHaveBeenCalledWith('temp-123');
       expect(postman.updateCollection).toHaveBeenCalledOnce();
-      expect(postman.deleteCollection).not.toHaveBeenCalled();
+      expect(postman.deleteCollection).toHaveBeenCalledWith('temp-123');
+      expect((updatedCollection.info as Record<string, unknown>).name).toBe('[Smoke] payments');
+      expect(request.url).toBe('https://api.example.com/payments');
       expect(request.auth).toEqual({
         type: 'bearer',
         bearer: [{ key: 'token', value: '{{access_token}}', type: 'string' }]
@@ -320,7 +336,7 @@ describe('runSmokeFlow', () => {
     }
   });
 
-  it('applies API key auth to the existing Smoke collection when flow-path is omitted', async () => {
+  it('refreshes from a generated Smoke collection and applies API key auth when flow-path is omitted', async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-'));
     const previousCwd = process.cwd();
     process.chdir(tempDir);
@@ -332,8 +348,8 @@ describe('runSmokeFlow', () => {
       setFailed: vi.fn()
     };
 
-    const postman = createCanonicalPostmanMock({
-      info: { name: '[Smoke] payments' },
+    const postman = createFlowPostmanMock({
+      info: { name: '[Smoke][Temp] payments' },
       event: [
         {
           listen: 'prerequest',
@@ -365,6 +381,31 @@ describe('runSmokeFlow', () => {
           ]
         }
       ]
+    }, {
+      initialCanonicalCollection: {
+        info: { name: '[Smoke] payments' },
+        item: [
+          {
+            name: 'Payments',
+            item: [
+              {
+                name: 'createPayment',
+                request: {
+                  method: 'POST',
+                  url: ''
+                }
+              },
+              {
+                name: '00 - Resolve Secrets',
+                request: {
+                  method: 'POST',
+                  url: 'https://secretsmanager.us-west-2.amazonaws.com'
+                }
+              }
+            ]
+          }
+        ]
+      }
     });
 
     try {
@@ -381,14 +422,16 @@ describe('runSmokeFlow', () => {
       const request = nestedItems[0]?.request as Record<string, unknown>;
 
       expect(outputs['smoke-collection-id']).toBe('col-smoke');
-      expect(outputs['flow-apply-status']).toBe('skipped');
+      expect(outputs['flow-apply-status']).toBe('success');
       expect(summary.authApplied).toBe(true);
       expect(summary.authRequestCount).toBe(1);
       expect(summary.warnings).toEqual([
-        'flow-path was not provided; applied API key auth to the existing Smoke collection without flow curation.'
+        'flow-path was not provided; refreshed canonical Smoke collection from the generated spec collection and applied API key auth without flow curation.'
       ]);
-      expect(postman.generateCollection).not.toHaveBeenCalled();
+      expect(postman.generateCollection).toHaveBeenCalledOnce();
       expect(postman.updateCollection).toHaveBeenCalledOnce();
+      expect(postman.deleteCollection).toHaveBeenCalledWith('temp-123');
+      expect(request.url).toBe('https://api.example.com/payments');
       expect(request.auth).toEqual({
         type: 'apikey',
         apikey: [
@@ -464,7 +507,7 @@ describe('runSmokeFlow', () => {
     }
   });
 
-  it('reapplies OAuth when a pending linked sync overwrites the first auth-only update', async () => {
+  it('reapplies generated no-flow updates when a pending linked sync overwrites the first update', async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-'));
     const previousCwd = process.cwd();
     process.chdir(tempDir);
@@ -476,8 +519,22 @@ describe('runSmokeFlow', () => {
       setFailed: vi.fn()
     };
 
-    const postman = createCanonicalPostmanMock({
+    const staleCanonicalCollection = {
       info: { name: '[Smoke] payments' },
+      item: [
+        {
+          name: 'createPayment',
+          request: {
+            method: 'POST',
+            header: [{ key: 'Authorization', value: 'Bearer old-token' }],
+            url: ''
+          }
+        }
+      ]
+    };
+
+    const postman = createFlowPostmanMock({
+      info: { name: '[Smoke][Temp] payments' },
       item: [
         {
           name: 'createPayment',
@@ -488,7 +545,11 @@ describe('runSmokeFlow', () => {
           }
         }
       ]
-    }, { overwriteFirstUpdate: true });
+    }, {
+      initialCanonicalCollection: staleCanonicalCollection,
+      overwriteFirstUpdate: true,
+      overwriteFirstUpdateCollection: staleCanonicalCollection
+    });
 
     try {
       const outputs = await runSmokeFlow({
@@ -498,18 +559,19 @@ describe('runSmokeFlow', () => {
       }, createDependencies(core, postman));
       const finalCollection = postman.updateCollection.mock.calls[1]?.[1] as Record<string, unknown>;
 
-      expect(outputs['flow-apply-status']).toBe('skipped');
+      expect(outputs['flow-apply-status']).toBe('success');
       expect(postman.updateCollection).toHaveBeenCalledTimes(2);
       expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('Canonical Smoke collection update was not stable'));
       expect(core.info).toHaveBeenCalledWith(expect.stringContaining('persisted after 2 attempt'));
       expect(JSON.stringify(finalCollection)).toContain('Auto-generated OAuth2 client-credentials token cache');
+      expect(JSON.stringify(finalCollection)).toContain('https://api.example.com/payments');
     } finally {
       process.chdir(previousCwd);
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
 
-  it('skips without Postman mutation when flow-path is omitted and OAuth is disabled', async () => {
+  it('refreshes from the generated Smoke collection when flow-path and auth are omitted', async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-'));
     const previousCwd = process.cwd();
     process.chdir(tempDir);
@@ -521,27 +583,93 @@ describe('runSmokeFlow', () => {
       setFailed: vi.fn()
     };
 
-    const postman = {
-      generateCollection: vi.fn(),
-      getCollection: vi.fn(),
-      updateCollection: vi.fn(),
-      deleteCollection: vi.fn()
-    };
+    const postman = createFlowPostmanMock({
+      info: { name: '[Smoke][Temp] payments' },
+      item: [
+        {
+          name: 'createPayment',
+          request: {
+            method: 'POST',
+            url: 'https://api.example.com/payments'
+          }
+        }
+      ]
+    }, {
+      initialCanonicalCollection: {
+        info: { name: '[Smoke] payments' },
+        item: [
+          {
+            name: 'createPayment',
+            request: {
+              method: 'POST',
+              url: ''
+            }
+          }
+        ]
+      }
+    });
 
     try {
       const outputs = await runSmokeFlow({
         ...createInputs(tempDir),
         flowPath: undefined,
         authConfig: undefined
-      }, { core, postman });
+      }, createDependencies(core, postman));
       const summary = JSON.parse(outputs['flow-apply-summary-json']) as Record<string, unknown>;
 
-      expect(outputs['flow-apply-status']).toBe('skipped');
+      const updatedCollection = postman.updateCollection.mock.calls[0]?.[1] as Record<string, unknown>;
+
+      expect(outputs['flow-apply-status']).toBe('success');
       expect(summary.authApplied).toBe(false);
-      expect(postman.generateCollection).not.toHaveBeenCalled();
-      expect(postman.getCollection).not.toHaveBeenCalled();
-      expect(postman.updateCollection).not.toHaveBeenCalled();
-      expect(postman.deleteCollection).not.toHaveBeenCalled();
+      expect(postman.generateCollection).toHaveBeenCalledOnce();
+      expect(postman.updateCollection).toHaveBeenCalledOnce();
+      expect(postman.deleteCollection).toHaveBeenCalledWith('temp-123');
+      expect(JSON.stringify(updatedCollection)).toContain('https://api.example.com/payments');
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails no-flow refreshes when the generated Smoke collection has blank request URLs', async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-'));
+    const previousCwd = process.cwd();
+    process.chdir(tempDir);
+
+    const core: CoreLike = {
+      setOutput: vi.fn(),
+      info: vi.fn(),
+      warning: vi.fn(),
+      setFailed: vi.fn()
+    };
+
+    const postman = createFlowPostmanMock({
+      info: { name: '[Smoke][Temp] payments' },
+      item: [
+        {
+          name: 'createPayment',
+          request: {
+            method: 'POST',
+            url: ''
+          }
+        }
+      ]
+    }, {
+      initialCanonicalCollection: {
+        info: { name: '[Smoke] payments' },
+        item: []
+      }
+    });
+
+    try {
+      await expect(runSmokeFlow({
+        ...createInputs(tempDir),
+        flowPath: undefined,
+        authConfig: undefined
+      }, createDependencies(core, postman))).rejects.toThrow('generated Smoke request(s) missing URL: createPayment');
+      expect(postman.generateCollection).toHaveBeenCalledOnce();
+      expect(postman.updateCollection).toHaveBeenCalledTimes(6);
+      expect(postman.deleteCollection).toHaveBeenCalledWith('temp-123');
     } finally {
       process.chdir(previousCwd);
       rmSync(tempDir, { recursive: true, force: true });

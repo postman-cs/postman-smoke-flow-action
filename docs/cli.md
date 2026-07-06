@@ -16,7 +16,7 @@ postman-smoke-flow \
   --postman-access-token "$POSTMAN_ACCESS_TOKEN"
 ```
 
-For OAuth-only updates before a flow manifest exists, omit `--flow-path`:
+For OAuth updates before a flow manifest exists, omit `--flow-path`. The CLI still refreshes the canonical Smoke collection from a spec-generated temporary collection before applying auth:
 
 ```sh
 postman-smoke-flow \
@@ -29,7 +29,7 @@ postman-smoke-flow \
   --postman-access-token "$POSTMAN_ACCESS_TOKEN"
 ```
 
-For API key auth-only updates before a flow manifest exists, omit `--flow-path` and pass an API key auth config. The real target API key is supplied later when the Smoke collection runs:
+For API key auth updates before a flow manifest exists, omit `--flow-path` and pass an API key auth config. The CLI still refreshes the canonical Smoke collection from a spec-generated temporary collection before applying auth. The real target API key is supplied later when the Smoke collection runs:
 
 ```sh
 postman-smoke-flow \

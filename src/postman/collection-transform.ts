@@ -21,6 +21,11 @@ export type CollectionVerification = {
   summary: string;
 };
 
+export type GeneratedSmokeCollectionBuildOptions = {
+  secretsResolverEnabled?: boolean;
+  collectionName?: string;
+};
+
 const GENERATED_OAUTH_EVENT_MARKER = '[Smoke Flow] Auto-generated OAuth2 client-credentials token cache';
 const LEGACY_SECRETS_RESOLVER_ITEM_NAME = '00 - Resolve Secrets';
 
@@ -517,6 +522,27 @@ function containsSecretsResolverItem(items: unknown): boolean {
   });
 }
 
+function collectSmokeRequestItems(items: unknown): JsonRecord[] {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items.flatMap((entry) => {
+    const item = asRecord(entry);
+    if (!item) {
+      return [];
+    }
+
+    const nestedItems = collectSmokeRequestItems(item.item);
+    const request = asRecord(item.request);
+    if (!request || isSecretsResolverItem(item)) {
+      return nestedItems;
+    }
+
+    return [item, ...nestedItems];
+  });
+}
+
 function hasGeneratedOAuthEvent(collection: JsonRecord): boolean {
   const events = Array.isArray(collection.event) ? collection.event : [];
   return events
@@ -669,6 +695,45 @@ export function verifySmokeCollectionAuth(
   };
 }
 
+export function verifyGeneratedSmokeCollection(
+  collection: JsonRecord,
+  authConfig: SmokeAuthConfig | undefined,
+  options: { secretsResolverEnabled?: boolean } = {}
+): CollectionVerification {
+  const requestItems = collectSmokeRequestItems(collection.item);
+  const requestsMissingUrls = requestItems
+    .filter((item) => {
+      const request = asRecord(item.request);
+      return !request || !getRequestUrlText(request).trim();
+    })
+    .map((item) => String(item.name ?? '<unnamed request>'));
+  const failures: string[] = [];
+
+  if (requestItems.length === 0) {
+    failures.push('no Smoke requests found in generated collection');
+  }
+  if (requestsMissingUrls.length > 0) {
+    const sample = requestsMissingUrls.slice(0, 5).join(', ');
+    const suffix = requestsMissingUrls.length > 5 ? `, and ${requestsMissingUrls.length - 5} more` : '';
+    failures.push(`generated Smoke request(s) missing URL: ${sample}${suffix}`);
+  }
+  if (!authConfig?.enabled && options.secretsResolverEnabled === false && containsSecretsResolverItem(collection.item)) {
+    failures.push('secrets resolver request is still present');
+  }
+
+  if (authConfig?.enabled) {
+    const authVerification = verifySmokeCollectionAuth(collection, authConfig, options);
+    if (!authVerification.ok) {
+      failures.push(authVerification.summary);
+    }
+  }
+
+  return {
+    ok: failures.length === 0,
+    summary: failures.length > 0 ? failures.join('; ') : `generated Smoke collection persisted with ${requestItems.length} request(s)`
+  };
+}
+
 export function verifyCuratedSmokeCollection(
   collection: JsonRecord,
   flow: FlowDefinition,
@@ -743,6 +808,34 @@ export function applySmokeCollectionAuth(
   return {
     collection: sanitizeForCollectionUpdate(collection) as JsonRecord,
     authRequestCount
+  };
+}
+
+export function buildGeneratedSmokeCollection(
+  generatedCollection: JsonRecord,
+  authConfig?: SmokeAuthConfig,
+  options: GeneratedSmokeCollectionBuildOptions = {}
+): { collection: JsonRecord; authRequestCount: number; requestCount: number } {
+  const collection = sanitizeForCollectionUpdate(structuredClone(generatedCollection)) as JsonRecord;
+  if (options.collectionName) {
+    const info = asRecord(collection.info) ?? {};
+    info.name = options.collectionName;
+    collection.info = info;
+  }
+  if (options.secretsResolverEnabled === false) {
+    collection.item = removeSecretsResolverItems(collection.item);
+  }
+
+  let authRequestCount = 0;
+  if (authConfig?.enabled) {
+    applyCollectionAuth(collection, authConfig);
+    authRequestCount = applyAuthToCollectionItems(collection.item, authConfig);
+  }
+
+  return {
+    collection: sanitizeForCollectionUpdate(collection) as JsonRecord,
+    authRequestCount,
+    requestCount: collectSmokeRequestItems(collection.item).length
   };
 }
 

@@ -116,9 +116,9 @@ With `flow-path` set, the action generates a temporary Smoke collection from the
     postman-access-token: ${{ steps.postman_token.outputs.token }}
 ```
 
-### OAuth-only update without flow-path
+### OAuth update without flow-path
 
-To inject Smoke-only [OAuth2](https://learning.postman.com/docs/use/send-requests/authorization/oauth-20/) client-credentials token acquisition into the existing Smoke collection before a `flow.yaml` exists, omit `flow-path` and pass `auth-config-json`. The existing collection is updated in place without recreating or reordering requests. Full configuration options are in [docs/smoke-oauth.md](docs/smoke-oauth.md).
+To inject Smoke-only [OAuth2](https://learning.postman.com/docs/use/send-requests/authorization/oauth-20/) client-credentials token acquisition before a `flow.yaml` exists, omit `flow-path` and pass `auth-config-json`. The action still generates a temporary Smoke collection from the spec, refreshes the canonical Smoke collection from that generated collection, and then applies OAuth without adding flow scripts, bindings, extracts, or curated ordering. Full configuration options are in [docs/smoke-oauth.md](docs/smoke-oauth.md).
 
 ```yaml
 - uses: postman-cs/postman-smoke-flow-action@v2
@@ -132,9 +132,9 @@ To inject Smoke-only [OAuth2](https://learning.postman.com/docs/use/send-request
     auth-config-json: '{"enabled":true,"type":"oauth2","grantType":"client_credentials","tokenUrl":"{{auth_token_url}}","clientAuthentication":"body"}'
 ```
 
-### API key-only update without flow-path
+### API key update without flow-path
 
-To inject Smoke-only API key auth into the existing Smoke collection before a `flow.yaml` exists, omit `flow-path` and pass `auth-config-json`. The action writes a placeholder variable only; inject the real API key when the Smoke collection runs. Full configuration options are in [docs/smoke-api-key.md](docs/smoke-api-key.md).
+To inject Smoke-only API key auth before a `flow.yaml` exists, omit `flow-path` and pass `auth-config-json`. The action still generates a temporary Smoke collection from the spec, refreshes the canonical Smoke collection from that generated collection, and then applies API key auth without adding flow scripts, bindings, extracts, or curated ordering. The action writes a placeholder variable only; inject the real API key when the Smoke collection runs. Full configuration options are in [docs/smoke-api-key.md](docs/smoke-api-key.md).
 
 ```yaml
 - uses: postman-cs/postman-smoke-flow-action@v2
@@ -198,7 +198,7 @@ See [docs/cli.md](docs/cli.md) for GitLab CI, Bitbucket Pipelines, Azure DevOps,
 | `workspace-id` | Postman workspace ID produced by bootstrap. | yes |  |
 | `spec-id` | Postman spec ID produced by bootstrap. | yes |  |
 | `smoke-collection-id` | Canonical Smoke collection ID to refresh in place. | yes |  |
-| `flow-path` | Optional repo-root-relative path to the curated flow.yaml manifest. When omitted, auth config can still be applied to the existing Smoke collection. | no |  |
+| `flow-path` | Optional repo-root-relative path to the curated flow.yaml manifest. When omitted, the canonical Smoke collection is refreshed from the generated spec collection without flow curation. | no |  |
 | `postman-api-key` | Optional service-account API key. Only used to re-mint an expired postman-access-token; the collection reshape itself runs access-token-only through the Postman gateway. | no |  |
 | `postman-region` | Postman data residency region for public API calls. Supported values are us and eu. | no | `us` |
 | `auth-config-json` | Optional JSON config for Smoke collection runtime auth injection. Supports OAuth2 client credentials and API key auth. | no |  |
@@ -234,15 +234,17 @@ See [docs/cli.md](docs/cli.md) for GitLab CI, Bitbucket Pipelines, Azure DevOps,
 ```mermaid
 flowchart LR
     M["flow.yaml<br/>curated manifest"] --> R
-    S["OpenAPI spec (spec-id)"] -->|"generate temp collection"| R["resolve steps by operationId<br/>wire bindings + extracts"]
+    S["OpenAPI spec (spec-id)"] -->|"generate temp collection"| G["generated Smoke collection"]
+    G --> R["resolve steps by operationId<br/>wire bindings + extracts"]
     R --> C["canonical Smoke collection<br/>refreshed in place"]
-    R -.-> T["temp collection deleted"]
-    O["auth-config-json<br/>runtime auth-only mode"] --> C
+    G -->|"no flow-path<br/>refresh without curation"| C
+    G -.-> T["temp collection deleted"]
+    O["auth-config-json<br/>runtime auth"] --> C
 ```
 
 In flow mode (`flow-path` set), the action reads the curated manifest, generates a temporary Smoke collection from the spec, resolves each flow step against the generated requests by `operationId` (with an optional method-plus-path fallback when `spec-path` is provided), wires bindings and extracts into pre-request and test scripts, refreshes the canonical Smoke collection in place, and removes the temporary collection. The manifest schema and resolution rules are in [docs/flow-manifest.md](docs/flow-manifest.md).
 
-In auth-only mode (`flow-path` omitted, `auth-config-json` enabled), the action fetches the existing canonical Smoke collection and applies Smoke runtime auth without touching request order or content. OAuth2 client credentials are documented in [docs/smoke-oauth.md](docs/smoke-oauth.md), and API key auth is documented in [docs/smoke-api-key.md](docs/smoke-api-key.md).
+In no-flow mode (`flow-path` omitted), the action still generates a temporary Smoke collection from the spec and refreshes the canonical Smoke collection from that generated collection. If `auth-config-json` is enabled, it applies Smoke runtime auth during that refresh. It does not add flow scripts, bindings, extracts, or curated ordering. OAuth2 client credentials are documented in [docs/smoke-oauth.md](docs/smoke-oauth.md), and API key auth is documented in [docs/smoke-api-key.md](docs/smoke-api-key.md).
 
 All collection operations — generating the temporary collection from the spec, reading it, reshaping the canonical collection, and deleting the temporary one — run through the Postman gateway under postman-access-token. The action never mutates baseline or contract collections, and it never writes runtime tokens or client secrets back to Postman environments.
 

@@ -2,6 +2,8 @@
 
 `auth-config-json` enables collection-level token acquisition for protected Smoke collections. V1 supports `oauth2` with the `client_credentials` grant and `clientAuthentication: body`. This can be used with or without `flow-path`.
 
+When `flow-path` is omitted, the action still generates a temporary Smoke collection from the spec, refreshes the canonical Smoke collection from that generated collection, and then applies OAuth. It does not add flow scripts, bindings, extracts, or curated ordering.
+
 ## Authentication matrix
 
 | Credential | Purpose | Recommended source |
