@@ -29697,6 +29697,13 @@ function asRecord3(value) {
 function asArray(value) {
   return Array.isArray(value) ? value.map(asRecord3).filter((v) => Boolean(v)) : [];
 }
+function collectRequestLeaves(items) {
+  return asArray(items).flatMap((item) => {
+    const request = asRecord3(item.request);
+    const children = collectRequestLeaves(item.item);
+    return request ? [item, ...children] : children;
+  });
+}
 function bareModelId(uid) {
   const u = String(uid ?? "").trim();
   return u.includes("-") ? u.slice(u.indexOf("-") + 1) : u;
@@ -29910,7 +29917,7 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
       throw new Error(`updateCollection: invalid collection payload for ${collectionUid}`);
     }
     await this.deleteAllItems(cid);
-    for (const leaf of asArray(desired.item)) {
+    for (const leaf of collectRequestLeaves(desired.item)) {
       const request = asRecord3(leaf.request) ?? {};
       const createBody = {
         $kind: "http-request",

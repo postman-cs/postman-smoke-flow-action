@@ -170,6 +170,58 @@ describe('PostmanGatewaySmokeClient', () => {
     expect(collScripts[0].type).toBe('http:beforeRequest');
   });
 
+  it('flattens generated collection folders before recreating canonical request leaves', async () => {
+    const { client, calls } = makeClient((env) => {
+      if (env.method === 'get' && env.path.endsWith('/items/')) return jsonResponse({ data: [] });
+      if (env.method === 'post' && env.path.endsWith('/items/')) return jsonResponse({ data: { id: '55363555-new' } });
+      if (env.method === 'patch') return jsonResponse({ data: {} });
+      return jsonResponse({});
+    });
+
+    await client.updateCollection('55363555-cid', {
+      info: { name: '[Smoke] Generated' },
+      item: [
+        {
+          name: 'health',
+          item: [
+            {
+              name: 'Health check',
+              request: {
+                method: 'GET',
+                url: '{{baseUrl}}/health',
+                auth: { type: 'bearer', bearer: [{ key: 'token', value: '{{access_token}}', type: 'string' }] }
+              }
+            }
+          ]
+        },
+        {
+          name: 'v1',
+          item: [
+            {
+              name: 'List widgets',
+              request: {
+                method: 'GET',
+                url: '{{baseUrl}}/v1/widgets',
+                auth: { type: 'bearer', bearer: [{ key: 'token', value: '{{access_token}}', type: 'string' }] }
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    const createdItems = calls
+      .filter((c) => c.method === 'post' && c.path.endsWith('/items/'))
+      .map((c) => c.body as J);
+
+    expect(createdItems.map((item) => item.name)).toEqual(['Health check', 'List widgets']);
+    expect(createdItems.map((item) => item.url)).toEqual(['{{baseUrl}}/health', '{{baseUrl}}/v1/widgets']);
+    expect(createdItems.map((item) => item.auth)).toEqual([
+      { type: 'bearer', credentials: [{ key: 'token', value: '{{access_token}}' }] },
+      { type: 'bearer', credentials: [{ key: 'token', value: '{{access_token}}' }] }
+    ]);
+  });
+
   it('retries the new-item scripts patch on a transient 404 (read-after-write lag)', async () => {
     let itemPatchAttempts = 0;
     const { fetchImpl, calls } = gatewayFetch((env) => {

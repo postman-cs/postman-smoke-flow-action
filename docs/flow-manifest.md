@@ -53,4 +53,4 @@ When `flow-path` is provided, the action:
 - updates the canonical Smoke collection in place
 - deletes the temporary collection
 
-When `flow-path` is omitted and `auth-config-json` is enabled, it fetches the existing canonical Smoke collection and injects Smoke-only runtime auth without recreating or reordering the collection.
+When `flow-path` is omitted, it still generates a temporary Smoke collection from the spec and refreshes the canonical Smoke collection from that generated collection. If `auth-config-json` is enabled, it injects Smoke-only runtime auth without adding flow scripts, bindings, extracts, or curated ordering.

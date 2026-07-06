@@ -12,6 +12,14 @@ function asArray(value: unknown): JsonRecord[] {
   return Array.isArray(value) ? value.map(asRecord).filter((v): v is JsonRecord => Boolean(v)) : [];
 }
 
+function collectRequestLeaves(items: unknown): JsonRecord[] {
+  return asArray(items).flatMap((item) => {
+    const request = asRecord(item.request);
+    const children = collectRequestLeaves(item.item);
+    return request ? [item, ...children] : children;
+  });
+}
+
 function bareModelId(uid: string): string {
   const u = String(uid ?? '').trim();
   return u.includes('-') ? u.slice(u.indexOf('-') + 1) : u;
@@ -219,10 +227,9 @@ export interface PostmanGatewaySmokeClientOptions {
  *   collection-level name/auth/variables (`PATCH /v3/collections/:cid`).
  * - delete: `collection DELETE /v3/collections/:cid` (404-tolerant).
  *
- * The curated v2 collection produced by `buildCuratedSmokeCollection` is a flat
- * leaf list (secrets-resolver + curated requests), so the reconcile writes a flat
- * tree; folder nesting only appears on the generated temp collection, which is
- * read (export->v2 adapter handles folders) but never written back.
+ * Curated flow collections are already flat. No-flow refreshes can pass through
+ * generated collection folders, so update flattens request leaves before writing
+ * the gateway's flat replacement tree.
  */
 export class PostmanGatewaySmokeClient {
   private static readonly GENERATION_LOCKED_MAX_RETRIES = 5;
@@ -329,12 +336,14 @@ export class PostmanGatewaySmokeClient {
     // Full-replace: delete every existing item (leaves + folders), then recreate.
     await this.deleteAllItems(cid);
 
-    // Create curated leaves in order; collection.item is a flat leaf list.
+    // Create request leaves in order. Flow mode passes a flat curated list; no-flow
+    // mode can pass the generated folder tree, so skip folders and keep only real
+    // requests.
     // The v3 IR item carries url/method/headers/body/auth at the ROOT (sibling
     // fields), NOT under a `payload` wrapper — a payload wrapper is silently
     // dropped (live-proven). Body/auth use the v3 IR shapes ({type,content} /
     // {type,credentials}); headers are {key,value} pairs.
-    for (const leaf of asArray(desired.item)) {
+    for (const leaf of collectRequestLeaves(desired.item)) {
       const request = asRecord(leaf.request) ?? {};
       const createBody: JsonRecord = {
         $kind: 'http-request',
