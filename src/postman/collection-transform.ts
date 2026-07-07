@@ -291,6 +291,29 @@ function getApiKeyName(authConfig: SmokeApiKeyConfig): string {
   return authConfig.name.trim();
 }
 
+function createApiKeyAuth(authConfig: SmokeApiKeyConfig): JsonRecord {
+  return {
+    type: 'apikey',
+    apikey: [
+      {
+        key: 'key',
+        value: getApiKeyName(authConfig),
+        type: 'string'
+      },
+      {
+        key: 'value',
+        value: `{{${getApiKeyVariableName(authConfig)}}}`,
+        type: 'string'
+      },
+      {
+        key: 'in',
+        value: authConfig.in,
+        type: 'string'
+      }
+    ]
+  };
+}
+
 function setRequestBearerAuth(request: JsonRecord, authConfig: SmokeOAuthConfig): void {
   const variables = getOAuthVariableNames(authConfig);
   request.auth = {
@@ -306,29 +329,9 @@ function setRequestBearerAuth(request: JsonRecord, authConfig: SmokeOAuthConfig)
   removeHeader(request, authConfig.apply?.header || 'Authorization');
 }
 
-function setRequestApiKeyAuth(request: JsonRecord, authConfig: SmokeApiKeyConfig): void {
-  const variableName = getApiKeyVariableName(authConfig);
+function prepareRequestForCollectionApiKeyAuth(request: JsonRecord, authConfig: SmokeApiKeyConfig): void {
   const apiKeyName = getApiKeyName(authConfig);
-  request.auth = {
-    type: 'apikey',
-    apikey: [
-      {
-        key: 'key',
-        value: apiKeyName,
-        type: 'string'
-      },
-      {
-        key: 'value',
-        value: `{{${variableName}}}`,
-        type: 'string'
-      },
-      {
-        key: 'in',
-        value: authConfig.in,
-        type: 'string'
-      }
-    ]
-  };
+  delete request.auth;
   if (authConfig.in === 'header') {
     removeHeader(request, apiKeyName);
   } else {
@@ -344,7 +347,7 @@ function applyAuthToRequest(request: JsonRecord, authConfig: SmokeAuthConfig | u
   if (isOAuthAuthConfig(authConfig)) {
     setRequestBearerAuth(request, authConfig);
   } else {
-    setRequestApiKeyAuth(request, authConfig);
+    prepareRequestForCollectionApiKeyAuth(request, authConfig);
   }
   return true;
 }
@@ -409,11 +412,13 @@ function applyCollectionAuth(collection: JsonRecord, authConfig: SmokeAuthConfig
     .filter((entry) => !isGeneratedOAuthEvent(entry));
 
   if (isOAuthAuthConfig(authConfig)) {
+    collection.auth = { type: 'noauth' };
     seedOAuthCollectionVariables(collection, authConfig);
     collection.event = [...retainedEvents, createOAuthPreRequestEvent(authConfig)];
     return;
   }
 
+  collection.auth = createApiKeyAuth(authConfig);
   seedApiKeyCollectionVariables(collection, authConfig);
   if (retainedEvents.length > 0) {
     collection.event = retainedEvents;
@@ -643,6 +648,11 @@ function hasGeneratedOAuthEvent(collection: JsonRecord): boolean {
     .some((entry) => isGeneratedOAuthEvent(entry));
 }
 
+function hasCollectionAuth(collection: JsonRecord): boolean {
+  const auth = asRecord(collection.auth);
+  return Boolean(auth && typeof auth.type === 'string' && auth.type !== '' && auth.type !== 'noauth');
+}
+
 function getCollectionVariableKeys(collection: JsonRecord): Set<string> {
   const variables = Array.isArray(collection.variable) ? collection.variable : [];
   return new Set(
@@ -687,8 +697,7 @@ function countBearerAuthRequests(items: unknown, authConfig: SmokeOAuthConfig): 
   }, 0);
 }
 
-function requestUsesApiKeyAuth(request: JsonRecord, authConfig: SmokeApiKeyConfig): boolean {
-  const auth = asRecord(request.auth);
+function authUsesApiKey(auth: JsonRecord | null, authConfig: SmokeApiKeyConfig): boolean {
   if (!auth || auth.type !== 'apikey') {
     return false;
   }
@@ -703,24 +712,30 @@ function requestUsesApiKeyAuth(request: JsonRecord, authConfig: SmokeApiKeyConfi
   );
 }
 
-function countApiKeyAuthRequests(items: unknown, authConfig: SmokeApiKeyConfig): number {
+function collectionUsesApiKeyAuth(collection: JsonRecord, authConfig: SmokeApiKeyConfig): boolean {
+  return authUsesApiKey(asRecord(collection.auth), authConfig);
+}
+
+function collectRequestsWithExplicitAuth(items: unknown): string[] {
   if (!Array.isArray(items)) {
-    return 0;
+    return [];
   }
 
-  return items.reduce((count, entry) => {
+  return items.flatMap((entry) => {
     const item = asRecord(entry);
     if (!item) {
-      return count;
+      return [];
     }
 
-    let nextCount = count;
+    const nested = collectRequestsWithExplicitAuth(item.item);
     const request = asRecord(item.request);
-    if (request && !isSecretsResolverItem(item) && requestUsesApiKeyAuth(request, authConfig)) {
-      nextCount += 1;
+    const auth = asRecord(request?.auth);
+    if (!request || isSecretsResolverItem(item) || !auth || auth.type === 'noauth') {
+      return nested;
     }
-    return nextCount + countApiKeyAuthRequests(item.item, authConfig);
-  }, 0);
+
+    return [String(item.name ?? '<unnamed request>'), ...nested];
+  });
 }
 
 function getTopLevelItems(collection: JsonRecord): JsonRecord[] {
@@ -750,6 +765,9 @@ export function verifySmokeCollectionAuth(
     const variables = getOAuthVariableNames(authConfig);
     const missingVariables = Object.values(variables).filter((variableName) => !variableKeys.has(variableName));
     const bearerAuthRequestCount = countBearerAuthRequests(collection.item, authConfig);
+    if (hasCollectionAuth(collection)) {
+      failures.push('collection-level auth is still present while OAuth request auth is enabled');
+    }
     if (!hasGeneratedOAuthEvent(collection)) {
       failures.push('missing generated OAuth pre-request script');
     }
@@ -770,12 +788,21 @@ export function verifySmokeCollectionAuth(
   }
 
   const apiKeyVariable = getApiKeyVariableName(authConfig);
-  const apiKeyAuthRequestCount = countApiKeyAuthRequests(collection.item, authConfig);
+  const inheritedRequestCount = collectSmokeRequestItems(collection.item).length;
+  const requestsWithExplicitAuth = collectRequestsWithExplicitAuth(collection.item);
   if (!variableKeys.has(apiKeyVariable)) {
     failures.push(`missing API key collection variable: ${apiKeyVariable}`);
   }
-  if (apiKeyAuthRequestCount === 0) {
-    failures.push('no requests use generated API key auth');
+  if (!collectionUsesApiKeyAuth(collection, authConfig)) {
+    failures.push('missing collection-level API key auth');
+  }
+  if (inheritedRequestCount === 0) {
+    failures.push('no requests inherit generated API key auth');
+  }
+  if (requestsWithExplicitAuth.length > 0) {
+    const sample = requestsWithExplicitAuth.slice(0, 5).join(', ');
+    const suffix = requestsWithExplicitAuth.length > 5 ? `, and ${requestsWithExplicitAuth.length - 5} more` : '';
+    failures.push(`request(s) override collection-level API key auth: ${sample}${suffix}`);
   }
   if (options.secretsResolverEnabled === false && containsSecretsResolverItem(collection.item)) {
     failures.push('secrets resolver request is still present');
@@ -783,7 +810,7 @@ export function verifySmokeCollectionAuth(
 
   return {
     ok: failures.length === 0,
-    summary: failures.length > 0 ? failures.join('; ') : `API key auth persisted on ${apiKeyAuthRequestCount} request(s)`
+    summary: failures.length > 0 ? failures.join('; ') : `API key auth persisted at collection level for ${inheritedRequestCount} request(s)`
   };
 }
 

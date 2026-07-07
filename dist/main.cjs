@@ -29032,6 +29032,28 @@ function getApiKeyVariableName(authConfig) {
 function getApiKeyName(authConfig) {
   return authConfig.name.trim();
 }
+function createApiKeyAuth(authConfig) {
+  return {
+    type: "apikey",
+    apikey: [
+      {
+        key: "key",
+        value: getApiKeyName(authConfig),
+        type: "string"
+      },
+      {
+        key: "value",
+        value: `{{${getApiKeyVariableName(authConfig)}}}`,
+        type: "string"
+      },
+      {
+        key: "in",
+        value: authConfig.in,
+        type: "string"
+      }
+    ]
+  };
+}
 function setRequestBearerAuth(request, authConfig) {
   const variables = getOAuthVariableNames(authConfig);
   request.auth = {
@@ -29046,29 +29068,9 @@ function setRequestBearerAuth(request, authConfig) {
   };
   removeHeader(request, authConfig.apply?.header || "Authorization");
 }
-function setRequestApiKeyAuth(request, authConfig) {
-  const variableName = getApiKeyVariableName(authConfig);
+function prepareRequestForCollectionApiKeyAuth(request, authConfig) {
   const apiKeyName = getApiKeyName(authConfig);
-  request.auth = {
-    type: "apikey",
-    apikey: [
-      {
-        key: "key",
-        value: apiKeyName,
-        type: "string"
-      },
-      {
-        key: "value",
-        value: `{{${variableName}}}`,
-        type: "string"
-      },
-      {
-        key: "in",
-        value: authConfig.in,
-        type: "string"
-      }
-    ]
-  };
+  delete request.auth;
   if (authConfig.in === "header") {
     removeHeader(request, apiKeyName);
   } else {
@@ -29082,7 +29084,7 @@ function applyAuthToRequest(request, authConfig) {
   if (isOAuthAuthConfig(authConfig)) {
     setRequestBearerAuth(request, authConfig);
   } else {
-    setRequestApiKeyAuth(request, authConfig);
+    prepareRequestForCollectionApiKeyAuth(request, authConfig);
   }
   return true;
 }
@@ -29132,10 +29134,12 @@ function applyCollectionAuth(collection, authConfig) {
   const existingEvents = Array.isArray(collection.event) ? collection.event : [];
   const retainedEvents = existingEvents.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)).filter((entry) => !isGeneratedOAuthEvent(entry));
   if (isOAuthAuthConfig(authConfig)) {
+    collection.auth = { type: "noauth" };
     seedOAuthCollectionVariables(collection, authConfig);
     collection.event = [...retainedEvents, createOAuthPreRequestEvent(authConfig)];
     return;
   }
+  collection.auth = createApiKeyAuth(authConfig);
   seedApiKeyCollectionVariables(collection, authConfig);
   if (retainedEvents.length > 0) {
     collection.event = retainedEvents;
@@ -29327,6 +29331,10 @@ function hasGeneratedOAuthEvent(collection) {
   const events2 = Array.isArray(collection.event) ? collection.event : [];
   return events2.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)).some((entry) => isGeneratedOAuthEvent(entry));
 }
+function hasCollectionAuth(collection) {
+  const auth = asRecord2(collection.auth);
+  return Boolean(auth && typeof auth.type === "string" && auth.type !== "" && auth.type !== "noauth");
+}
 function getCollectionVariableKeys(collection) {
   const variables = Array.isArray(collection.variable) ? collection.variable : [];
   return new Set(
@@ -29359,8 +29367,7 @@ function countBearerAuthRequests(items, authConfig) {
     return nextCount + countBearerAuthRequests(item.item, authConfig);
   }, 0);
 }
-function requestUsesApiKeyAuth(request, authConfig) {
-  const auth = asRecord2(request.auth);
+function authUsesApiKey(auth, authConfig) {
   if (!auth || auth.type !== "apikey") {
     return false;
   }
@@ -29370,22 +29377,26 @@ function requestUsesApiKeyAuth(request, authConfig) {
   const credentialByKey = new Map(entries.map((entry) => [String(entry.key ?? ""), entry.value]));
   return credentialByKey.get("key") === getApiKeyName(authConfig) && credentialByKey.get("value") === `{{${valueVariable}}}` && String(credentialByKey.get("in") ?? "").toLowerCase() === authConfig.in;
 }
-function countApiKeyAuthRequests(items, authConfig) {
+function collectionUsesApiKeyAuth(collection, authConfig) {
+  return authUsesApiKey(asRecord2(collection.auth), authConfig);
+}
+function collectRequestsWithExplicitAuth(items) {
   if (!Array.isArray(items)) {
-    return 0;
+    return [];
   }
-  return items.reduce((count, entry) => {
+  return items.flatMap((entry) => {
     const item = asRecord2(entry);
     if (!item) {
-      return count;
+      return [];
     }
-    let nextCount = count;
+    const nested = collectRequestsWithExplicitAuth(item.item);
     const request = asRecord2(item.request);
-    if (request && !isSecretsResolverItem(item) && requestUsesApiKeyAuth(request, authConfig)) {
-      nextCount += 1;
+    const auth = asRecord2(request?.auth);
+    if (!request || isSecretsResolverItem(item) || !auth || auth.type === "noauth") {
+      return nested;
     }
-    return nextCount + countApiKeyAuthRequests(item.item, authConfig);
-  }, 0);
+    return [String(item.name ?? "<unnamed request>"), ...nested];
+  });
 }
 function getTopLevelItems(collection) {
   return Array.isArray(collection.item) ? collection.item.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)) : [];
@@ -29401,6 +29412,9 @@ function verifySmokeCollectionAuth(collection, authConfig, options = {}) {
     const variables = getOAuthVariableNames(authConfig);
     const missingVariables = Object.values(variables).filter((variableName) => !variableKeys.has(variableName));
     const bearerAuthRequestCount = countBearerAuthRequests(collection.item, authConfig);
+    if (hasCollectionAuth(collection)) {
+      failures.push("collection-level auth is still present while OAuth request auth is enabled");
+    }
     if (!hasGeneratedOAuthEvent(collection)) {
       failures.push("missing generated OAuth pre-request script");
     }
@@ -29419,19 +29433,28 @@ function verifySmokeCollectionAuth(collection, authConfig, options = {}) {
     };
   }
   const apiKeyVariable = getApiKeyVariableName(authConfig);
-  const apiKeyAuthRequestCount = countApiKeyAuthRequests(collection.item, authConfig);
+  const inheritedRequestCount = collectSmokeRequestItems(collection.item).length;
+  const requestsWithExplicitAuth = collectRequestsWithExplicitAuth(collection.item);
   if (!variableKeys.has(apiKeyVariable)) {
     failures.push(`missing API key collection variable: ${apiKeyVariable}`);
   }
-  if (apiKeyAuthRequestCount === 0) {
-    failures.push("no requests use generated API key auth");
+  if (!collectionUsesApiKeyAuth(collection, authConfig)) {
+    failures.push("missing collection-level API key auth");
+  }
+  if (inheritedRequestCount === 0) {
+    failures.push("no requests inherit generated API key auth");
+  }
+  if (requestsWithExplicitAuth.length > 0) {
+    const sample = requestsWithExplicitAuth.slice(0, 5).join(", ");
+    const suffix = requestsWithExplicitAuth.length > 5 ? `, and ${requestsWithExplicitAuth.length - 5} more` : "";
+    failures.push(`request(s) override collection-level API key auth: ${sample}${suffix}`);
   }
   if (options.secretsResolverEnabled === false && containsSecretsResolverItem(collection.item)) {
     failures.push("secrets resolver request is still present");
   }
   return {
     ok: failures.length === 0,
-    summary: failures.length > 0 ? failures.join("; ") : `API key auth persisted on ${apiKeyAuthRequestCount} request(s)`
+    summary: failures.length > 0 ? failures.join("; ") : `API key auth persisted at collection level for ${inheritedRequestCount} request(s)`
   };
 }
 function verifyGeneratedSmokeCollection(collection, authConfig, options = {}) {
@@ -29840,6 +29863,9 @@ function v2AuthToV3(auth) {
   const credentials = entries.map(asRecord3).filter((entry) => Boolean(entry)).map((entry) => ({ key: String(entry.key ?? ""), value: entry.value ?? "" }));
   return { type, credentials };
 }
+function isNoAuth(auth) {
+  return auth?.type === "noauth";
+}
 function looksLikeJson(raw) {
   const trimmed = raw.trim();
   if (!trimmed) return false;
@@ -29978,8 +30004,10 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
     const info2 = asRecord3(desired.info);
     const name = typeof info2?.name === "string" ? info2.name : void 0;
     if (name !== void 0) ops.push({ op: "replace", path: "/name", value: name });
-    const collAuth = v2AuthToV3(asRecord3(desired.auth));
+    const desiredAuth = asRecord3(desired.auth);
+    const collAuth = v2AuthToV3(desiredAuth);
     if (collAuth) ops.push({ op: "add", path: "/auth", value: collAuth });
+    if (!collAuth && isNoAuth(desiredAuth)) ops.push({ op: "remove", path: "/auth" });
     if (Array.isArray(desired.variable)) {
       const variables = desired.variable.map(asRecord3).filter((v) => Boolean(v)).map((v) => ({ key: String(v.key ?? ""), value: v.value ?? "" }));
       if (variables.length > 0) ops.push({ op: "add", path: "/variables", value: variables });

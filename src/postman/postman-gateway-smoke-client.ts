@@ -136,6 +136,10 @@ function v2AuthToV3(auth: JsonRecord | null): JsonRecord | undefined {
   return { type, credentials };
 }
 
+function isNoAuth(auth: JsonRecord | null): boolean {
+  return auth?.type === 'noauth';
+}
+
 /** Looks-like-JSON heuristic for choosing a v3 body `type` (json vs text). */
 function looksLikeJson(raw: string): boolean {
   const trimmed = raw.trim();
@@ -336,8 +340,10 @@ export class PostmanGatewaySmokeClient {
     const info = asRecord(desired.info);
     const name = typeof info?.name === 'string' ? info.name : undefined;
     if (name !== undefined) ops.push({ op: 'replace', path: '/name', value: name });
-    const collAuth = v2AuthToV3(asRecord(desired.auth));
+    const desiredAuth = asRecord(desired.auth);
+    const collAuth = v2AuthToV3(desiredAuth);
     if (collAuth) ops.push({ op: 'add', path: '/auth', value: collAuth });
+    if (!collAuth && isNoAuth(desiredAuth)) ops.push({ op: 'remove', path: '/auth' });
     if (Array.isArray(desired.variable)) {
       const variables = desired.variable
         .map(asRecord)

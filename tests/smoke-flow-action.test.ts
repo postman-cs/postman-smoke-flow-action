@@ -432,7 +432,7 @@ describe('runSmokeFlow', () => {
       expect(postman.updateCollection).toHaveBeenCalledOnce();
       expect(postman.deleteCollection).toHaveBeenCalledWith('temp-123');
       expect(request.url).toBe('https://api.example.com/payments');
-      expect(request.auth).toEqual({
+      expect(updatedCollection.auth).toEqual({
         type: 'apikey',
         apikey: [
           { key: 'key', value: 'X-API-Key', type: 'string' },
@@ -440,6 +440,7 @@ describe('runSmokeFlow', () => {
           { key: 'in', value: 'header', type: 'string' }
         ]
       });
+      expect(request.auth).toBeUndefined();
       expect(request.header).toEqual([]);
       expect(JSON.stringify(updatedCollection)).toContain('service_api_key');
       expect(JSON.stringify(updatedCollection)).not.toContain('old-static-key');
@@ -490,7 +491,7 @@ describe('runSmokeFlow', () => {
       expect(postman.generateCollection).toHaveBeenCalledOnce();
       expect(postman.updateCollection).toHaveBeenCalledOnce();
       expect(postman.deleteCollection).toHaveBeenCalledWith('temp-123');
-      expect(request.auth).toEqual({
+      expect(updatedCollection.auth).toEqual({
         type: 'apikey',
         apikey: [
           { key: 'key', value: 'X-API-Key', type: 'string' },
@@ -498,6 +499,7 @@ describe('runSmokeFlow', () => {
           { key: 'in', value: 'header', type: 'string' }
         ]
       });
+      expect(request.auth).toBeUndefined();
       expect(request.header).toEqual([]);
       expect(JSON.stringify(updatedCollection)).toContain('Extract createPayment.paymentId');
       expect(JSON.stringify(updatedCollection)).not.toContain('old-static-key');

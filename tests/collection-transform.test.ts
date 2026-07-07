@@ -369,7 +369,7 @@ describe('collection transform', () => {
     expect(collectionText).not.toContain('real-access-token');
   });
 
-  it('adds optional API key placeholder variables and request auth without serializing secrets', () => {
+  it('adds optional API key placeholder variables and collection auth without serializing secrets', () => {
     const result = buildCuratedSmokeCollection(
       { info: { name: '[Smoke][Temp] Payments API' }, item: [] },
       flow,
@@ -399,9 +399,7 @@ describe('collection transform', () => {
     const headers = request.header as Array<Record<string, unknown>>;
 
     expect(result.collection.event).toBeUndefined();
-    expect(variables).toEqual([{ key: 'service_api_key', value: '', type: 'string' }]);
-    expect(headers).toEqual([{ key: 'Accept', value: 'application/json' }]);
-    expect(request.auth).toEqual({
+    expect(result.collection.auth).toEqual({
       type: 'apikey',
       apikey: [
         { key: 'key', value: 'X-API-Key', type: 'string' },
@@ -409,6 +407,9 @@ describe('collection transform', () => {
         { key: 'in', value: 'header', type: 'string' }
       ]
     });
+    expect(variables).toEqual([{ key: 'service_api_key', value: '', type: 'string' }]);
+    expect(headers).toEqual([{ key: 'Accept', value: 'application/json' }]);
+    expect(request.auth).toBeUndefined();
     expect(collectionText).not.toContain('old-static-key');
     expect(collectionText).not.toContain('real-api-key');
   });
@@ -442,9 +443,7 @@ describe('collection transform', () => {
     const request = (items[1] as Record<string, unknown>).request as Record<string, unknown>;
     const url = request.url as Record<string, unknown>;
 
-    expect(url.raw).toBe('https://api.example.com/payments#result');
-    expect(url.query).toEqual([]);
-    expect(request.auth).toEqual({
+    expect(result.collection.auth).toEqual({
       type: 'apikey',
       apikey: [
         { key: 'key', value: 'api_key', type: 'string' },
@@ -452,6 +451,9 @@ describe('collection transform', () => {
         { key: 'in', value: 'query', type: 'string' }
       ]
     });
+    expect(url.raw).toBe('https://api.example.com/payments#result');
+    expect(url.query).toEqual([]);
+    expect(request.auth).toBeUndefined();
   });
 
   it('preserves canonical request scripts during no-flow generated collection refresh', () => {
@@ -525,8 +527,7 @@ describe('collection transform', () => {
 
     expect(result.authRequestCount).toBe(1);
     expect((result.collection.info as Record<string, unknown>).name).toBe('[Smoke] Widgets API');
-    expect(headers).toEqual([{ key: 'Accept', value: 'application/json' }]);
-    expect(request.auth).toEqual({
+    expect(result.collection.auth).toEqual({
       type: 'apikey',
       apikey: [
         { key: 'key', value: 'X-API-Key', type: 'string' },
@@ -534,6 +535,8 @@ describe('collection transform', () => {
         { key: 'in', value: 'header', type: 'string' }
       ]
     });
+    expect(headers).toEqual([{ key: 'Accept', value: 'application/json' }]);
+    expect(request.auth).toBeUndefined();
     expect(events).toHaveLength(2);
     expect(eventText).toContain('generated check');
     expect(eventText).toContain('canonical health check');
@@ -627,6 +630,14 @@ describe('collection transform', () => {
     const existingCollection = {
       info: { name: '[Smoke] Providers API', _postman_id: 'info-123' },
       uid: '54270406-collection-uid-123',
+      auth: {
+        type: 'apikey',
+        apikey: [
+          { key: 'key', value: 'X-API-Key', type: 'string' },
+          { key: 'value', value: '{{service_api_key}}', type: 'string' },
+          { key: 'in', value: 'header', type: 'string' }
+        ]
+      },
       event: [
         {
           listen: 'prerequest',
@@ -690,6 +701,7 @@ describe('collection transform', () => {
     expect((twice.collection.info as Record<string, unknown>)._postman_id).toBeUndefined();
     expect((twice.collection as Record<string, unknown>).uid).toBeUndefined();
     expect((twice.collection as Record<string, unknown>).response).toBeUndefined();
+    expect(twice.collection.auth).toEqual({ type: 'noauth' });
     expect(items.map((item) => item.name)).toEqual(['00 - Resolve Secrets', 'Providers']);
     expect(folderItems.map((item) => item.name)).toEqual(['searchProviders', 'getProvider']);
     expect(resolverRequest.auth).toEqual({ type: 'awsv4' });
@@ -712,6 +724,10 @@ describe('collection transform', () => {
     const existingCollection = {
       info: { name: '[Smoke] Providers API', _postman_id: 'info-123' },
       uid: '54270406-collection-uid-123',
+      auth: {
+        type: 'bearer',
+        bearer: [{ key: 'token', value: '{{access_token}}', type: 'string' }]
+      },
       event: [
         {
           listen: 'prerequest',
@@ -768,7 +784,7 @@ describe('collection transform', () => {
     expect((twice.collection as Record<string, unknown>).response).toBeUndefined();
     expect(items.map((item) => item.name)).toEqual(['Providers']);
     expect(folderItems.map((item) => item.name)).toEqual(['searchProviders', 'getProvider']);
-    expect(firstSmokeRequest.auth).toEqual({
+    expect(twice.collection.auth).toEqual({
       type: 'apikey',
       apikey: [
         { key: 'key', value: 'X-API-Key', type: 'string' },
@@ -776,7 +792,8 @@ describe('collection transform', () => {
         { key: 'in', value: 'header', type: 'string' }
       ]
     });
-    expect(secondSmokeRequest.auth).toEqual(firstSmokeRequest.auth);
+    expect(firstSmokeRequest.auth).toBeUndefined();
+    expect(secondSmokeRequest.auth).toBeUndefined();
     expect(firstSmokeRequest.header).toEqual([]);
     expect(events).toHaveLength(1);
     expect(collectionText).toContain('Existing manual collection script');
@@ -803,8 +820,7 @@ describe('collection transform', () => {
     const request = items[0]?.request as Record<string, unknown>;
 
     expect(result.authRequestCount).toBe(1);
-    expect(request.url).toBe('{{baseUrl}}/v1/providers?page=1#results');
-    expect(request.auth).toEqual({
+    expect(result.collection.auth).toEqual({
       type: 'apikey',
       apikey: [
         { key: 'key', value: 'api_key', type: 'string' },
@@ -812,6 +828,8 @@ describe('collection transform', () => {
         { key: 'in', value: 'query', type: 'string' }
       ]
     });
+    expect(request.url).toBe('{{baseUrl}}/v1/providers?page=1#results');
+    expect(request.auth).toBeUndefined();
     expect(JSON.stringify(result.collection)).not.toContain('old-static-key');
   });
 

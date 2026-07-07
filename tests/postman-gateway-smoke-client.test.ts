@@ -239,6 +239,24 @@ describe('PostmanGatewaySmokeClient', () => {
     expect(createdItems[3]?.auth).toEqual({ type: 'bearer', credentials: [{ key: 'token', value: '{{access_token}}' }] });
   });
 
+  it('removes collection auth when the desired collection is explicitly noauth', async () => {
+    const { client, calls } = makeClient((env) => {
+      if (env.method === 'get' && env.path.endsWith('/items/')) return jsonResponse({ data: [] });
+      if (env.method === 'patch') return jsonResponse({ data: {} });
+      return jsonResponse({});
+    });
+
+    await client.updateCollection('55363555-cid', {
+      info: { name: '[Smoke] OAuth Runtime' },
+      auth: { type: 'noauth' },
+      item: []
+    });
+
+    const collPatch = calls.find((c) => c.method === 'patch' && /\/v3\/collections\/cid$/.test(c.path));
+    const ops = collPatch?.body as J[];
+    expect(ops).toContainEqual({ op: 'remove', path: '/auth' });
+  });
+
   it('retries the new-item scripts patch on a transient 404 (read-after-write lag)', async () => {
     let itemPatchAttempts = 0;
     const { fetchImpl, calls } = gatewayFetch((env) => {
