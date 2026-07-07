@@ -24,6 +24,7 @@ export type CollectionVerification = {
 export type GeneratedSmokeCollectionBuildOptions = {
   secretsResolverEnabled?: boolean;
   collectionName?: string;
+  scriptSourceCollection?: JsonRecord;
 };
 
 const GENERATED_OAUTH_EVENT_MARKER = '[Smoke Flow] Auto-generated OAuth2 client-credentials token cache';
@@ -460,6 +461,97 @@ function getRequestUrlText(request: JsonRecord): string {
   return [host, path].filter(Boolean).join('/');
 }
 
+function normalizeMatchText(value: unknown): string {
+  return String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function getRequestMethod(request: JsonRecord): string {
+  return normalizeMatchText(request.method || 'GET');
+}
+
+function getRequestUrlMatchKey(item: JsonRecord): string {
+  const request = asRecord(item.request);
+  if (!request) {
+    return '';
+  }
+  const url = normalizeMatchText(getRequestUrlText(request));
+  return url ? `${getRequestMethod(request)} ${url}` : '';
+}
+
+function getRequestNameMatchKey(item: JsonRecord): string {
+  const request = asRecord(item.request);
+  if (!request) {
+    return '';
+  }
+  const name = normalizeMatchText(item.name);
+  return name ? `${getRequestMethod(request)} ${name}` : '';
+}
+
+function getRequestEvents(item: JsonRecord): JsonRecord[] {
+  return Array.isArray(item.event)
+    ? item.event.map((entry) => asRecord(entry)).filter((entry): entry is JsonRecord => Boolean(entry))
+    : [];
+}
+
+function indexUniqueRequestEvents(items: JsonRecord[], getKey: (item: JsonRecord) => string): Map<string, JsonRecord[]> {
+  const matches = new Map<string, JsonRecord[][]>();
+  for (const item of items) {
+    const events = getRequestEvents(item);
+    if (events.length === 0) {
+      continue;
+    }
+    const key = getKey(item);
+    if (!key) {
+      continue;
+    }
+    const existing = matches.get(key) ?? [];
+    existing.push(events);
+    matches.set(key, existing);
+  }
+
+  const unique = new Map<string, JsonRecord[]>();
+  for (const [key, eventSets] of matches) {
+    if (eventSets.length === 1) {
+      unique.set(key, eventSets[0]!);
+    }
+  }
+  return unique;
+}
+
+function mergeRequestEvents(targetEvents: JsonRecord[], sourceEvents: JsonRecord[]): JsonRecord[] {
+  const merged = [...targetEvents];
+  const seen = new Set(targetEvents.map((event) => `${String(event.listen ?? '')}\n${getScriptExecText(event)}`));
+  for (const event of sourceEvents) {
+    const key = `${String(event.listen ?? '')}\n${getScriptExecText(event)}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(structuredClone(event) as JsonRecord);
+  }
+  return merged;
+}
+
+function preserveRequestEventsFromCollection(collection: JsonRecord, scriptSourceCollection: JsonRecord | undefined): void {
+  if (!scriptSourceCollection) {
+    return;
+  }
+
+  const sourceItems = collectSmokeRequestItems(scriptSourceCollection.item);
+  const eventsByUrl = indexUniqueRequestEvents(sourceItems, getRequestUrlMatchKey);
+  const eventsByName = indexUniqueRequestEvents(sourceItems, getRequestNameMatchKey);
+  for (const item of collectSmokeRequestItems(collection.item)) {
+    const sourceEvents = eventsByUrl.get(getRequestUrlMatchKey(item)) ?? eventsByName.get(getRequestNameMatchKey(item));
+    if (!sourceEvents || sourceEvents.length === 0) {
+      continue;
+    }
+    const mergedEvents = mergeRequestEvents(getRequestEvents(item), sourceEvents);
+    if (mergedEvents.length > 0) {
+      item.event = mergedEvents;
+    }
+  }
+}
+
 function isSecretsResolverItem(item: JsonRecord): boolean {
   const name = typeof item.name === 'string' ? item.name.trim().toLowerCase() : '';
   if (name === LEGACY_SECRETS_RESOLVER_ITEM_NAME.toLowerCase() || name === 'resolve secrets') {
@@ -825,6 +917,7 @@ export function buildGeneratedSmokeCollection(
   if (options.secretsResolverEnabled === false) {
     collection.item = removeSecretsResolverItems(collection.item);
   }
+  preserveRequestEventsFromCollection(collection, options.scriptSourceCollection);
 
   let authRequestCount = 0;
   if (authConfig?.enabled) {

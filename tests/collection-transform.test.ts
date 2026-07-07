@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { applySmokeCollectionAuth, buildCuratedSmokeCollection } from '../src/postman/collection-transform.js';
+import { applySmokeCollectionAuth, buildCuratedSmokeCollection, buildGeneratedSmokeCollection } from '../src/postman/collection-transform.js';
 import type { FlowDefinition, ResolvedRequest, SmokeAuthConfig } from '../src/types.js';
 
 const flow: FlowDefinition = {
@@ -452,6 +452,175 @@ describe('collection transform', () => {
         { key: 'in', value: 'query', type: 'string' }
       ]
     });
+  });
+
+  it('preserves canonical request scripts during no-flow generated collection refresh', () => {
+    const existingCollection = {
+      info: { name: '[Smoke] Widgets API' },
+      item: [
+        {
+          name: 'health',
+          item: [
+            {
+              name: 'Health check',
+              request: {
+                method: 'GET',
+                url: '{{baseUrl}}/health'
+              },
+              event: [
+                {
+                  listen: 'test',
+                  script: {
+                    type: 'text/javascript',
+                    exec: ['pm.test("canonical health check", function () {', '  pm.response.to.have.status(200);', '});']
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+    const generatedCollection = {
+      info: { name: '[Smoke][Temp] Widgets API' },
+      item: [
+        {
+          name: 'health',
+          item: [
+            {
+              name: 'Health check from generated collection',
+              request: {
+                method: 'GET',
+                header: [
+                  { key: 'X-API-Key', value: 'old-static-key' },
+                  { key: 'Accept', value: 'application/json' }
+                ],
+                url: '{{baseUrl}}/health'
+              },
+              event: [
+                {
+                  listen: 'test',
+                  script: {
+                    type: 'text/javascript',
+                    exec: ['pm.test("generated check", function () {});']
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+
+    const result = buildGeneratedSmokeCollection(generatedCollection, apiKeyConfig, {
+      collectionName: '[Smoke] Widgets API',
+      scriptSourceCollection: existingCollection
+    });
+    const folder = (result.collection.item as Array<Record<string, unknown>>)[0] as Record<string, unknown>;
+    const item = (folder.item as Array<Record<string, unknown>>)[0] as Record<string, unknown>;
+    const request = item.request as Record<string, unknown>;
+    const headers = request.header as Array<Record<string, unknown>>;
+    const events = item.event as Array<Record<string, unknown>>;
+    const eventText = JSON.stringify(events);
+
+    expect(result.authRequestCount).toBe(1);
+    expect((result.collection.info as Record<string, unknown>).name).toBe('[Smoke] Widgets API');
+    expect(headers).toEqual([{ key: 'Accept', value: 'application/json' }]);
+    expect(request.auth).toEqual({
+      type: 'apikey',
+      apikey: [
+        { key: 'key', value: 'X-API-Key', type: 'string' },
+        { key: 'value', value: '{{service_api_key}}', type: 'string' },
+        { key: 'in', value: 'header', type: 'string' }
+      ]
+    });
+    expect(events).toHaveLength(2);
+    expect(eventText).toContain('generated check');
+    expect(eventText).toContain('canonical health check');
+    expect(JSON.stringify(result.collection)).not.toContain('old-static-key');
+  });
+
+  it('preserves canonical request scripts by unique method and request name when URL matching is unavailable', () => {
+    const existingCollection = {
+      info: { name: '[Smoke] Widgets API' },
+      item: [
+        {
+          name: 'List widgets',
+          request: {
+            method: 'GET',
+            url: '{{baseUrl}}/legacy/widgets'
+          },
+          event: [
+            {
+              listen: 'test',
+              script: {
+                type: 'text/javascript',
+                exec: ['pm.test("canonical list widgets", function () {});']
+              }
+            }
+          ]
+        },
+        {
+          name: 'Ambiguous',
+          request: {
+            method: 'GET',
+            url: '{{baseUrl}}/ambiguous-a'
+          },
+          event: [
+            {
+              listen: 'test',
+              script: {
+                type: 'text/javascript',
+                exec: ['pm.test("ambiguous a", function () {});']
+              }
+            }
+          ]
+        },
+        {
+          name: 'Ambiguous',
+          request: {
+            method: 'GET',
+            url: '{{baseUrl}}/ambiguous-b'
+          },
+          event: [
+            {
+              listen: 'test',
+              script: {
+                type: 'text/javascript',
+                exec: ['pm.test("ambiguous b", function () {});']
+              }
+            }
+          ]
+        }
+      ]
+    };
+    const generatedCollection = {
+      info: { name: '[Smoke][Temp] Widgets API' },
+      item: [
+        {
+          name: 'List widgets',
+          request: {
+            method: 'GET',
+            url: '{{baseUrl}}/v1/widgets'
+          }
+        },
+        {
+          name: 'Ambiguous',
+          request: {
+            method: 'GET',
+            url: '{{baseUrl}}/v1/ambiguous'
+          }
+        }
+      ]
+    };
+
+    const result = buildGeneratedSmokeCollection(generatedCollection, undefined, {
+      scriptSourceCollection: existingCollection
+    });
+    const items = result.collection.item as Array<Record<string, unknown>>;
+
+    expect(JSON.stringify(items[0]?.event)).toContain('canonical list widgets');
+    expect(items[1]?.event).toBeUndefined();
   });
 
   it('applies OAuth to an existing Smoke collection idempotently without changing item order', () => {

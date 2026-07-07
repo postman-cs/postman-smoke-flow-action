@@ -29177,6 +29177,87 @@ function getRequestUrlText(request) {
   const path8 = Array.isArray(urlRecord.path) ? urlRecord.path.map(String).join("/") : "";
   return [host, path8].filter(Boolean).join("/");
 }
+function normalizeMatchText(value) {
+  return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+function getRequestMethod2(request) {
+  return normalizeMatchText(request.method || "GET");
+}
+function getRequestUrlMatchKey(item) {
+  const request = asRecord2(item.request);
+  if (!request) {
+    return "";
+  }
+  const url = normalizeMatchText(getRequestUrlText(request));
+  return url ? `${getRequestMethod2(request)} ${url}` : "";
+}
+function getRequestNameMatchKey(item) {
+  const request = asRecord2(item.request);
+  if (!request) {
+    return "";
+  }
+  const name = normalizeMatchText(item.name);
+  return name ? `${getRequestMethod2(request)} ${name}` : "";
+}
+function getRequestEvents(item) {
+  return Array.isArray(item.event) ? item.event.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)) : [];
+}
+function indexUniqueRequestEvents(items, getKey) {
+  const matches = /* @__PURE__ */ new Map();
+  for (const item of items) {
+    const events2 = getRequestEvents(item);
+    if (events2.length === 0) {
+      continue;
+    }
+    const key = getKey(item);
+    if (!key) {
+      continue;
+    }
+    const existing = matches.get(key) ?? [];
+    existing.push(events2);
+    matches.set(key, existing);
+  }
+  const unique = /* @__PURE__ */ new Map();
+  for (const [key, eventSets] of matches) {
+    if (eventSets.length === 1) {
+      unique.set(key, eventSets[0]);
+    }
+  }
+  return unique;
+}
+function mergeRequestEvents(targetEvents, sourceEvents) {
+  const merged = [...targetEvents];
+  const seen = new Set(targetEvents.map((event) => `${String(event.listen ?? "")}
+${getScriptExecText(event)}`));
+  for (const event of sourceEvents) {
+    const key = `${String(event.listen ?? "")}
+${getScriptExecText(event)}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(structuredClone(event));
+  }
+  return merged;
+}
+function preserveRequestEventsFromCollection(collection, scriptSourceCollection) {
+  if (!scriptSourceCollection) {
+    return;
+  }
+  const sourceItems = collectSmokeRequestItems(scriptSourceCollection.item);
+  const eventsByUrl = indexUniqueRequestEvents(sourceItems, getRequestUrlMatchKey);
+  const eventsByName = indexUniqueRequestEvents(sourceItems, getRequestNameMatchKey);
+  for (const item of collectSmokeRequestItems(collection.item)) {
+    const sourceEvents = eventsByUrl.get(getRequestUrlMatchKey(item)) ?? eventsByName.get(getRequestNameMatchKey(item));
+    if (!sourceEvents || sourceEvents.length === 0) {
+      continue;
+    }
+    const mergedEvents = mergeRequestEvents(getRequestEvents(item), sourceEvents);
+    if (mergedEvents.length > 0) {
+      item.event = mergedEvents;
+    }
+  }
+}
 function isSecretsResolverItem(item) {
   const name = typeof item.name === "string" ? item.name.trim().toLowerCase() : "";
   if (name === LEGACY_SECRETS_RESOLVER_ITEM_NAME.toLowerCase() || name === "resolve secrets") {
@@ -29439,6 +29520,7 @@ function buildGeneratedSmokeCollection(generatedCollection, authConfig, options 
   if (options.secretsResolverEnabled === false) {
     collection.item = removeSecretsResolverItems(collection.item);
   }
+  preserveRequestEventsFromCollection(collection, options.scriptSourceCollection);
   let authRequestCount = 0;
   if (authConfig?.enabled) {
     applyCollectionAuth(collection, authConfig);
@@ -31197,7 +31279,8 @@ async function runWithoutFlowManifest(inputs, dependencies) {
       refreshSourceFromLatest: false,
       buildCollection: (sourceCollection) => buildGeneratedSmokeCollection(sourceCollection, inputs.authConfig, {
         secretsResolverEnabled: inputs.secretsResolverEnabled,
-        collectionName: canonicalCollectionName
+        collectionName: canonicalCollectionName,
+        scriptSourceCollection: existingCollection
       }),
       verifyCollection: (collection) => verifyGeneratedSmokeCollection(collection, inputs.authConfig, {
         secretsResolverEnabled: inputs.secretsResolverEnabled

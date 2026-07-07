@@ -314,7 +314,8 @@ async function runWithoutFlowManifest(
       buildCollection: (sourceCollection) =>
         buildGeneratedSmokeCollection(sourceCollection, inputs.authConfig, {
           secretsResolverEnabled: inputs.secretsResolverEnabled,
-          collectionName: canonicalCollectionName
+          collectionName: canonicalCollectionName,
+          scriptSourceCollection: existingCollection
         }),
       verifyCollection: (collection) =>
         verifyGeneratedSmokeCollection(collection, inputs.authConfig, {
