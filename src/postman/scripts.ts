@@ -1,4 +1,4 @@
-import type { FlowStep, SmokeAuthConfig } from '../types.js';
+import type { FlowStep, SmokeOAuthConfig } from '../types.js';
 
 function quote(value: string): string {
   return JSON.stringify(value);
@@ -103,7 +103,7 @@ export function createPreRequestEvent(step: FlowStep): Record<string, unknown> {
   };
 }
 
-function getAuthVariableNames(authConfig: SmokeAuthConfig): Required<NonNullable<SmokeAuthConfig['variables']>> {
+function getAuthVariableNames(authConfig: SmokeOAuthConfig): Required<NonNullable<SmokeOAuthConfig['variables']>> {
   return {
     tokenUrl: authConfig.variables?.tokenUrl || 'auth_token_url',
     scope: authConfig.variables?.scope || 'auth_scope',
@@ -114,7 +114,7 @@ function getAuthVariableNames(authConfig: SmokeAuthConfig): Required<NonNullable
   };
 }
 
-export function buildOAuthPreRequestScript(authConfig: SmokeAuthConfig): string[] {
+export function buildOAuthPreRequestScript(authConfig: SmokeOAuthConfig): string[] {
   const variables = getAuthVariableNames(authConfig);
   const refreshSkewSeconds = authConfig.cache?.refreshSkewSeconds ?? 60;
   const tokenUrlTemplate = authConfig.tokenUrl || `{{${variables.tokenUrl}}}`;
@@ -178,7 +178,7 @@ export function buildOAuthPreRequestScript(authConfig: SmokeAuthConfig): string[
   ];
 }
 
-export function createOAuthPreRequestEvent(authConfig: SmokeAuthConfig): Record<string, unknown> {
+export function createOAuthPreRequestEvent(authConfig: SmokeOAuthConfig): Record<string, unknown> {
   return {
     listen: 'prerequest',
     script: {

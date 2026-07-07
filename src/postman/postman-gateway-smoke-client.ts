@@ -3,6 +3,7 @@ import { AccessTokenGatewayClient } from '../lib/postman/gateway-client.js';
 import type { AccessTokenProvider } from '../lib/postman/token-provider.js';
 
 type JsonRecord = Record<string, unknown>;
+type ParentRef = { id: string; $kind: 'collection' };
 
 function asRecord(value: unknown): JsonRecord | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : null;
@@ -135,6 +136,18 @@ function v2AuthToV3(auth: JsonRecord | null): JsonRecord | undefined {
   return { type, credentials };
 }
 
+function isNoAuth(auth: JsonRecord | null): boolean {
+  return auth?.type === 'noauth';
+}
+
+function isMissingPatchValueError(error: unknown): boolean {
+  return (
+    error instanceof HttpError &&
+    error.status === 400 &&
+    error.responseBody.includes('Remove operation must point to an existing value')
+  );
+}
+
 /** Looks-like-JSON heuristic for choosing a v3 body `type` (json vs text). */
 function looksLikeJson(raw: string): boolean {
   const trimmed = raw.trim();
@@ -219,10 +232,9 @@ export interface PostmanGatewaySmokeClientOptions {
  *   collection-level name/auth/variables (`PATCH /v3/collections/:cid`).
  * - delete: `collection DELETE /v3/collections/:cid` (404-tolerant).
  *
- * The curated v2 collection produced by `buildCuratedSmokeCollection` is a flat
- * leaf list (secrets-resolver + curated requests), so the reconcile writes a flat
- * tree; folder nesting only appears on the generated temp collection, which is
- * read (export->v2 adapter handles folders) but never written back.
+ * Curated flow collections are already flat. No-flow refreshes can pass through
+ * generated collection folders, so update writes the tree recursively to preserve
+ * the generated folder structure.
  */
 export class PostmanGatewaySmokeClient {
   private static readonly GENERATION_LOCKED_MAX_RETRIES = 5;
@@ -329,45 +341,16 @@ export class PostmanGatewaySmokeClient {
     // Full-replace: delete every existing item (leaves + folders), then recreate.
     await this.deleteAllItems(cid);
 
-    // Create curated leaves in order; collection.item is a flat leaf list.
-    // The v3 IR item carries url/method/headers/body/auth at the ROOT (sibling
-    // fields), NOT under a `payload` wrapper — a payload wrapper is silently
-    // dropped (live-proven). Body/auth use the v3 IR shapes ({type,content} /
-    // {type,credentials}); headers are {key,value} pairs.
-    for (const leaf of asArray(desired.item)) {
-      const request = asRecord(leaf.request) ?? {};
-      const createBody: JsonRecord = {
-        $kind: 'http-request',
-        name: typeof leaf.name === 'string' ? leaf.name : '',
-        method: typeof request.method === 'string' ? request.method : 'GET',
-        url: v2UrlToRaw(request.url),
-        headers: v2HeadersToV3(request.header),
-        position: { parent: { id: cid, $kind: 'collection' } }
-      };
-      const body = v2BodyToV3(asRecord(request.body));
-      if (body) createBody.body = body;
-      const auth = v2AuthToV3(asRecord(request.auth));
-      if (auth) createBody.auth = auth;
-      const created = await this.gateway.requestJson<JsonRecord>({
-        service: 'collection',
-        method: 'post',
-        path: `/v3/collections/${cid}/items/`,
-        headers: { 'X-Entity-Type': 'http-request' },
-        body: createBody
-      });
-      const newItemId = String(asRecord(created?.data)?.id ?? '').trim();
-      const scripts = v2EventsToV3Scripts(leaf.event);
-      if (newItemId && scripts.length > 0) {
-        await this.patchItemScripts(cid, newItemId, scripts);
-      }
-    }
+    await this.createItemsRecursive(cid, desired.item, { id: cid, $kind: 'collection' });
 
     // Collection-level: name, auth, variables.
     const ops: JsonRecord[] = [];
     const info = asRecord(desired.info);
     const name = typeof info?.name === 'string' ? info.name : undefined;
     if (name !== undefined) ops.push({ op: 'replace', path: '/name', value: name });
-    const collAuth = v2AuthToV3(asRecord(desired.auth));
+    const desiredAuth = asRecord(desired.auth);
+    const collAuth = v2AuthToV3(desiredAuth);
+    const clearCollectionAuth = !collAuth && isNoAuth(desiredAuth);
     if (collAuth) ops.push({ op: 'add', path: '/auth', value: collAuth });
     if (Array.isArray(desired.variable)) {
       const variables = desired.variable
@@ -383,6 +366,9 @@ export class PostmanGatewaySmokeClient {
         path: `/v3/collections/${cid}`,
         body: ops
       });
+    }
+    if (clearCollectionAuth) {
+      await this.clearCollectionAuth(cid);
     }
 
     // Collection-level scripts (e.g. the OAuth token-cache pre-request) go in a
@@ -400,6 +386,90 @@ export class PostmanGatewaySmokeClient {
           body: [{ op: 'add', path: '/scripts', value: collScripts }]
         })
         .catch(() => undefined);
+    }
+  }
+
+  private async clearCollectionAuth(cid: string): Promise<void> {
+    try {
+      await this.gateway.request({
+        service: 'collection',
+        method: 'patch',
+        path: `/v3/collections/${cid}`,
+        body: [{ op: 'remove', path: '/auth' }]
+      });
+    } catch (error) {
+      if (isMissingPatchValueError(error)) {
+        return;
+      }
+      throw error;
+    }
+  }
+
+  private async createItemsRecursive(cid: string, items: unknown, parent: ParentRef): Promise<void> {
+    for (const item of asArray(items)) {
+      const request = asRecord(item.request);
+      if (request) {
+        await this.createRequestItem(cid, item, request, parent);
+        continue;
+      }
+
+      if (Array.isArray(item.item)) {
+        const folderId = await this.createFolderItem(cid, item, parent);
+        await this.createItemsRecursive(cid, item.item, { id: folderId, $kind: 'collection' });
+      }
+    }
+  }
+
+  private async createFolderItem(cid: string, folder: JsonRecord, parent: ParentRef): Promise<string> {
+    const createBody: JsonRecord = {
+      $kind: 'collection',
+      name: typeof folder.name === 'string' ? folder.name : '',
+      position: { parent }
+    };
+    const created = await this.gateway.requestJson<JsonRecord>({
+      service: 'collection',
+      method: 'post',
+      path: `/v3/collections/${cid}/items/`,
+      headers: { 'X-Entity-Type': 'folder' },
+      body: createBody
+    });
+    const data = asRecord(created?.data);
+    const folderId = String(data?.id ?? data?.uid ?? '').trim();
+    if (!folderId) {
+      throw new Error(`updateCollection: gateway did not return an id for folder ${String(folder.name ?? '').trim() || '<unnamed>'}`);
+    }
+    return folderId;
+  }
+
+  private async createRequestItem(cid: string, leaf: JsonRecord, request: JsonRecord, parent: ParentRef): Promise<void> {
+    // The v3 IR item carries url/method/headers/body/auth at the ROOT (sibling
+    // fields), NOT under a `payload` wrapper — a payload wrapper is silently
+    // dropped (live-proven). Body/auth use the v3 IR shapes ({type,content} /
+    // {type,credentials}); headers are {key,value} pairs.
+    const createBody: JsonRecord = {
+      $kind: 'http-request',
+      name: typeof leaf.name === 'string' ? leaf.name : '',
+      method: typeof request.method === 'string' ? request.method : 'GET',
+      url: v2UrlToRaw(request.url),
+      headers: v2HeadersToV3(request.header),
+      position: { parent }
+    };
+    const body = v2BodyToV3(asRecord(request.body));
+    if (body) createBody.body = body;
+    const auth = v2AuthToV3(asRecord(request.auth));
+    if (auth) createBody.auth = auth;
+    const created = await this.gateway.requestJson<JsonRecord>({
+      service: 'collection',
+      method: 'post',
+      path: `/v3/collections/${cid}/items/`,
+      headers: { 'X-Entity-Type': 'http-request' },
+      body: createBody
+    });
+    const data = asRecord(created?.data);
+    const newItemId = String(data?.id ?? data?.uid ?? '').trim();
+    const scripts = v2EventsToV3Scripts(leaf.event);
+    if (newItemId && scripts.length > 0) {
+      await this.patchItemScripts(cid, newItemId, scripts);
     }
   }
 

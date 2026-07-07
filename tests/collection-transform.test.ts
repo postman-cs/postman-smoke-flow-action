@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { applySmokeCollectionAuth, buildCuratedSmokeCollection } from '../src/postman/collection-transform.js';
+import { applySmokeCollectionAuth, buildCuratedSmokeCollection, buildGeneratedSmokeCollection } from '../src/postman/collection-transform.js';
 import type { FlowDefinition, ResolvedRequest, SmokeAuthConfig } from '../src/types.js';
 
 const flow: FlowDefinition = {
@@ -52,6 +52,26 @@ const oauthConfig: SmokeAuthConfig = {
   apply: {
     header: 'Authorization',
     value: 'Bearer {{access_token}}'
+  }
+};
+
+const apiKeyConfig: SmokeAuthConfig = {
+  enabled: true,
+  type: 'apiKey',
+  in: 'header',
+  name: 'X-API-Key',
+  variables: {
+    apiKey: 'service_api_key'
+  }
+};
+
+const queryApiKeyConfig: SmokeAuthConfig = {
+  enabled: true,
+  type: 'apiKey',
+  in: 'query',
+  name: 'api_key',
+  variables: {
+    apiKey: 'runtime_api_key'
   }
 };
 
@@ -349,10 +369,275 @@ describe('collection transform', () => {
     expect(collectionText).not.toContain('real-access-token');
   });
 
+  it('adds optional API key placeholder variables and collection auth without serializing secrets', () => {
+    const result = buildCuratedSmokeCollection(
+      { info: { name: '[Smoke][Temp] Payments API' }, item: [] },
+      flow,
+      [
+        {
+          step: flow.steps[0]!,
+          item: {
+            name: 'createPayment',
+            request: {
+              method: 'POST',
+              header: [
+                { key: 'X-API-Key', value: 'old-static-key' },
+                { key: 'Accept', value: 'application/json' }
+              ],
+              url: 'https://api.example.com/payments'
+            }
+          }
+        }
+      ],
+      apiKeyConfig
+    );
+
+    const collectionText = JSON.stringify(result.collection);
+    const variables = result.collection.variable as Array<Record<string, unknown>>;
+    const items = result.collection.item as Array<Record<string, unknown>>;
+    const request = (items[1] as Record<string, unknown>).request as Record<string, unknown>;
+    const headers = request.header as Array<Record<string, unknown>>;
+
+    expect(result.collection.event).toBeUndefined();
+    expect(result.collection.auth).toEqual({
+      type: 'apikey',
+      apikey: [
+        { key: 'key', value: 'X-API-Key', type: 'string' },
+        { key: 'value', value: '{{service_api_key}}', type: 'string' },
+        { key: 'in', value: 'header', type: 'string' }
+      ]
+    });
+    expect(variables).toEqual([{ key: 'service_api_key', value: '', type: 'string' }]);
+    expect(headers).toEqual([{ key: 'Accept', value: 'application/json' }]);
+    expect(request.auth).toBeUndefined();
+    expect(collectionText).not.toContain('old-static-key');
+    expect(collectionText).not.toContain('real-api-key');
+  });
+
+  it('removes duplicate query params when applying query API key auth', () => {
+    const result = buildCuratedSmokeCollection(
+      { info: { name: '[Smoke][Temp] Payments API' }, item: [] },
+      flow,
+      [
+        {
+          step: flow.steps[0]!,
+          item: {
+            name: 'createPayment',
+            request: {
+              method: 'GET',
+              url: {
+                raw: 'https://api.example.com/payments?api_key=old-static-key&page=1#result',
+                query: [
+                  { key: 'api_key', value: 'old-static-key' },
+                  { key: 'page', value: '1' }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      queryApiKeyConfig
+    );
+
+    const items = result.collection.item as Array<Record<string, unknown>>;
+    const request = (items[1] as Record<string, unknown>).request as Record<string, unknown>;
+    const url = request.url as Record<string, unknown>;
+
+    expect(result.collection.auth).toEqual({
+      type: 'apikey',
+      apikey: [
+        { key: 'key', value: 'api_key', type: 'string' },
+        { key: 'value', value: '{{runtime_api_key}}', type: 'string' },
+        { key: 'in', value: 'query', type: 'string' }
+      ]
+    });
+    expect(url.raw).toBe('https://api.example.com/payments#result');
+    expect(url.query).toEqual([]);
+    expect(request.auth).toBeUndefined();
+  });
+
+  it('preserves canonical request scripts during no-flow generated collection refresh', () => {
+    const existingCollection = {
+      info: { name: '[Smoke] Widgets API' },
+      item: [
+        {
+          name: 'health',
+          item: [
+            {
+              name: 'Health check',
+              request: {
+                method: 'GET',
+                url: '{{baseUrl}}/health'
+              },
+              event: [
+                {
+                  listen: 'test',
+                  script: {
+                    type: 'text/javascript',
+                    exec: ['pm.test("canonical health check", function () {', '  pm.response.to.have.status(200);', '});']
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+    const generatedCollection = {
+      info: { name: '[Smoke][Temp] Widgets API' },
+      item: [
+        {
+          name: 'health',
+          item: [
+            {
+              name: 'Health check from generated collection',
+              request: {
+                method: 'GET',
+                header: [
+                  { key: 'X-API-Key', value: 'old-static-key' },
+                  { key: 'Accept', value: 'application/json' }
+                ],
+                url: '{{baseUrl}}/health'
+              },
+              event: [
+                {
+                  listen: 'test',
+                  script: {
+                    type: 'text/javascript',
+                    exec: ['pm.test("generated check", function () {});']
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+
+    const result = buildGeneratedSmokeCollection(generatedCollection, apiKeyConfig, {
+      collectionName: '[Smoke] Widgets API',
+      scriptSourceCollection: existingCollection
+    });
+    const folder = (result.collection.item as Array<Record<string, unknown>>)[0] as Record<string, unknown>;
+    const item = (folder.item as Array<Record<string, unknown>>)[0] as Record<string, unknown>;
+    const request = item.request as Record<string, unknown>;
+    const headers = request.header as Array<Record<string, unknown>>;
+    const events = item.event as Array<Record<string, unknown>>;
+    const eventText = JSON.stringify(events);
+
+    expect(result.authRequestCount).toBe(1);
+    expect((result.collection.info as Record<string, unknown>).name).toBe('[Smoke] Widgets API');
+    expect(result.collection.auth).toEqual({
+      type: 'apikey',
+      apikey: [
+        { key: 'key', value: 'X-API-Key', type: 'string' },
+        { key: 'value', value: '{{service_api_key}}', type: 'string' },
+        { key: 'in', value: 'header', type: 'string' }
+      ]
+    });
+    expect(headers).toEqual([{ key: 'Accept', value: 'application/json' }]);
+    expect(request.auth).toBeUndefined();
+    expect(events).toHaveLength(2);
+    expect(eventText).toContain('generated check');
+    expect(eventText).toContain('canonical health check');
+    expect(JSON.stringify(result.collection)).not.toContain('old-static-key');
+  });
+
+  it('preserves canonical request scripts by unique method and request name when URL matching is unavailable', () => {
+    const existingCollection = {
+      info: { name: '[Smoke] Widgets API' },
+      item: [
+        {
+          name: 'List widgets',
+          request: {
+            method: 'GET',
+            url: '{{baseUrl}}/legacy/widgets'
+          },
+          event: [
+            {
+              listen: 'test',
+              script: {
+                type: 'text/javascript',
+                exec: ['pm.test("canonical list widgets", function () {});']
+              }
+            }
+          ]
+        },
+        {
+          name: 'Ambiguous',
+          request: {
+            method: 'GET',
+            url: '{{baseUrl}}/ambiguous-a'
+          },
+          event: [
+            {
+              listen: 'test',
+              script: {
+                type: 'text/javascript',
+                exec: ['pm.test("ambiguous a", function () {});']
+              }
+            }
+          ]
+        },
+        {
+          name: 'Ambiguous',
+          request: {
+            method: 'GET',
+            url: '{{baseUrl}}/ambiguous-b'
+          },
+          event: [
+            {
+              listen: 'test',
+              script: {
+                type: 'text/javascript',
+                exec: ['pm.test("ambiguous b", function () {});']
+              }
+            }
+          ]
+        }
+      ]
+    };
+    const generatedCollection = {
+      info: { name: '[Smoke][Temp] Widgets API' },
+      item: [
+        {
+          name: 'List widgets',
+          request: {
+            method: 'GET',
+            url: '{{baseUrl}}/v1/widgets'
+          }
+        },
+        {
+          name: 'Ambiguous',
+          request: {
+            method: 'GET',
+            url: '{{baseUrl}}/v1/ambiguous'
+          }
+        }
+      ]
+    };
+
+    const result = buildGeneratedSmokeCollection(generatedCollection, undefined, {
+      scriptSourceCollection: existingCollection
+    });
+    const items = result.collection.item as Array<Record<string, unknown>>;
+
+    expect(JSON.stringify(items[0]?.event)).toContain('canonical list widgets');
+    expect(items[1]?.event).toBeUndefined();
+  });
+
   it('applies OAuth to an existing Smoke collection idempotently without changing item order', () => {
     const existingCollection = {
       info: { name: '[Smoke] Providers API', _postman_id: 'info-123' },
       uid: '54270406-collection-uid-123',
+      auth: {
+        type: 'apikey',
+        apikey: [
+          { key: 'key', value: 'X-API-Key', type: 'string' },
+          { key: 'value', value: '{{service_api_key}}', type: 'string' },
+          { key: 'in', value: 'header', type: 'string' }
+        ]
+      },
       event: [
         {
           listen: 'prerequest',
@@ -416,6 +701,7 @@ describe('collection transform', () => {
     expect((twice.collection.info as Record<string, unknown>)._postman_id).toBeUndefined();
     expect((twice.collection as Record<string, unknown>).uid).toBeUndefined();
     expect((twice.collection as Record<string, unknown>).response).toBeUndefined();
+    expect(twice.collection.auth).toEqual({ type: 'noauth' });
     expect(items.map((item) => item.name)).toEqual(['00 - Resolve Secrets', 'Providers']);
     expect(folderItems.map((item) => item.name)).toEqual(['searchProviders', 'getProvider']);
     expect(resolverRequest.auth).toEqual({ type: 'awsv4' });
@@ -432,6 +718,119 @@ describe('collection transform', () => {
     expect(collectionText.match(/Auto-generated OAuth2 client-credentials token cache/g) ?? []).toHaveLength(1);
     expect(collectionText).toContain('Existing manual collection script');
     expect(collectionText).not.toContain('old generated script');
+  });
+
+  it('applies API key auth to an existing Smoke collection idempotently without changing item order', () => {
+    const existingCollection = {
+      info: { name: '[Smoke] Providers API', _postman_id: 'info-123' },
+      uid: '54270406-collection-uid-123',
+      auth: {
+        type: 'bearer',
+        bearer: [{ key: 'token', value: '{{access_token}}', type: 'string' }]
+      },
+      event: [
+        {
+          listen: 'prerequest',
+          script: {
+            type: 'text/javascript',
+            exec: ['// Existing manual collection script']
+          }
+        },
+        {
+          listen: 'prerequest',
+          script: {
+            type: 'text/javascript',
+            exec: ['// [Smoke Flow] Auto-generated OAuth2 client-credentials token cache.', '// old generated script']
+          }
+        }
+      ],
+      item: [
+        {
+          name: 'Providers',
+          item: [
+            {
+              name: 'searchProviders',
+              request: {
+                method: 'GET',
+                header: [{ key: 'X-API-Key', value: 'old-static-key' }],
+                url: '{{baseUrl}}/v1/providers'
+              }
+            },
+            {
+              name: 'getProvider',
+              request: {
+                method: 'GET',
+                url: '{{baseUrl}}/v1/providers/{{providerId}}'
+              }
+            }
+          ]
+        }
+      ],
+      response: [{ id: 'resp-123' }]
+    };
+
+    const once = applySmokeCollectionAuth(existingCollection, apiKeyConfig);
+    const twice = applySmokeCollectionAuth(once.collection, apiKeyConfig);
+    const collectionText = JSON.stringify(twice.collection);
+    const events = twice.collection.event as Array<Record<string, unknown>>;
+    const items = twice.collection.item as Array<Record<string, unknown>>;
+    const folderItems = items[0]?.item as Array<Record<string, unknown>>;
+    const firstSmokeRequest = folderItems[0]?.request as Record<string, unknown>;
+    const secondSmokeRequest = folderItems[1]?.request as Record<string, unknown>;
+
+    expect(twice.authRequestCount).toBe(2);
+    expect((twice.collection.info as Record<string, unknown>)._postman_id).toBeUndefined();
+    expect((twice.collection as Record<string, unknown>).uid).toBeUndefined();
+    expect((twice.collection as Record<string, unknown>).response).toBeUndefined();
+    expect(items.map((item) => item.name)).toEqual(['Providers']);
+    expect(folderItems.map((item) => item.name)).toEqual(['searchProviders', 'getProvider']);
+    expect(twice.collection.auth).toEqual({
+      type: 'apikey',
+      apikey: [
+        { key: 'key', value: 'X-API-Key', type: 'string' },
+        { key: 'value', value: '{{service_api_key}}', type: 'string' },
+        { key: 'in', value: 'header', type: 'string' }
+      ]
+    });
+    expect(firstSmokeRequest.auth).toBeUndefined();
+    expect(secondSmokeRequest.auth).toBeUndefined();
+    expect(firstSmokeRequest.header).toEqual([]);
+    expect(events).toHaveLength(1);
+    expect(collectionText).toContain('Existing manual collection script');
+    expect(collectionText).not.toContain('old generated script');
+    expect(collectionText).not.toContain('old-static-key');
+  });
+
+  it('removes only the duplicate API key query param during auth-only updates', () => {
+    const existingCollection = {
+      info: { name: '[Smoke] Providers API' },
+      item: [
+        {
+          name: 'searchProviders',
+          request: {
+            method: 'GET',
+            url: '{{baseUrl}}/v1/providers?api_key=old-static-key&page=1#results'
+          }
+        }
+      ]
+    };
+
+    const result = applySmokeCollectionAuth(existingCollection, queryApiKeyConfig);
+    const items = result.collection.item as Array<Record<string, unknown>>;
+    const request = items[0]?.request as Record<string, unknown>;
+
+    expect(result.authRequestCount).toBe(1);
+    expect(result.collection.auth).toEqual({
+      type: 'apikey',
+      apikey: [
+        { key: 'key', value: 'api_key', type: 'string' },
+        { key: 'value', value: '{{runtime_api_key}}', type: 'string' },
+        { key: 'in', value: 'query', type: 'string' }
+      ]
+    });
+    expect(request.url).toBe('{{baseUrl}}/v1/providers?page=1#results');
+    expect(request.auth).toBeUndefined();
+    expect(JSON.stringify(result.collection)).not.toContain('old-static-key');
   });
 
   it('removes the legacy secrets resolver during auth-only updates when disabled', () => {

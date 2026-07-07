@@ -32,7 +32,10 @@ describe('readActionInputs', () => {
     expect(inputs.flowPath).toBe('.postman-api-launchpad/flows/remote-pos/flow.yaml');
     expect(inputs.postmanApiKey).toBe('pmak-test');
     expect(inputs.authConfig?.enabled).toBe(true);
-    expect(inputs.authConfig?.tokenUrl).toBe('{{auth_token_url}}');
+    expect(inputs.authConfig?.type).toBe('oauth2');
+    if (inputs.authConfig?.type === 'oauth2') {
+      expect(inputs.authConfig.tokenUrl).toBe('{{auth_token_url}}');
+    }
     expect(inputs.secretsResolverEnabled).toBe(false);
   });
 
@@ -42,7 +45,7 @@ describe('readActionInputs', () => {
     expect(inputs.secretsResolverEnabled).toBe(true);
   });
 
-  it('treats missing flow-path as undefined for auth-only Smoke updates', () => {
+  it('treats missing flow-path as undefined for no-flow Smoke refreshes', () => {
     const inputs = readActionInputs({
       INPUT_PROJECT_NAME: 'providers-process-api',
       INPUT_WORKSPACE_ID: 'ws-123',
@@ -60,5 +63,71 @@ describe('readActionInputs', () => {
 
     expect(inputs.flowPath).toBeUndefined();
     expect(inputs.authConfig?.enabled).toBe(true);
+  });
+
+  it('accepts API key auth config for Smoke runtime auth injection', () => {
+    const inputs = readActionInputs({
+      INPUT_AUTH_CONFIG_JSON: JSON.stringify({
+        enabled: true,
+        type: 'apiKey',
+        in: 'header',
+        name: 'X-API-Key',
+        variables: {
+          apiKey: 'service_api_key'
+        }
+      })
+    } as NodeJS.ProcessEnv);
+
+    expect(inputs.authConfig).toEqual({
+      enabled: true,
+      type: 'apiKey',
+      in: 'header',
+      name: 'X-API-Key',
+      variables: {
+        apiKey: 'service_api_key'
+      }
+    });
+  });
+
+  it('rejects API key auth config without a supported location', () => {
+    expect(() =>
+      readActionInputs({
+        INPUT_AUTH_CONFIG_JSON: JSON.stringify({
+          enabled: true,
+          type: 'apiKey',
+          in: 'cookie',
+          name: 'X-API-Key'
+        })
+      } as NodeJS.ProcessEnv)
+    ).toThrow('apiKey in must be one of: header, query');
+  });
+
+  it('rejects API key auth config without a key name', () => {
+    expect(() =>
+      readActionInputs({
+        INPUT_AUTH_CONFIG_JSON: JSON.stringify({
+          enabled: true,
+          type: 'apiKey',
+          in: 'header',
+          name: ' '
+        })
+      } as NodeJS.ProcessEnv)
+    ).toThrow('apiKey name is required');
+  });
+
+  it('rejects blank API key variable names', () => {
+    expect(() =>
+      readActionInputs({
+        INPUT_AUTH_CONFIG_JSON: JSON.stringify({
+          enabled: true,
+          type: 'apiKey',
+          in: 'header',
+          name: 'X-API-Key',
+          variables: {
+            apiKey: ' '
+          }
+        })
+      } as NodeJS.ProcessEnv)
+    ).toThrow('variables.apiKey must be a non-empty string');
   });
 });
