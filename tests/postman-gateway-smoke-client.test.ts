@@ -170,19 +170,10 @@ describe('PostmanGatewaySmokeClient', () => {
     expect(collScripts[0].type).toBe('http:beforeRequest');
   });
 
-  it('preserves generated collection folders before recreating canonical request leaves', async () => {
+  it('flattens generated collection folders before recreating canonical request leaves', async () => {
     const { client, calls } = makeClient((env) => {
       if (env.method === 'get' && env.path.endsWith('/items/')) return jsonResponse({ data: [] });
-      if (env.method === 'post' && env.path.endsWith('/items/')) {
-        const body = env.body as J;
-        const idByName: Record<string, string> = {
-          health: '55363555-folder-health',
-          'Health check': '55363555-request-health',
-          v1: '55363555-folder-v1',
-          'List widgets': '55363555-request-widgets'
-        };
-        return jsonResponse({ data: { id: idByName[String(body.name ?? '')] ?? '55363555-new' } });
-      }
+      if (env.method === 'post' && env.path.endsWith('/items/')) return jsonResponse({ data: { id: '55363555-new' } });
       if (env.method === 'patch') return jsonResponse({ data: {} });
       return jsonResponse({});
     });
@@ -223,20 +214,12 @@ describe('PostmanGatewaySmokeClient', () => {
       .filter((c) => c.method === 'post' && c.path.endsWith('/items/'))
       .map((c) => c.body as J);
 
-    expect(createdItems.map((item) => [item.$kind, item.name])).toEqual([
-      ['folder', 'health'],
-      ['http-request', 'Health check'],
-      ['folder', 'v1'],
-      ['http-request', 'List widgets']
+    expect(createdItems.map((item) => item.name)).toEqual(['Health check', 'List widgets']);
+    expect(createdItems.map((item) => item.url)).toEqual(['{{baseUrl}}/health', '{{baseUrl}}/v1/widgets']);
+    expect(createdItems.map((item) => item.auth)).toEqual([
+      { type: 'bearer', credentials: [{ key: 'token', value: '{{access_token}}' }] },
+      { type: 'bearer', credentials: [{ key: 'token', value: '{{access_token}}' }] }
     ]);
-    expect((createdItems[0]?.position as J).parent).toEqual({ id: 'cid', $kind: 'collection' });
-    expect((createdItems[1]?.position as J).parent).toEqual({ id: '55363555-folder-health', $kind: 'folder' });
-    expect((createdItems[2]?.position as J).parent).toEqual({ id: 'cid', $kind: 'collection' });
-    expect((createdItems[3]?.position as J).parent).toEqual({ id: '55363555-folder-v1', $kind: 'folder' });
-    expect(createdItems[1]?.url).toBe('{{baseUrl}}/health');
-    expect(createdItems[3]?.url).toBe('{{baseUrl}}/v1/widgets');
-    expect(createdItems[1]?.auth).toEqual({ type: 'bearer', credentials: [{ key: 'token', value: '{{access_token}}' }] });
-    expect(createdItems[3]?.auth).toEqual({ type: 'bearer', credentials: [{ key: 'token', value: '{{access_token}}' }] });
   });
 
   it('retries the new-item scripts patch on a transient 404 (read-after-write lag)', async () => {
