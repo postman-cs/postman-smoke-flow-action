@@ -140,6 +140,14 @@ function isNoAuth(auth: JsonRecord | null): boolean {
   return auth?.type === 'noauth';
 }
 
+function isMissingPatchValueError(error: unknown): boolean {
+  return (
+    error instanceof HttpError &&
+    error.status === 400 &&
+    error.responseBody.includes('Remove operation must point to an existing value')
+  );
+}
+
 /** Looks-like-JSON heuristic for choosing a v3 body `type` (json vs text). */
 function looksLikeJson(raw: string): boolean {
   const trimmed = raw.trim();
@@ -342,8 +350,8 @@ export class PostmanGatewaySmokeClient {
     if (name !== undefined) ops.push({ op: 'replace', path: '/name', value: name });
     const desiredAuth = asRecord(desired.auth);
     const collAuth = v2AuthToV3(desiredAuth);
+    const clearCollectionAuth = !collAuth && isNoAuth(desiredAuth);
     if (collAuth) ops.push({ op: 'add', path: '/auth', value: collAuth });
-    if (!collAuth && isNoAuth(desiredAuth)) ops.push({ op: 'remove', path: '/auth' });
     if (Array.isArray(desired.variable)) {
       const variables = desired.variable
         .map(asRecord)
@@ -358,6 +366,9 @@ export class PostmanGatewaySmokeClient {
         path: `/v3/collections/${cid}`,
         body: ops
       });
+    }
+    if (clearCollectionAuth) {
+      await this.clearCollectionAuth(cid);
     }
 
     // Collection-level scripts (e.g. the OAuth token-cache pre-request) go in a
@@ -375,6 +386,22 @@ export class PostmanGatewaySmokeClient {
           body: [{ op: 'add', path: '/scripts', value: collScripts }]
         })
         .catch(() => undefined);
+    }
+  }
+
+  private async clearCollectionAuth(cid: string): Promise<void> {
+    try {
+      await this.gateway.request({
+        service: 'collection',
+        method: 'patch',
+        path: `/v3/collections/${cid}`,
+        body: [{ op: 'remove', path: '/auth' }]
+      });
+    } catch (error) {
+      if (isMissingPatchValueError(error)) {
+        return;
+      }
+      throw error;
     }
   }
 

@@ -29866,6 +29866,9 @@ function v2AuthToV3(auth) {
 function isNoAuth(auth) {
   return auth?.type === "noauth";
 }
+function isMissingPatchValueError(error2) {
+  return error2 instanceof HttpError && error2.status === 400 && error2.responseBody.includes("Remove operation must point to an existing value");
+}
 function looksLikeJson(raw) {
   const trimmed = raw.trim();
   if (!trimmed) return false;
@@ -30006,8 +30009,8 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
     if (name !== void 0) ops.push({ op: "replace", path: "/name", value: name });
     const desiredAuth = asRecord3(desired.auth);
     const collAuth = v2AuthToV3(desiredAuth);
+    const clearCollectionAuth = !collAuth && isNoAuth(desiredAuth);
     if (collAuth) ops.push({ op: "add", path: "/auth", value: collAuth });
-    if (!collAuth && isNoAuth(desiredAuth)) ops.push({ op: "remove", path: "/auth" });
     if (Array.isArray(desired.variable)) {
       const variables = desired.variable.map(asRecord3).filter((v) => Boolean(v)).map((v) => ({ key: String(v.key ?? ""), value: v.value ?? "" }));
       if (variables.length > 0) ops.push({ op: "add", path: "/variables", value: variables });
@@ -30020,6 +30023,9 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         body: ops
       });
     }
+    if (clearCollectionAuth) {
+      await this.clearCollectionAuth(cid);
+    }
     const collScripts = v2EventsToV3CollectionScripts(desired.event);
     if (collScripts.length > 0) {
       await this.gateway.request({
@@ -30028,6 +30034,21 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         path: `/v3/collections/${cid}`,
         body: [{ op: "add", path: "/scripts", value: collScripts }]
       }).catch(() => void 0);
+    }
+  }
+  async clearCollectionAuth(cid) {
+    try {
+      await this.gateway.request({
+        service: "collection",
+        method: "patch",
+        path: `/v3/collections/${cid}`,
+        body: [{ op: "remove", path: "/auth" }]
+      });
+    } catch (error2) {
+      if (isMissingPatchValueError(error2)) {
+        return;
+      }
+      throw error2;
     }
   }
   async createItemsRecursive(cid, items, parent) {

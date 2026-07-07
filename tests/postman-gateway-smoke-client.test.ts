@@ -252,9 +252,48 @@ describe('PostmanGatewaySmokeClient', () => {
       item: []
     });
 
-    const collPatch = calls.find((c) => c.method === 'patch' && /\/v3\/collections\/cid$/.test(c.path));
-    const ops = collPatch?.body as J[];
-    expect(ops).toContainEqual({ op: 'remove', path: '/auth' });
+    const collPatches = calls.filter((c) => c.method === 'patch' && /\/v3\/collections\/cid$/.test(c.path));
+    expect(collPatches.map((c) => c.body)).toEqual([
+      [{ op: 'replace', path: '/name', value: '[Smoke] OAuth Runtime' }],
+      [{ op: 'remove', path: '/auth' }]
+    ]);
+  });
+
+  it('treats collection auth removal as successful when no auth exists', async () => {
+    const { client, calls } = makeClient((env) => {
+      if (env.method === 'get' && env.path.endsWith('/items/')) return jsonResponse({ data: [] });
+      if (env.method === 'patch') {
+        const ops = env.body as J[];
+        if (ops.some((op) => op.path === '/auth' && op.op === 'remove')) {
+          return jsonResponse({
+            error: {
+              code: 'REJECTED_PATCH',
+              details: {
+                err: 'Remove operation must point to an existing value!'
+              }
+            }
+          }, 400);
+        }
+        return jsonResponse({ data: {} });
+      }
+      return jsonResponse({});
+    });
+
+    await expect(client.updateCollection('55363555-cid', {
+      info: { name: '[Smoke] OAuth Runtime' },
+      auth: { type: 'noauth' },
+      variable: [{ key: 'access_token', value: '', type: 'string' }],
+      item: []
+    })).resolves.toBeUndefined();
+
+    const collPatches = calls.filter((c) => c.method === 'patch' && /\/v3\/collections\/cid$/.test(c.path));
+    expect(collPatches.map((c) => c.body)).toEqual([
+      [
+        { op: 'replace', path: '/name', value: '[Smoke] OAuth Runtime' },
+        { op: 'add', path: '/variables', value: [{ key: 'access_token', value: '' }] }
+      ],
+      [{ op: 'remove', path: '/auth' }]
+    ]);
   });
 
   it('retries the new-item scripts patch on a transient 404 (read-after-write lag)', async () => {
