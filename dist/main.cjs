@@ -29678,13 +29678,6 @@ function asRecord3(value) {
 function asArray(value) {
   return Array.isArray(value) ? value.map(asRecord3).filter((v) => Boolean(v)) : [];
 }
-function collectRequestLeaves(items) {
-  return asArray(items).flatMap((item) => {
-    const request = asRecord3(item.request);
-    const children = collectRequestLeaves(item.item);
-    return request ? [item, ...children] : children;
-  });
-}
 function bareModelId(uid) {
   const u = String(uid ?? "").trim();
   return u.includes("-") ? u.slice(u.indexOf("-") + 1) : u;
@@ -29898,33 +29891,7 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
       throw new Error(`updateCollection: invalid collection payload for ${collectionUid}`);
     }
     await this.deleteAllItems(cid);
-    for (const leaf of collectRequestLeaves(desired.item)) {
-      const request = asRecord3(leaf.request) ?? {};
-      const createBody = {
-        $kind: "http-request",
-        name: typeof leaf.name === "string" ? leaf.name : "",
-        method: typeof request.method === "string" ? request.method : "GET",
-        url: v2UrlToRaw(request.url),
-        headers: v2HeadersToV3(request.header),
-        position: { parent: { id: cid, $kind: "collection" } }
-      };
-      const body = v2BodyToV3(asRecord3(request.body));
-      if (body) createBody.body = body;
-      const auth = v2AuthToV3(asRecord3(request.auth));
-      if (auth) createBody.auth = auth;
-      const created = await this.gateway.requestJson({
-        service: "collection",
-        method: "post",
-        path: `/v3/collections/${cid}/items/`,
-        headers: { "X-Entity-Type": "http-request" },
-        body: createBody
-      });
-      const newItemId = String(asRecord3(created?.data)?.id ?? "").trim();
-      const scripts = v2EventsToV3Scripts(leaf.event);
-      if (newItemId && scripts.length > 0) {
-        await this.patchItemScripts(cid, newItemId, scripts);
-      }
-    }
+    await this.createItemsRecursive(cid, desired.item, { id: cid, $kind: "collection" });
     const ops = [];
     const info2 = asRecord3(desired.info);
     const name = typeof info2?.name === "string" ? info2.name : void 0;
@@ -29951,6 +29918,66 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         path: `/v3/collections/${cid}`,
         body: [{ op: "add", path: "/scripts", value: collScripts }]
       }).catch(() => void 0);
+    }
+  }
+  async createItemsRecursive(cid, items, parent) {
+    for (const item of asArray(items)) {
+      const request = asRecord3(item.request);
+      if (request) {
+        await this.createRequestItem(cid, item, request, parent);
+        continue;
+      }
+      if (Array.isArray(item.item)) {
+        const folderId = await this.createFolderItem(cid, item, parent);
+        await this.createItemsRecursive(cid, item.item, { id: folderId, $kind: "collection" });
+      }
+    }
+  }
+  async createFolderItem(cid, folder, parent) {
+    const createBody = {
+      $kind: "collection",
+      name: typeof folder.name === "string" ? folder.name : "",
+      position: { parent }
+    };
+    const created = await this.gateway.requestJson({
+      service: "collection",
+      method: "post",
+      path: `/v3/collections/${cid}/items/`,
+      headers: { "X-Entity-Type": "folder" },
+      body: createBody
+    });
+    const data = asRecord3(created?.data);
+    const folderId = String(data?.id ?? data?.uid ?? "").trim();
+    if (!folderId) {
+      throw new Error(`updateCollection: gateway did not return an id for folder ${String(folder.name ?? "").trim() || "<unnamed>"}`);
+    }
+    return folderId;
+  }
+  async createRequestItem(cid, leaf, request, parent) {
+    const createBody = {
+      $kind: "http-request",
+      name: typeof leaf.name === "string" ? leaf.name : "",
+      method: typeof request.method === "string" ? request.method : "GET",
+      url: v2UrlToRaw(request.url),
+      headers: v2HeadersToV3(request.header),
+      position: { parent }
+    };
+    const body = v2BodyToV3(asRecord3(request.body));
+    if (body) createBody.body = body;
+    const auth = v2AuthToV3(asRecord3(request.auth));
+    if (auth) createBody.auth = auth;
+    const created = await this.gateway.requestJson({
+      service: "collection",
+      method: "post",
+      path: `/v3/collections/${cid}/items/`,
+      headers: { "X-Entity-Type": "http-request" },
+      body: createBody
+    });
+    const data = asRecord3(created?.data);
+    const newItemId = String(data?.id ?? data?.uid ?? "").trim();
+    const scripts = v2EventsToV3Scripts(leaf.event);
+    if (newItemId && scripts.length > 0) {
+      await this.patchItemScripts(cid, newItemId, scripts);
     }
   }
   /**
