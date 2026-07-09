@@ -18,7 +18,7 @@ import {
 } from './postman/collection-transform.js';
 import type { SmokeCollectionClient } from './postman/smoke-client-contract.js';
 import { PostmanGatewaySmokeClient } from './postman/postman-gateway-smoke-client.js';
-import { AccessTokenProvider } from './lib/postman/token-provider.js';
+import { AccessTokenProvider, mintAccessTokenIfNeeded } from './lib/postman/token-provider.js';
 import {
   getMemoizedSessionIdentity,
   runCredentialPreflight
@@ -448,9 +448,11 @@ function createSmokeClient(
   const accessToken = String(inputs.postmanAccessToken ?? '').trim();
   if (!accessToken) {
     throw new Error(
-      'postman-access-token is required: the Smoke collection reshape runs access-token-only through ' +
-        'the Postman gateway. Mint one with postman-resolve-service-token-action and pass it as ' +
-        'postman-access-token (postman-api-key alone no longer drives the reshape).'
+      'postman-access-token is required and could not be minted from postman-api-key (see the warning above for the diagnosis): ' +
+        'the Smoke collection reshape runs access-token-only through the Postman gateway. Provide a valid ' +
+        'service-account postman-api-key so the action can mint one, or mint it with ' +
+        'postman-resolve-service-token-action and pass it as postman-access-token ' +
+        '(postman-api-key alone never drives the reshape).'
     );
   }
   const provider = new AccessTokenProvider({
@@ -468,6 +470,24 @@ function createSmokeClient(
 
 export async function runAction(actionCore: CoreLike = core, env: NodeJS.ProcessEnv = process.env): Promise<ActionOutputs> {
   const inputs = readActionInputs(env);
+
+  // PMAK-only runs: eagerly mint the short-lived access token from the service
+  // -account PMAK so the access-token-only gateway reshape works exactly as
+  // when postman-access-token is supplied. Mirrors bootstrap's runAction. A
+  // failed mint warns with a live-probed diagnosis (personal key vs permission
+  // gap vs invalid key) and falls through to createSmokeClient's guard.
+  const mintHolder = {
+    postmanAccessToken: inputs.postmanAccessToken,
+    postmanApiKey: inputs.postmanApiKey,
+    postmanApiBase: inputs.postmanApiBaseUrl
+  };
+  await mintAccessTokenIfNeeded(
+    mintHolder,
+    { info: (m) => actionCore.info(m), warning: (m) => actionCore.warning?.(m ?? '') },
+    (secret) => actionCore.setSecret?.(secret)
+  );
+  inputs.postmanAccessToken = mintHolder.postmanAccessToken;
+
   const telemetry = createTelemetryContext({ action: 'postman-smoke-flow-action', actionVersion: resolveActionVersion(), logger: actionCore });
   telemetry.setTeamId(inputs.teamId);
   if (inputs.postmanApiKey) {

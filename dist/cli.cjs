@@ -30026,6 +30026,53 @@ var AccessTokenProvider = class {
     return token;
   }
 };
+async function describeMintFailure(mintError, apiKey, apiBaseUrl, fetchImpl) {
+  const raw = mintError instanceof Error ? mintError.message : String(mintError);
+  const rejected = /HTTP 40[13]|PMAK rejected/.test(raw);
+  if (!rejected) {
+    return raw;
+  }
+  try {
+    const me = await fetchImpl(`${apiBaseUrl}/me`, { headers: { "x-api-key": apiKey } });
+    if (me.ok) {
+      const body = await me.json().catch(() => void 0);
+      const user = body?.user;
+      const looksPersonal = Boolean(user && (user.username || user.email));
+      if (looksPersonal) {
+        return "Personal API key detected, cannot mint a service-account access token. POST /service-account-tokens only accepts a SERVICE-ACCOUNT API key; this postman-api-key belongs to a user account" + (user?.teamId ? ` (team ${user.teamId})` : "") + ". Create a service account in Team Settings and use its PMAK, or mint the token elsewhere and pass postman-access-token.";
+      }
+      return "The postman-api-key authenticates (GET /me OK) but was rejected by POST /service-account-tokens" + (user?.teamId ? ` (team ${user.teamId})` : "") + ". The service account likely lacks permission to mint access tokens, or service accounts are restricted for this team. Check the service account role in Team Settings, or pass a pre-minted postman-access-token.";
+    }
+    return "The postman-api-key is invalid, disabled, or expired (rejected by both POST /service-account-tokens and GET /me). Generate a fresh service-account PMAK in Team Settings and update the secret.";
+  } catch {
+    return raw;
+  }
+}
+async function mintAccessTokenIfNeeded(inputs, log, setSecret2, fetchImpl = fetch) {
+  if (inputs.postmanAccessToken || !inputs.postmanApiKey) {
+    return;
+  }
+  const apiBaseUrl = String(
+    inputs.postmanApiBase || POSTMAN_ENDPOINT_PROFILES.prod.apiBaseUrl
+  ).replace(/\/+$/, "");
+  const provider = new AccessTokenProvider({
+    apiKey: inputs.postmanApiKey,
+    apiBaseUrl,
+    fetchImpl,
+    onToken: (token) => setSecret2?.(token)
+  });
+  try {
+    inputs.postmanAccessToken = await provider.refresh();
+    log.info(
+      "postman: no postman-access-token configured - minted a short-lived service-account access token from the postman-api-key."
+    );
+  } catch (error2) {
+    const diagnosis = await describeMintFailure(error2, inputs.postmanApiKey, apiBaseUrl, fetchImpl);
+    log.warning(
+      "postman: could not mint an access token from the postman-api-key. " + diagnosis + " Continuing without an access token - access-token-only functionality will be unavailable unless postman-access-token is provided."
+    );
+  }
+}
 
 // src/postman/credential-identity.ts
 var sessionPath = "/api/sessions/current";
@@ -31109,7 +31156,7 @@ function createSmokeClient(inputs, actionCore) {
   const accessToken = String(inputs.postmanAccessToken ?? "").trim();
   if (!accessToken) {
     throw new Error(
-      "postman-access-token is required: the Smoke collection reshape runs access-token-only through the Postman gateway. Mint one with postman-resolve-service-token-action and pass it as postman-access-token (postman-api-key alone no longer drives the reshape)."
+      "postman-access-token is required and could not be minted from postman-api-key (see the warning above for the diagnosis): the Smoke collection reshape runs access-token-only through the Postman gateway. Provide a valid service-account postman-api-key so the action can mint one, or mint it with postman-resolve-service-token-action and pass it as postman-access-token (postman-api-key alone never drives the reshape)."
     );
   }
   const provider = new AccessTokenProvider({
@@ -31126,6 +31173,17 @@ function createSmokeClient(inputs, actionCore) {
 }
 async function runAction(actionCore = core_exports, env = process.env) {
   const inputs = readActionInputs(env);
+  const mintHolder = {
+    postmanAccessToken: inputs.postmanAccessToken,
+    postmanApiKey: inputs.postmanApiKey,
+    postmanApiBase: inputs.postmanApiBaseUrl
+  };
+  await mintAccessTokenIfNeeded(
+    mintHolder,
+    { info: (m) => actionCore.info(m), warning: (m) => actionCore.warning?.(m ?? "") },
+    (secret) => actionCore.setSecret?.(secret)
+  );
+  inputs.postmanAccessToken = mintHolder.postmanAccessToken;
   const telemetry = createTelemetryContext({ action: "postman-smoke-flow-action", actionVersion: resolveActionVersion2(), logger: actionCore });
   telemetry.setTeamId(inputs.teamId);
   if (inputs.postmanApiKey) {

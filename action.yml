@@ -45,7 +45,7 @@ inputs:
     required: false
     default: refresh
   postman-access-token:
-    description: Service-account access token (x-access-token) that authenticates the Smoke collection reshape against the Postman gateway. Required for the reshape.
+    description: Service-account access token (x-access-token) that authenticates the Smoke collection reshape against the Postman gateway. Required for the reshape; when omitted, the action mints one from postman-api-key (service-account PMAK).
     required: false
   fail-on-flow-warning:
     description: Whether non-blocking flow warnings should fail the action.
