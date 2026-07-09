@@ -170,6 +170,132 @@ describe('PostmanGatewaySmokeClient', () => {
     expect(collScripts[0].type).toBe('http:beforeRequest');
   });
 
+  it('preserves generated collection folders before recreating canonical request leaves', async () => {
+    const { client, calls } = makeClient((env) => {
+      if (env.method === 'get' && env.path.endsWith('/items/')) return jsonResponse({ data: [] });
+      if (env.method === 'post' && env.path.endsWith('/items/')) {
+        const body = env.body as J;
+        const idByName: Record<string, string> = {
+          health: '55363555-folder-health',
+          'Health check': '55363555-request-health',
+          v1: '55363555-folder-v1',
+          'List widgets': '55363555-request-widgets'
+        };
+        return jsonResponse({ data: { id: idByName[String(body.name ?? '')] ?? '55363555-new' } });
+      }
+      if (env.method === 'patch') return jsonResponse({ data: {} });
+      return jsonResponse({});
+    });
+
+    await client.updateCollection('55363555-cid', {
+      info: { name: '[Smoke] Generated' },
+      item: [
+        {
+          name: 'health',
+          item: [
+            {
+              name: 'Health check',
+              request: {
+                method: 'GET',
+                url: '{{baseUrl}}/health',
+                auth: { type: 'bearer', bearer: [{ key: 'token', value: '{{access_token}}', type: 'string' }] }
+              }
+            }
+          ]
+        },
+        {
+          name: 'v1',
+          item: [
+            {
+              name: 'List widgets',
+              request: {
+                method: 'GET',
+                url: '{{baseUrl}}/v1/widgets',
+                auth: { type: 'bearer', bearer: [{ key: 'token', value: '{{access_token}}', type: 'string' }] }
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    const createdItems = calls
+      .filter((c) => c.method === 'post' && c.path.endsWith('/items/'))
+      .map((c) => c.body as J);
+
+    expect(createdItems.map((item) => [item.$kind, item.name])).toEqual([
+      ['collection', 'health'],
+      ['http-request', 'Health check'],
+      ['collection', 'v1'],
+      ['http-request', 'List widgets']
+    ]);
+    expect((createdItems[0]?.position as J).parent).toEqual({ id: 'cid', $kind: 'collection' });
+    expect((createdItems[1]?.position as J).parent).toEqual({ id: '55363555-folder-health', $kind: 'collection' });
+    expect((createdItems[2]?.position as J).parent).toEqual({ id: 'cid', $kind: 'collection' });
+    expect((createdItems[3]?.position as J).parent).toEqual({ id: '55363555-folder-v1', $kind: 'collection' });
+    expect(createdItems[1]?.url).toBe('{{baseUrl}}/health');
+    expect(createdItems[3]?.url).toBe('{{baseUrl}}/v1/widgets');
+    expect(createdItems[1]?.auth).toEqual({ type: 'bearer', credentials: [{ key: 'token', value: '{{access_token}}' }] });
+    expect(createdItems[3]?.auth).toEqual({ type: 'bearer', credentials: [{ key: 'token', value: '{{access_token}}' }] });
+  });
+
+  it('removes collection auth when the desired collection is explicitly noauth', async () => {
+    const { client, calls } = makeClient((env) => {
+      if (env.method === 'get' && env.path.endsWith('/items/')) return jsonResponse({ data: [] });
+      if (env.method === 'patch') return jsonResponse({ data: {} });
+      return jsonResponse({});
+    });
+
+    await client.updateCollection('55363555-cid', {
+      info: { name: '[Smoke] OAuth Runtime' },
+      auth: { type: 'noauth' },
+      item: []
+    });
+
+    const collPatches = calls.filter((c) => c.method === 'patch' && /\/v3\/collections\/cid$/.test(c.path));
+    expect(collPatches.map((c) => c.body)).toEqual([
+      [{ op: 'replace', path: '/name', value: '[Smoke] OAuth Runtime' }],
+      [{ op: 'remove', path: '/auth' }]
+    ]);
+  });
+
+  it('treats collection auth removal as successful when no auth exists', async () => {
+    const { client, calls } = makeClient((env) => {
+      if (env.method === 'get' && env.path.endsWith('/items/')) return jsonResponse({ data: [] });
+      if (env.method === 'patch') {
+        const ops = env.body as J[];
+        if (ops.some((op) => op.path === '/auth' && op.op === 'remove')) {
+          return jsonResponse({
+            error: {
+              code: 'REJECTED_PATCH',
+              details: {
+                err: 'Remove operation must point to an existing value!'
+              }
+            }
+          }, 400);
+        }
+        return jsonResponse({ data: {} });
+      }
+      return jsonResponse({});
+    });
+
+    await expect(client.updateCollection('55363555-cid', {
+      info: { name: '[Smoke] OAuth Runtime' },
+      auth: { type: 'noauth' },
+      variable: [{ key: 'access_token', value: '', type: 'string' }],
+      item: []
+    })).resolves.toBeUndefined();
+
+    const collPatches = calls.filter((c) => c.method === 'patch' && /\/v3\/collections\/cid$/.test(c.path));
+    expect(collPatches.map((c) => c.body)).toEqual([
+      [
+        { op: 'replace', path: '/name', value: '[Smoke] OAuth Runtime' },
+        { op: 'add', path: '/variables', value: [{ key: 'access_token', value: '' }] }
+      ],
+      [{ op: 'remove', path: '/auth' }]
+    ]);
+  });
+
   it('retries the new-item scripts patch on a transient 404 (read-after-write lag)', async () => {
     let itemPatchAttempts = 0;
     const { fetchImpl, calls } = gatewayFetch((env) => {

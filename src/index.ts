@@ -10,10 +10,10 @@ import { summarizeError } from './lib/logging.js';
 import { createSecretMasker } from './lib/secrets.js';
 import type { ActionInputs, ActionOutputs, CoreLike, FlowApplySummary, SmokeAuthConfig } from './types.js';
 import {
-  applySmokeCollectionAuth,
   buildCuratedSmokeCollection,
+  buildGeneratedSmokeCollection,
   verifyCuratedSmokeCollection,
-  verifySmokeCollectionAuth,
+  verifyGeneratedSmokeCollection,
   type CollectionVerification
 } from './postman/collection-transform.js';
 import type { SmokeCollectionClient } from './postman/smoke-client-contract.js';
@@ -99,20 +99,34 @@ function parseAuthConfig(value: string): SmokeAuthConfig | undefined {
   if (parsed.enabled !== true) {
     return undefined;
   }
-  if (parsed.type !== 'oauth2') {
-    throw new Error('Invalid auth-config-json: only type=oauth2 is supported.');
-  }
-  if (parsed.grantType !== 'client_credentials') {
-    throw new Error('Invalid auth-config-json: only grantType=client_credentials is supported.');
-  }
-  if (parsed.clientAuthentication !== 'body') {
-    throw new Error('Invalid auth-config-json: only clientAuthentication=body is supported.');
-  }
-  if (typeof parsed.tokenUrl !== 'string' || !parsed.tokenUrl.trim()) {
-    throw new Error('Invalid auth-config-json: tokenUrl is required.');
+  if (parsed.type === 'oauth2') {
+    if (parsed.grantType !== 'client_credentials') {
+      throw new Error('Invalid auth-config-json: only grantType=client_credentials is supported.');
+    }
+    if (parsed.clientAuthentication !== 'body') {
+      throw new Error('Invalid auth-config-json: only clientAuthentication=body is supported.');
+    }
+    if (typeof parsed.tokenUrl !== 'string' || !parsed.tokenUrl.trim()) {
+      throw new Error('Invalid auth-config-json: tokenUrl is required.');
+    }
+    return parsed as SmokeAuthConfig;
   }
 
-  return parsed as SmokeAuthConfig;
+  if (parsed.type === 'apiKey') {
+    if (parsed.in !== 'header' && parsed.in !== 'query') {
+      throw new Error('Invalid auth-config-json: apiKey in must be one of: header, query.');
+    }
+    if (typeof parsed.name !== 'string' || !parsed.name.trim()) {
+      throw new Error('Invalid auth-config-json: apiKey name is required.');
+    }
+    const variables = isRecord(parsed.variables) ? parsed.variables : undefined;
+    if (variables?.apiKey !== undefined && (typeof variables.apiKey !== 'string' || !variables.apiKey.trim())) {
+      throw new Error('Invalid auth-config-json: apiKey variables.apiKey must be a non-empty string when provided.');
+    }
+    return parsed as SmokeAuthConfig;
+  }
+
+  throw new Error('Invalid auth-config-json: supported auth types are oauth2 and apiKey.');
 }
 
 export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionInputs {
@@ -194,6 +208,7 @@ async function updateCanonicalCollectionUntilStable<T extends CollectionTransfor
   initialSourceCollection: JsonRecord;
   buildCollection: (sourceCollection: JsonRecord) => T;
   verifyCollection: (collection: JsonRecord) => CollectionVerification;
+  refreshSourceFromLatest?: boolean;
 }): Promise<T> {
   let sourceCollection = options.initialSourceCollection;
   let latestVerification: CollectionVerification = {
@@ -221,7 +236,7 @@ async function updateCanonicalCollectionUntilStable<T extends CollectionTransfor
       return transformed;
     }
 
-    sourceCollection = stability.latestCollection;
+    sourceCollection = options.refreshSourceFromLatest === false ? options.initialSourceCollection : stability.latestCollection;
     if (attempt < STABLE_COLLECTION_UPDATE_MAX_ATTEMPTS) {
       options.dependencies.core.warning(
         `Canonical Smoke collection update was not stable after attempt ${attempt}: ${latestVerification.summary}. Reapplying to the latest collection.`
@@ -260,58 +275,116 @@ function createOutputs(summary: FlowApplySummary): ActionOutputs {
   };
 }
 
+function describeAuthConfig(authConfig: SmokeAuthConfig): string {
+  return authConfig.type === 'apiKey' ? 'API key' : 'OAuth';
+}
+
+function getCollectionName(collection: JsonRecord): string | undefined {
+  const info = isRecord(collection.info) ? collection.info : undefined;
+  const name = typeof info?.name === 'string' ? info.name.trim() : '';
+  return name || undefined;
+}
+
 async function runWithoutFlowManifest(
   inputs: ActionInputs,
   dependencies: SmokeFlowDependencies
 ): Promise<ActionOutputs> {
-  if (!inputs.authConfig?.enabled) {
-    dependencies.core.info('No flow-path or enabled auth-config-json was provided; skipping Smoke collection update.');
+  const authApplied = Boolean(inputs.authConfig?.enabled);
+  let tempCollectionId = '';
+  let tempCollectionDeleted = false;
+  let runFailed = false;
+  const warnings = [
+    authApplied
+      ? `flow-path was not provided; refreshed canonical Smoke collection from the generated spec collection and applied ${describeAuthConfig(inputs.authConfig!)} auth without flow curation.`
+      : 'flow-path was not provided; refreshed canonical Smoke collection from the generated spec collection without flow curation.'
+  ];
+
+  try {
+    const existingCollection = await dependencies.postman.getCollection(inputs.smokeCollectionId);
+    const canonicalCollectionName = getCollectionName(existingCollection);
+    tempCollectionId = await dependencies.postman.generateCollection(inputs.specId, inputs.projectName, inputs.tempCollectionPrefix);
+    dependencies.core.info(`Generated temporary Smoke collection ${tempCollectionId}`);
+
+    const generatedCollection = await dependencies.postman.getCollection(tempCollectionId);
+    const transformed = await updateCanonicalCollectionUntilStable({
+      inputs,
+      dependencies,
+      initialSourceCollection: generatedCollection,
+      refreshSourceFromLatest: false,
+      buildCollection: (sourceCollection) =>
+        buildGeneratedSmokeCollection(sourceCollection, inputs.authConfig, {
+          secretsResolverEnabled: inputs.secretsResolverEnabled,
+          collectionName: canonicalCollectionName,
+          scriptSourceCollection: existingCollection
+        }),
+      verifyCollection: (collection) =>
+        verifyGeneratedSmokeCollection(collection, inputs.authConfig, {
+          secretsResolverEnabled: inputs.secretsResolverEnabled
+        })
+    });
+
+    const authDescription = authApplied ? ` with Smoke ${describeAuthConfig(inputs.authConfig!)} auth on ${transformed.authRequestCount} request(s)` : '';
+    dependencies.core.info(
+      `Updated canonical Smoke collection ${inputs.smokeCollectionId} from generated spec collection${authDescription}.`
+    );
+
     return createOutputs({
       flowName: '',
-      status: 'skipped',
+      status: 'success',
+      temporaryCollectionId: tempCollectionId,
       canonicalSmokeCollectionId: inputs.smokeCollectionId,
-      authApplied: false,
+      authApplied,
+      authRequestCount: transformed.authRequestCount,
+      stepCount: 0,
+      resolvedOperationCount: 0,
+      appliedBindingCount: 0,
+      appliedExtractCount: 0,
+      assertionCount: 0,
+      warnings
+    });
+  } catch (error) {
+    runFailed = true;
+    const summary: FlowApplySummary = {
+      flowName: '',
+      status: 'failed',
+      temporaryCollectionId: tempCollectionId || undefined,
+      canonicalSmokeCollectionId: inputs.smokeCollectionId,
+      authApplied,
       authRequestCount: 0,
       stepCount: 0,
       resolvedOperationCount: 0,
       appliedBindingCount: 0,
       appliedExtractCount: 0,
       assertionCount: 0,
-      warnings: []
+      warnings: [...warnings, summarizeError(error)]
+    };
+    if (tempCollectionId && !inputs.keepTempCollectionOnFailure) {
+      try {
+        await dependencies.postman.deleteCollection(tempCollectionId);
+        tempCollectionDeleted = true;
+      } catch (cleanupError) {
+        dependencies.core.warning(`Failed to delete temporary Smoke collection ${tempCollectionId}: ${summarizeError(cleanupError)}`);
+      }
+    }
+    throw Object.assign(error instanceof Error ? error : new Error(String(error)), {
+      summary
     });
+  } finally {
+    const shouldDeleteInFinally =
+      tempCollectionId &&
+      !tempCollectionDeleted &&
+      !(runFailed && inputs.keepTempCollectionOnFailure);
+    if (shouldDeleteInFinally) {
+      try {
+        await dependencies.postman.deleteCollection(tempCollectionId);
+        dependencies.core.info(`Deleted temporary Smoke collection ${tempCollectionId}`);
+      } catch (cleanupError) {
+        if (!inputs.keepTempCollectionOnFailure) {
+          dependencies.core.warning(`Failed to delete temporary Smoke collection ${tempCollectionId}: ${summarizeError(cleanupError)}`);
+        }
+      }
+    }
   }
-
-  const existingCollection = await dependencies.postman.getCollection(inputs.smokeCollectionId);
-  const transformed = await updateCanonicalCollectionUntilStable({
-    inputs,
-    dependencies,
-    initialSourceCollection: existingCollection,
-    buildCollection: (sourceCollection) =>
-      applySmokeCollectionAuth(sourceCollection, inputs.authConfig!, {
-        secretsResolverEnabled: inputs.secretsResolverEnabled
-      }),
-    verifyCollection: (collection) =>
-      verifySmokeCollectionAuth(collection, inputs.authConfig!, {
-        secretsResolverEnabled: inputs.secretsResolverEnabled
-      })
-  });
-  dependencies.core.info(
-    `Updated canonical Smoke collection ${inputs.smokeCollectionId} with Smoke OAuth auth on ${transformed.authRequestCount} request(s).`
-  );
-
-  return createOutputs({
-    flowName: '',
-    status: 'skipped',
-    canonicalSmokeCollectionId: inputs.smokeCollectionId,
-    authApplied: true,
-    authRequestCount: transformed.authRequestCount,
-    stepCount: 0,
-    resolvedOperationCount: 0,
-    appliedBindingCount: 0,
-    appliedExtractCount: 0,
-    assertionCount: 0,
-    warnings: ['flow-path was not provided; applied OAuth to the existing Smoke collection without flow curation.']
-  });
 }
 
 export async function runSmokeFlow(

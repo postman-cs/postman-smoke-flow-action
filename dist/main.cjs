@@ -28981,7 +28981,39 @@ function removeHeader(request, key) {
   const headers = Array.isArray(request.header) ? request.header.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)) : [];
   request.header = headers.filter((entry) => typeof entry.key !== "string" || entry.key.toLowerCase() !== key.toLowerCase());
 }
-function getAuthVariableNames2(authConfig) {
+function removeRawUrlQueryParam(rawUrl, key) {
+  const [withoutHash, hash = ""] = rawUrl.split("#", 2);
+  const queryIndex = withoutHash.indexOf("?");
+  if (queryIndex === -1) {
+    return rawUrl;
+  }
+  const base = withoutHash.slice(0, queryIndex);
+  const queryString = withoutHash.slice(queryIndex + 1);
+  const nextQuery = queryString.split("&").filter(Boolean).filter((entry) => decodeQueryKey(entry.split("=", 1)[0] ?? "").toLowerCase() !== key.toLowerCase()).join("&");
+  const nextWithoutHash = nextQuery ? `${base}?${nextQuery}` : base;
+  return hash ? `${nextWithoutHash}#${hash}` : nextWithoutHash;
+}
+function removeQueryParam(request, key) {
+  const url = request.url;
+  if (typeof url === "string") {
+    request.url = removeRawUrlQueryParam(url, key);
+    return;
+  }
+  const urlRecord = asRecord2(url);
+  if (!urlRecord) {
+    return;
+  }
+  if (typeof urlRecord.raw === "string") {
+    urlRecord.raw = removeRawUrlQueryParam(urlRecord.raw, key);
+  }
+  if (Array.isArray(urlRecord.query)) {
+    urlRecord.query = urlRecord.query.filter((entry) => {
+      const query = asRecord2(entry);
+      return !query || typeof query.key !== "string" || query.key.toLowerCase() !== key.toLowerCase();
+    });
+  }
+}
+function getOAuthVariableNames(authConfig) {
   return {
     tokenUrl: authConfig.variables?.tokenUrl || "auth_token_url",
     scope: authConfig.variables?.scope || "auth_scope",
@@ -28991,8 +29023,39 @@ function getAuthVariableNames2(authConfig) {
     expiresAt: authConfig.variables?.expiresAt || "access_token_expires_at"
   };
 }
+function isOAuthAuthConfig(authConfig) {
+  return authConfig.type === "oauth2";
+}
+function getApiKeyVariableName(authConfig) {
+  return authConfig.variables?.apiKey?.trim() || "api_key";
+}
+function getApiKeyName(authConfig) {
+  return authConfig.name.trim();
+}
+function createApiKeyAuth(authConfig) {
+  return {
+    type: "apikey",
+    apikey: [
+      {
+        key: "key",
+        value: getApiKeyName(authConfig),
+        type: "string"
+      },
+      {
+        key: "value",
+        value: `{{${getApiKeyVariableName(authConfig)}}}`,
+        type: "string"
+      },
+      {
+        key: "in",
+        value: authConfig.in,
+        type: "string"
+      }
+    ]
+  };
+}
 function setRequestBearerAuth(request, authConfig) {
-  const variables = getAuthVariableNames2(authConfig);
+  const variables = getOAuthVariableNames(authConfig);
   request.auth = {
     type: "bearer",
     bearer: [
@@ -29005,11 +29068,24 @@ function setRequestBearerAuth(request, authConfig) {
   };
   removeHeader(request, authConfig.apply?.header || "Authorization");
 }
+function prepareRequestForCollectionApiKeyAuth(request, authConfig) {
+  const apiKeyName = getApiKeyName(authConfig);
+  delete request.auth;
+  if (authConfig.in === "header") {
+    removeHeader(request, apiKeyName);
+  } else {
+    removeQueryParam(request, apiKeyName);
+  }
+}
 function applyAuthToRequest(request, authConfig) {
   if (!authConfig?.enabled) {
     return false;
   }
-  setRequestBearerAuth(request, authConfig);
+  if (isOAuthAuthConfig(authConfig)) {
+    setRequestBearerAuth(request, authConfig);
+  } else {
+    prepareRequestForCollectionApiKeyAuth(request, authConfig);
+  }
   return true;
 }
 function upsertCollectionVariable(collection, key, value = "") {
@@ -29025,7 +29101,7 @@ function upsertCollectionVariable(collection, key, value = "") {
   collection.variable = variables;
 }
 function seedOAuthCollectionVariables(collection, authConfig) {
-  const variables = getAuthVariableNames2(authConfig);
+  const variables = getOAuthVariableNames(authConfig);
   const tokenUrlValue = authConfig.tokenUrl.includes("{{") ? "" : authConfig.tokenUrl;
   upsertCollectionVariable(collection, variables.tokenUrl, tokenUrlValue);
   upsertCollectionVariable(collection, variables.scope);
@@ -29033,6 +29109,9 @@ function seedOAuthCollectionVariables(collection, authConfig) {
   upsertCollectionVariable(collection, variables.clientSecret);
   upsertCollectionVariable(collection, variables.accessToken);
   upsertCollectionVariable(collection, variables.expiresAt);
+}
+function seedApiKeyCollectionVariables(collection, authConfig) {
+  upsertCollectionVariable(collection, getApiKeyVariableName(authConfig));
 }
 function getScriptExecText(event) {
   const script = asRecord2(event.script);
@@ -29052,12 +29131,21 @@ function applyCollectionAuth(collection, authConfig) {
   if (!authConfig?.enabled) {
     return;
   }
-  seedOAuthCollectionVariables(collection, authConfig);
   const existingEvents = Array.isArray(collection.event) ? collection.event : [];
-  collection.event = [
-    ...existingEvents.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)).filter((entry) => !isGeneratedOAuthEvent(entry)),
-    createOAuthPreRequestEvent(authConfig)
-  ];
+  const retainedEvents = existingEvents.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)).filter((entry) => !isGeneratedOAuthEvent(entry));
+  if (isOAuthAuthConfig(authConfig)) {
+    collection.auth = { type: "noauth" };
+    seedOAuthCollectionVariables(collection, authConfig);
+    collection.event = [...retainedEvents, createOAuthPreRequestEvent(authConfig)];
+    return;
+  }
+  collection.auth = createApiKeyAuth(authConfig);
+  seedApiKeyCollectionVariables(collection, authConfig);
+  if (retainedEvents.length > 0) {
+    collection.event = retainedEvents;
+  } else {
+    delete collection.event;
+  }
 }
 function applyAuthToCollectionItems(items, authConfig) {
   if (!Array.isArray(items)) {
@@ -29092,6 +29180,87 @@ function getRequestUrlText(request) {
   const host = Array.isArray(urlRecord.host) ? urlRecord.host.map(String).join(".") : "";
   const path8 = Array.isArray(urlRecord.path) ? urlRecord.path.map(String).join("/") : "";
   return [host, path8].filter(Boolean).join("/");
+}
+function normalizeMatchText(value) {
+  return String(value ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+function getRequestMethod2(request) {
+  return normalizeMatchText(request.method || "GET");
+}
+function getRequestUrlMatchKey(item) {
+  const request = asRecord2(item.request);
+  if (!request) {
+    return "";
+  }
+  const url = normalizeMatchText(getRequestUrlText(request));
+  return url ? `${getRequestMethod2(request)} ${url}` : "";
+}
+function getRequestNameMatchKey(item) {
+  const request = asRecord2(item.request);
+  if (!request) {
+    return "";
+  }
+  const name = normalizeMatchText(item.name);
+  return name ? `${getRequestMethod2(request)} ${name}` : "";
+}
+function getRequestEvents(item) {
+  return Array.isArray(item.event) ? item.event.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)) : [];
+}
+function indexUniqueRequestEvents(items, getKey) {
+  const matches = /* @__PURE__ */ new Map();
+  for (const item of items) {
+    const events2 = getRequestEvents(item);
+    if (events2.length === 0) {
+      continue;
+    }
+    const key = getKey(item);
+    if (!key) {
+      continue;
+    }
+    const existing = matches.get(key) ?? [];
+    existing.push(events2);
+    matches.set(key, existing);
+  }
+  const unique = /* @__PURE__ */ new Map();
+  for (const [key, eventSets] of matches) {
+    if (eventSets.length === 1) {
+      unique.set(key, eventSets[0]);
+    }
+  }
+  return unique;
+}
+function mergeRequestEvents(targetEvents, sourceEvents) {
+  const merged = [...targetEvents];
+  const seen = new Set(targetEvents.map((event) => `${String(event.listen ?? "")}
+${getScriptExecText(event)}`));
+  for (const event of sourceEvents) {
+    const key = `${String(event.listen ?? "")}
+${getScriptExecText(event)}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(structuredClone(event));
+  }
+  return merged;
+}
+function preserveRequestEventsFromCollection(collection, scriptSourceCollection) {
+  if (!scriptSourceCollection) {
+    return;
+  }
+  const sourceItems = collectSmokeRequestItems(scriptSourceCollection.item);
+  const eventsByUrl = indexUniqueRequestEvents(sourceItems, getRequestUrlMatchKey);
+  const eventsByName = indexUniqueRequestEvents(sourceItems, getRequestNameMatchKey);
+  for (const item of collectSmokeRequestItems(collection.item)) {
+    const sourceEvents = eventsByUrl.get(getRequestUrlMatchKey(item)) ?? eventsByName.get(getRequestNameMatchKey(item));
+    if (!sourceEvents || sourceEvents.length === 0) {
+      continue;
+    }
+    const mergedEvents = mergeRequestEvents(getRequestEvents(item), sourceEvents);
+    if (mergedEvents.length > 0) {
+      item.event = mergedEvents;
+    }
+  }
 }
 function isSecretsResolverItem(item) {
   const name = typeof item.name === "string" ? item.name.trim().toLowerCase() : "";
@@ -29141,9 +29310,30 @@ function containsSecretsResolverItem(items) {
     return isSecretsResolverItem(item) || containsSecretsResolverItem(item.item);
   });
 }
+function collectSmokeRequestItems(items) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  return items.flatMap((entry) => {
+    const item = asRecord2(entry);
+    if (!item) {
+      return [];
+    }
+    const nestedItems = collectSmokeRequestItems(item.item);
+    const request = asRecord2(item.request);
+    if (!request || isSecretsResolverItem(item)) {
+      return nestedItems;
+    }
+    return [item, ...nestedItems];
+  });
+}
 function hasGeneratedOAuthEvent(collection) {
   const events2 = Array.isArray(collection.event) ? collection.event : [];
   return events2.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)).some((entry) => isGeneratedOAuthEvent(entry));
+}
+function hasCollectionAuth(collection) {
+  const auth = asRecord2(collection.auth);
+  return Boolean(auth && typeof auth.type === "string" && auth.type !== "" && auth.type !== "noauth");
 }
 function getCollectionVariableKeys(collection) {
   const variables = Array.isArray(collection.variable) ? collection.variable : [];
@@ -29163,7 +29353,7 @@ function countBearerAuthRequests(items, authConfig) {
   if (!Array.isArray(items)) {
     return 0;
   }
-  const variables = getAuthVariableNames2(authConfig);
+  const variables = getOAuthVariableNames(authConfig);
   return items.reduce((count, entry) => {
     const item = asRecord2(entry);
     if (!item) {
@@ -29177,6 +29367,37 @@ function countBearerAuthRequests(items, authConfig) {
     return nextCount + countBearerAuthRequests(item.item, authConfig);
   }, 0);
 }
+function authUsesApiKey(auth, authConfig) {
+  if (!auth || auth.type !== "apikey") {
+    return false;
+  }
+  const apiKey = Array.isArray(auth.apikey) ? auth.apikey : [];
+  const entries = apiKey.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry));
+  const valueVariable = getApiKeyVariableName(authConfig);
+  const credentialByKey = new Map(entries.map((entry) => [String(entry.key ?? ""), entry.value]));
+  return credentialByKey.get("key") === getApiKeyName(authConfig) && credentialByKey.get("value") === `{{${valueVariable}}}` && String(credentialByKey.get("in") ?? "").toLowerCase() === authConfig.in;
+}
+function collectionUsesApiKeyAuth(collection, authConfig) {
+  return authUsesApiKey(asRecord2(collection.auth), authConfig);
+}
+function collectRequestsWithExplicitAuth(items) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  return items.flatMap((entry) => {
+    const item = asRecord2(entry);
+    if (!item) {
+      return [];
+    }
+    const nested = collectRequestsWithExplicitAuth(item.item);
+    const request = asRecord2(item.request);
+    const auth = asRecord2(request?.auth);
+    if (!request || isSecretsResolverItem(item) || !auth || auth.type === "noauth") {
+      return nested;
+    }
+    return [String(item.name ?? "<unnamed request>"), ...nested];
+  });
+}
 function getTopLevelItems(collection) {
   return Array.isArray(collection.item) ? collection.item.map((entry) => asRecord2(entry)).filter((entry) => Boolean(entry)) : [];
 }
@@ -29185,26 +29406,84 @@ function hasFlowRequestScripts(item) {
   return events2.some((entry) => entry.listen === "prerequest") && events2.some((entry) => entry.listen === "test");
 }
 function verifySmokeCollectionAuth(collection, authConfig, options = {}) {
-  const variables = getAuthVariableNames2(authConfig);
   const variableKeys = getCollectionVariableKeys(collection);
-  const missingVariables = Object.values(variables).filter((variableName) => !variableKeys.has(variableName));
-  const bearerAuthRequestCount = countBearerAuthRequests(collection.item, authConfig);
   const failures = [];
-  if (!hasGeneratedOAuthEvent(collection)) {
-    failures.push("missing generated OAuth pre-request script");
+  if (isOAuthAuthConfig(authConfig)) {
+    const variables = getOAuthVariableNames(authConfig);
+    const missingVariables = Object.values(variables).filter((variableName) => !variableKeys.has(variableName));
+    const bearerAuthRequestCount = countBearerAuthRequests(collection.item, authConfig);
+    if (hasCollectionAuth(collection)) {
+      failures.push("collection-level auth is still present while OAuth request auth is enabled");
+    }
+    if (!hasGeneratedOAuthEvent(collection)) {
+      failures.push("missing generated OAuth pre-request script");
+    }
+    if (missingVariables.length > 0) {
+      failures.push(`missing OAuth collection variable(s): ${missingVariables.join(", ")}`);
+    }
+    if (bearerAuthRequestCount === 0) {
+      failures.push("no requests use generated bearer auth");
+    }
+    if (options.secretsResolverEnabled === false && containsSecretsResolverItem(collection.item)) {
+      failures.push("secrets resolver request is still present");
+    }
+    return {
+      ok: failures.length === 0,
+      summary: failures.length > 0 ? failures.join("; ") : `OAuth persisted on ${bearerAuthRequestCount} request(s)`
+    };
   }
-  if (missingVariables.length > 0) {
-    failures.push(`missing OAuth collection variable(s): ${missingVariables.join(", ")}`);
+  const apiKeyVariable = getApiKeyVariableName(authConfig);
+  const inheritedRequestCount = collectSmokeRequestItems(collection.item).length;
+  const requestsWithExplicitAuth = collectRequestsWithExplicitAuth(collection.item);
+  if (!variableKeys.has(apiKeyVariable)) {
+    failures.push(`missing API key collection variable: ${apiKeyVariable}`);
   }
-  if (bearerAuthRequestCount === 0) {
-    failures.push("no requests use generated bearer auth");
+  if (!collectionUsesApiKeyAuth(collection, authConfig)) {
+    failures.push("missing collection-level API key auth");
+  }
+  if (inheritedRequestCount === 0) {
+    failures.push("no requests inherit generated API key auth");
+  }
+  if (requestsWithExplicitAuth.length > 0) {
+    const sample = requestsWithExplicitAuth.slice(0, 5).join(", ");
+    const suffix = requestsWithExplicitAuth.length > 5 ? `, and ${requestsWithExplicitAuth.length - 5} more` : "";
+    failures.push(`request(s) override collection-level API key auth: ${sample}${suffix}`);
   }
   if (options.secretsResolverEnabled === false && containsSecretsResolverItem(collection.item)) {
     failures.push("secrets resolver request is still present");
   }
   return {
     ok: failures.length === 0,
-    summary: failures.length > 0 ? failures.join("; ") : `OAuth persisted on ${bearerAuthRequestCount} request(s)`
+    summary: failures.length > 0 ? failures.join("; ") : `API key auth persisted at collection level for ${inheritedRequestCount} request(s)`
+  };
+}
+function verifyGeneratedSmokeCollection(collection, authConfig, options = {}) {
+  const requestItems = collectSmokeRequestItems(collection.item);
+  const requestsMissingUrls = requestItems.filter((item) => {
+    const request = asRecord2(item.request);
+    return !request || !getRequestUrlText(request).trim();
+  }).map((item) => String(item.name ?? "<unnamed request>"));
+  const failures = [];
+  if (requestItems.length === 0) {
+    failures.push("no Smoke requests found in generated collection");
+  }
+  if (requestsMissingUrls.length > 0) {
+    const sample = requestsMissingUrls.slice(0, 5).join(", ");
+    const suffix = requestsMissingUrls.length > 5 ? `, and ${requestsMissingUrls.length - 5} more` : "";
+    failures.push(`generated Smoke request(s) missing URL: ${sample}${suffix}`);
+  }
+  if (!authConfig?.enabled && options.secretsResolverEnabled === false && containsSecretsResolverItem(collection.item)) {
+    failures.push("secrets resolver request is still present");
+  }
+  if (authConfig?.enabled) {
+    const authVerification = verifySmokeCollectionAuth(collection, authConfig, options);
+    if (!authVerification.ok) {
+      failures.push(authVerification.summary);
+    }
+  }
+  return {
+    ok: failures.length === 0,
+    summary: failures.length > 0 ? failures.join("; ") : `generated Smoke collection persisted with ${requestItems.length} request(s)`
   };
 }
 function verifyCuratedSmokeCollection(collection, flow, authConfig, options = {}) {
@@ -29254,16 +29533,26 @@ function curateRequestItem(resolved, authConfig) {
   applyFlowScripts(item, resolved.step);
   return item;
 }
-function applySmokeCollectionAuth(existingCollection, authConfig, options = {}) {
-  const collection = sanitizeForCollectionUpdate(structuredClone(existingCollection));
+function buildGeneratedSmokeCollection(generatedCollection, authConfig, options = {}) {
+  const collection = sanitizeForCollectionUpdate(structuredClone(generatedCollection));
+  if (options.collectionName) {
+    const info2 = asRecord2(collection.info) ?? {};
+    info2.name = options.collectionName;
+    collection.info = info2;
+  }
   if (options.secretsResolverEnabled === false) {
     collection.item = removeSecretsResolverItems(collection.item);
   }
-  applyCollectionAuth(collection, authConfig);
-  const authRequestCount = applyAuthToCollectionItems(collection.item, authConfig);
+  preserveRequestEventsFromCollection(collection, options.scriptSourceCollection);
+  let authRequestCount = 0;
+  if (authConfig?.enabled) {
+    applyCollectionAuth(collection, authConfig);
+    authRequestCount = applyAuthToCollectionItems(collection.item, authConfig);
+  }
   return {
     collection: sanitizeForCollectionUpdate(collection),
-    authRequestCount
+    authRequestCount,
+    requestCount: collectSmokeRequestItems(collection.item).length
   };
 }
 function buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests, authConfig, secretsResolverEnabled = true) {
@@ -29574,6 +29863,12 @@ function v2AuthToV3(auth) {
   const credentials = entries.map(asRecord3).filter((entry) => Boolean(entry)).map((entry) => ({ key: String(entry.key ?? ""), value: entry.value ?? "" }));
   return { type, credentials };
 }
+function isNoAuth(auth) {
+  return auth?.type === "noauth";
+}
+function isMissingPatchValueError(error2) {
+  return error2 instanceof HttpError && error2.status === 400 && error2.responseBody.includes("Remove operation must point to an existing value");
+}
 function looksLikeJson(raw) {
   const trimmed = raw.trim();
   if (!trimmed) return false;
@@ -29707,38 +30002,14 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
       throw new Error(`updateCollection: invalid collection payload for ${collectionUid}`);
     }
     await this.deleteAllItems(cid);
-    for (const leaf of asArray(desired.item)) {
-      const request = asRecord3(leaf.request) ?? {};
-      const createBody = {
-        $kind: "http-request",
-        name: typeof leaf.name === "string" ? leaf.name : "",
-        method: typeof request.method === "string" ? request.method : "GET",
-        url: v2UrlToRaw(request.url),
-        headers: v2HeadersToV3(request.header),
-        position: { parent: { id: cid, $kind: "collection" } }
-      };
-      const body = v2BodyToV3(asRecord3(request.body));
-      if (body) createBody.body = body;
-      const auth = v2AuthToV3(asRecord3(request.auth));
-      if (auth) createBody.auth = auth;
-      const created = await this.gateway.requestJson({
-        service: "collection",
-        method: "post",
-        path: `/v3/collections/${cid}/items/`,
-        headers: { "X-Entity-Type": "http-request" },
-        body: createBody
-      });
-      const newItemId = String(asRecord3(created?.data)?.id ?? "").trim();
-      const scripts = v2EventsToV3Scripts(leaf.event);
-      if (newItemId && scripts.length > 0) {
-        await this.patchItemScripts(cid, newItemId, scripts);
-      }
-    }
+    await this.createItemsRecursive(cid, desired.item, { id: cid, $kind: "collection" });
     const ops = [];
     const info2 = asRecord3(desired.info);
     const name = typeof info2?.name === "string" ? info2.name : void 0;
     if (name !== void 0) ops.push({ op: "replace", path: "/name", value: name });
-    const collAuth = v2AuthToV3(asRecord3(desired.auth));
+    const desiredAuth = asRecord3(desired.auth);
+    const collAuth = v2AuthToV3(desiredAuth);
+    const clearCollectionAuth = !collAuth && isNoAuth(desiredAuth);
     if (collAuth) ops.push({ op: "add", path: "/auth", value: collAuth });
     if (Array.isArray(desired.variable)) {
       const variables = desired.variable.map(asRecord3).filter((v) => Boolean(v)).map((v) => ({ key: String(v.key ?? ""), value: v.value ?? "" }));
@@ -29752,6 +30023,9 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         body: ops
       });
     }
+    if (clearCollectionAuth) {
+      await this.clearCollectionAuth(cid);
+    }
     const collScripts = v2EventsToV3CollectionScripts(desired.event);
     if (collScripts.length > 0) {
       await this.gateway.request({
@@ -29760,6 +30034,81 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         path: `/v3/collections/${cid}`,
         body: [{ op: "add", path: "/scripts", value: collScripts }]
       }).catch(() => void 0);
+    }
+  }
+  async clearCollectionAuth(cid) {
+    try {
+      await this.gateway.request({
+        service: "collection",
+        method: "patch",
+        path: `/v3/collections/${cid}`,
+        body: [{ op: "remove", path: "/auth" }]
+      });
+    } catch (error2) {
+      if (isMissingPatchValueError(error2)) {
+        return;
+      }
+      throw error2;
+    }
+  }
+  async createItemsRecursive(cid, items, parent) {
+    for (const item of asArray(items)) {
+      const request = asRecord3(item.request);
+      if (request) {
+        await this.createRequestItem(cid, item, request, parent);
+        continue;
+      }
+      if (Array.isArray(item.item)) {
+        const folderId = await this.createFolderItem(cid, item, parent);
+        await this.createItemsRecursive(cid, item.item, { id: folderId, $kind: "collection" });
+      }
+    }
+  }
+  async createFolderItem(cid, folder, parent) {
+    const createBody = {
+      $kind: "collection",
+      name: typeof folder.name === "string" ? folder.name : "",
+      position: { parent }
+    };
+    const created = await this.gateway.requestJson({
+      service: "collection",
+      method: "post",
+      path: `/v3/collections/${cid}/items/`,
+      headers: { "X-Entity-Type": "folder" },
+      body: createBody
+    });
+    const data = asRecord3(created?.data);
+    const folderId = String(data?.id ?? data?.uid ?? "").trim();
+    if (!folderId) {
+      throw new Error(`updateCollection: gateway did not return an id for folder ${String(folder.name ?? "").trim() || "<unnamed>"}`);
+    }
+    return folderId;
+  }
+  async createRequestItem(cid, leaf, request, parent) {
+    const createBody = {
+      $kind: "http-request",
+      name: typeof leaf.name === "string" ? leaf.name : "",
+      method: typeof request.method === "string" ? request.method : "GET",
+      url: v2UrlToRaw(request.url),
+      headers: v2HeadersToV3(request.header),
+      position: { parent }
+    };
+    const body = v2BodyToV3(asRecord3(request.body));
+    if (body) createBody.body = body;
+    const auth = v2AuthToV3(asRecord3(request.auth));
+    if (auth) createBody.auth = auth;
+    const created = await this.gateway.requestJson({
+      service: "collection",
+      method: "post",
+      path: `/v3/collections/${cid}/items/`,
+      headers: { "X-Entity-Type": "http-request" },
+      body: createBody
+    });
+    const data = asRecord3(created?.data);
+    const newItemId = String(data?.id ?? data?.uid ?? "").trim();
+    const scripts = v2EventsToV3Scripts(leaf.event);
+    if (newItemId && scripts.length > 0) {
+      await this.patchItemScripts(cid, newItemId, scripts);
     }
   }
   /**
@@ -30850,19 +31199,32 @@ function parseAuthConfig(value) {
   if (parsed.enabled !== true) {
     return void 0;
   }
-  if (parsed.type !== "oauth2") {
-    throw new Error("Invalid auth-config-json: only type=oauth2 is supported.");
+  if (parsed.type === "oauth2") {
+    if (parsed.grantType !== "client_credentials") {
+      throw new Error("Invalid auth-config-json: only grantType=client_credentials is supported.");
+    }
+    if (parsed.clientAuthentication !== "body") {
+      throw new Error("Invalid auth-config-json: only clientAuthentication=body is supported.");
+    }
+    if (typeof parsed.tokenUrl !== "string" || !parsed.tokenUrl.trim()) {
+      throw new Error("Invalid auth-config-json: tokenUrl is required.");
+    }
+    return parsed;
   }
-  if (parsed.grantType !== "client_credentials") {
-    throw new Error("Invalid auth-config-json: only grantType=client_credentials is supported.");
+  if (parsed.type === "apiKey") {
+    if (parsed.in !== "header" && parsed.in !== "query") {
+      throw new Error("Invalid auth-config-json: apiKey in must be one of: header, query.");
+    }
+    if (typeof parsed.name !== "string" || !parsed.name.trim()) {
+      throw new Error("Invalid auth-config-json: apiKey name is required.");
+    }
+    const variables = isRecord(parsed.variables) ? parsed.variables : void 0;
+    if (variables?.apiKey !== void 0 && (typeof variables.apiKey !== "string" || !variables.apiKey.trim())) {
+      throw new Error("Invalid auth-config-json: apiKey variables.apiKey must be a non-empty string when provided.");
+    }
+    return parsed;
   }
-  if (parsed.clientAuthentication !== "body") {
-    throw new Error("Invalid auth-config-json: only clientAuthentication=body is supported.");
-  }
-  if (typeof parsed.tokenUrl !== "string" || !parsed.tokenUrl.trim()) {
-    throw new Error("Invalid auth-config-json: tokenUrl is required.");
-  }
-  return parsed;
+  throw new Error("Invalid auth-config-json: supported auth types are oauth2 and apiKey.");
 }
 function readActionInputs(env = process.env) {
   return {
@@ -30949,7 +31311,7 @@ async function updateCanonicalCollectionUntilStable(options) {
       }
       return transformed;
     }
-    sourceCollection = stability.latestCollection;
+    sourceCollection = options.refreshSourceFromLatest === false ? options.initialSourceCollection : stability.latestCollection;
     if (attempt < STABLE_COLLECTION_UPDATE_MAX_ATTEMPTS) {
       options.dependencies.core.warning(
         `Canonical Smoke collection update was not stable after attempt ${attempt}: ${latestVerification.summary}. Reapplying to the latest collection.`
@@ -30984,51 +31346,100 @@ function createOutputs(summary2) {
     "assertion-count": String(summary2.assertionCount)
   };
 }
+function describeAuthConfig(authConfig) {
+  return authConfig.type === "apiKey" ? "API key" : "OAuth";
+}
+function getCollectionName(collection) {
+  const info2 = isRecord(collection.info) ? collection.info : void 0;
+  const name = typeof info2?.name === "string" ? info2.name.trim() : "";
+  return name || void 0;
+}
 async function runWithoutFlowManifest(inputs, dependencies) {
-  if (!inputs.authConfig?.enabled) {
-    dependencies.core.info("No flow-path or enabled auth-config-json was provided; skipping Smoke collection update.");
+  const authApplied = Boolean(inputs.authConfig?.enabled);
+  let tempCollectionId = "";
+  let tempCollectionDeleted = false;
+  let runFailed = false;
+  const warnings = [
+    authApplied ? `flow-path was not provided; refreshed canonical Smoke collection from the generated spec collection and applied ${describeAuthConfig(inputs.authConfig)} auth without flow curation.` : "flow-path was not provided; refreshed canonical Smoke collection from the generated spec collection without flow curation."
+  ];
+  try {
+    const existingCollection = await dependencies.postman.getCollection(inputs.smokeCollectionId);
+    const canonicalCollectionName = getCollectionName(existingCollection);
+    tempCollectionId = await dependencies.postman.generateCollection(inputs.specId, inputs.projectName, inputs.tempCollectionPrefix);
+    dependencies.core.info(`Generated temporary Smoke collection ${tempCollectionId}`);
+    const generatedCollection = await dependencies.postman.getCollection(tempCollectionId);
+    const transformed = await updateCanonicalCollectionUntilStable({
+      inputs,
+      dependencies,
+      initialSourceCollection: generatedCollection,
+      refreshSourceFromLatest: false,
+      buildCollection: (sourceCollection) => buildGeneratedSmokeCollection(sourceCollection, inputs.authConfig, {
+        secretsResolverEnabled: inputs.secretsResolverEnabled,
+        collectionName: canonicalCollectionName,
+        scriptSourceCollection: existingCollection
+      }),
+      verifyCollection: (collection) => verifyGeneratedSmokeCollection(collection, inputs.authConfig, {
+        secretsResolverEnabled: inputs.secretsResolverEnabled
+      })
+    });
+    const authDescription = authApplied ? ` with Smoke ${describeAuthConfig(inputs.authConfig)} auth on ${transformed.authRequestCount} request(s)` : "";
+    dependencies.core.info(
+      `Updated canonical Smoke collection ${inputs.smokeCollectionId} from generated spec collection${authDescription}.`
+    );
     return createOutputs({
       flowName: "",
-      status: "skipped",
+      status: "success",
+      temporaryCollectionId: tempCollectionId,
       canonicalSmokeCollectionId: inputs.smokeCollectionId,
-      authApplied: false,
+      authApplied,
+      authRequestCount: transformed.authRequestCount,
+      stepCount: 0,
+      resolvedOperationCount: 0,
+      appliedBindingCount: 0,
+      appliedExtractCount: 0,
+      assertionCount: 0,
+      warnings
+    });
+  } catch (error2) {
+    runFailed = true;
+    const summary2 = {
+      flowName: "",
+      status: "failed",
+      temporaryCollectionId: tempCollectionId || void 0,
+      canonicalSmokeCollectionId: inputs.smokeCollectionId,
+      authApplied,
       authRequestCount: 0,
       stepCount: 0,
       resolvedOperationCount: 0,
       appliedBindingCount: 0,
       appliedExtractCount: 0,
       assertionCount: 0,
-      warnings: []
+      warnings: [...warnings, summarizeError(error2)]
+    };
+    if (tempCollectionId && !inputs.keepTempCollectionOnFailure) {
+      try {
+        await dependencies.postman.deleteCollection(tempCollectionId);
+        tempCollectionDeleted = true;
+      } catch (cleanupError) {
+        dependencies.core.warning(`Failed to delete temporary Smoke collection ${tempCollectionId}: ${summarizeError(cleanupError)}`);
+      }
+    }
+    throw Object.assign(error2 instanceof Error ? error2 : new Error(String(error2)), {
+      summary: summary2
     });
+  } finally {
+    const shouldDeleteInFinally = tempCollectionId && !tempCollectionDeleted && !(runFailed && inputs.keepTempCollectionOnFailure);
+    if (shouldDeleteInFinally) {
+      try {
+        await dependencies.postman.deleteCollection(tempCollectionId);
+        dependencies.core.info(`Deleted temporary Smoke collection ${tempCollectionId}`);
+      } catch (cleanupError) {
+        if (!inputs.keepTempCollectionOnFailure) {
+          dependencies.core.warning(`Failed to delete temporary Smoke collection ${tempCollectionId}: ${summarizeError(cleanupError)}`);
+        }
+      }
+    }
   }
-  const existingCollection = await dependencies.postman.getCollection(inputs.smokeCollectionId);
-  const transformed = await updateCanonicalCollectionUntilStable({
-    inputs,
-    dependencies,
-    initialSourceCollection: existingCollection,
-    buildCollection: (sourceCollection) => applySmokeCollectionAuth(sourceCollection, inputs.authConfig, {
-      secretsResolverEnabled: inputs.secretsResolverEnabled
-    }),
-    verifyCollection: (collection) => verifySmokeCollectionAuth(collection, inputs.authConfig, {
-      secretsResolverEnabled: inputs.secretsResolverEnabled
-    })
-  });
-  dependencies.core.info(
-    `Updated canonical Smoke collection ${inputs.smokeCollectionId} with Smoke OAuth auth on ${transformed.authRequestCount} request(s).`
-  );
-  return createOutputs({
-    flowName: "",
-    status: "skipped",
-    canonicalSmokeCollectionId: inputs.smokeCollectionId,
-    authApplied: true,
-    authRequestCount: transformed.authRequestCount,
-    stepCount: 0,
-    resolvedOperationCount: 0,
-    appliedBindingCount: 0,
-    appliedExtractCount: 0,
-    assertionCount: 0,
-    warnings: ["flow-path was not provided; applied OAuth to the existing Smoke collection without flow curation."]
-  });
 }
 async function runSmokeFlow(inputs, dependencies) {
   if (inputs.postmanApiKey) {
