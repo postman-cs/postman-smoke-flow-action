@@ -39,6 +39,11 @@ function toInputEnvName(optionName: string): string {
   return `INPUT_${optionName.replace(/-/g, '_').toUpperCase()}`;
 }
 
+function setInputEnvValue(env: NodeJS.ProcessEnv, optionName: string, value: string): void {
+  env[`INPUT_${optionName.toUpperCase()}`] = value;
+  env[toInputEnvName(optionName)] = value;
+}
+
 export function parseCliArgs(argv: string[], _baseEnv: NodeJS.ProcessEnv = {}): ParsedCliArgs {
   void _baseEnv;
   const args = argv.slice(2);
@@ -104,11 +109,11 @@ export function parseCliArgs(argv: string[], _baseEnv: NodeJS.ProcessEnv = {}): 
         acknowledgeNoFlowRefresh = normalized === 'true';
         continue;
       }
-      env[toInputEnvName(optionName)] = normalized;
+      setInputEnvValue(env, optionName, normalized);
       continue;
     }
 
-    env[toInputEnvName(optionName)] = rawValue;
+    setInputEnvValue(env, optionName, rawValue);
   }
 
   return {

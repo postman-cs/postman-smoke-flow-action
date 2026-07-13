@@ -27,6 +27,22 @@ describe('CLI argument parsing', () => {
     expect(env.INPUT_POSTMAN_API_KEY).toBe('PMAK-123');
   });
 
+  it('writes explicit CLI values to runner-form and normalized aliases', () => {
+    const parsed = parseCliArgs(
+      ['node', 'postman-smoke-flow', '--project-name=cli-project', '--flow-path', 'examples/flow.yaml'],
+      {}
+    );
+    expect(parsed.kind).toBe('run');
+    if (parsed.kind !== 'run') {
+      return;
+    }
+
+    expect(parsed.env['INPUT_PROJECT-NAME']).toBe('cli-project');
+    expect(parsed.env.INPUT_PROJECT_NAME).toBe('cli-project');
+    expect(parsed.env['INPUT_FLOW-PATH']).toBe('examples/flow.yaml');
+    expect(parsed.env.INPUT_FLOW_PATH).toBe('examples/flow.yaml');
+  });
+
   it('rejects unknown options such as --flow-pth', () => {
     expect(() =>
       parseCliArgs(['node', 'postman-smoke-flow', '--flow-pth', 'flow.yaml'], {})

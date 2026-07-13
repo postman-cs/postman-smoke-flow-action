@@ -26069,6 +26069,10 @@ function normalizeBooleanFlag(flagName, rawValue) {
 function toInputEnvName(optionName) {
   return `INPUT_${optionName.replace(/-/g, "_").toUpperCase()}`;
 }
+function setInputEnvValue(env, optionName, value) {
+  env[`INPUT_${optionName.toUpperCase()}`] = value;
+  env[toInputEnvName(optionName)] = value;
+}
 function parseCliArgs(argv, _baseEnv = {}) {
   void _baseEnv;
   const args = argv.slice(2);
@@ -26125,10 +26129,10 @@ function parseCliArgs(argv, _baseEnv = {}) {
         acknowledgeNoFlowRefresh = normalized === "true";
         continue;
       }
-      env[toInputEnvName(optionName)] = normalized;
+      setInputEnvValue(env, optionName, normalized);
       continue;
     }
-    env[toInputEnvName(optionName)] = rawValue;
+    setInputEnvValue(env, optionName, rawValue);
   }
   return {
     kind: "run",

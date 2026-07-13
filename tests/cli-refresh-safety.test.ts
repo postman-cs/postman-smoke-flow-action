@@ -219,4 +219,36 @@ describe('INPUT alias conflict behavior', () => {
       } as NodeJS.ProcessEnv)
     ).toThrow(/Conflicting values for input project-name/);
   });
+
+  it('lets explicit project-name and flow-path override both inherited aliases', async () => {
+    mintSpy.mockClear();
+    preflightSpy.mockClear();
+
+    await expect(
+      runCli(
+        [
+          'node',
+          'postman-smoke-flow',
+          '--project-name',
+          'cli-project',
+          '--flow-path',
+          'examples/flow.yaml'
+        ],
+        silentCore(),
+        {
+          'INPUT_PROJECT-NAME': 'runner-project',
+          INPUT_PROJECT_NAME: 'normalized-project',
+          'INPUT_FLOW-PATH': 'runner-flow.yaml',
+          INPUT_FLOW_PATH: 'normalized-flow.yaml',
+          INPUT_WORKSPACE_ID: 'ws-1',
+          INPUT_SPEC_ID: 'spec-1',
+          INPUT_SMOKE_COLLECTION_ID: 'col-1',
+          INPUT_POSTMAN_ACCESS_TOKEN: 'pma_at'
+        } as NodeJS.ProcessEnv
+      )
+    ).rejects.not.toThrow(/Conflicting values|acknowledge-no-flow-refresh/);
+
+    expect(mintSpy).toHaveBeenCalled();
+    expect(preflightSpy).toHaveBeenCalled();
+  });
 });
