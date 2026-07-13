@@ -31159,11 +31159,18 @@ function sleep3(ms) {
     setTimeout(resolve2, ms);
   });
 }
-function parseBooleanInput(value, defaultValue) {
+function parseBooleanInput(name, value, defaultValue) {
   if (value === void 0 || value === "") {
     return defaultValue;
   }
-  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  throw new Error(`Invalid boolean value for ${name}: ${value}`);
 }
 function resolvePostmanApiBaseUrl(regionInput) {
   const region = String(regionInput || "us").trim().toLowerCase();
@@ -31176,9 +31183,21 @@ function resolvePostmanIapubBaseUrl(regionInput) {
   return "https://iapub.postman.co";
 }
 function getInput2(name, env) {
-  const canonicalEnvName = `INPUT_${name.replace(/ /g, "_").toUpperCase()}`;
-  const legacyEnvName = `INPUT_${name.replace(/ /g, "_").replace(/-/g, "_").toUpperCase()}`;
-  return String(env[canonicalEnvName] ?? env[legacyEnvName] ?? "").trim();
+  const runnerEnvName = `INPUT_${name.replace(/ /g, "_").toUpperCase()}`;
+  const normalizedEnvName = `INPUT_${name.replace(/ /g, "_").replace(/-/g, "_").toUpperCase()}`;
+  const hasRunner = Object.prototype.hasOwnProperty.call(env, runnerEnvName);
+  const hasNormalized = Object.prototype.hasOwnProperty.call(env, normalizedEnvName);
+  if (runnerEnvName !== normalizedEnvName && hasRunner && hasNormalized) {
+    const runnerValue = String(env[runnerEnvName] ?? "").trim();
+    const normalizedValue = String(env[normalizedEnvName] ?? "").trim();
+    if (runnerValue !== normalizedValue) {
+      throw new Error(
+        `Conflicting values for input ${name}: both ${runnerEnvName} and ${normalizedEnvName} are set differently.`
+      );
+    }
+  }
+  const raw = hasRunner ? env[runnerEnvName] : hasNormalized ? env[normalizedEnvName] : void 0;
+  return String(raw ?? "").trim();
 }
 function isRecord(value) {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -31237,13 +31256,25 @@ function readActionInputs(env = process.env) {
     postmanApiBaseUrl: resolvePostmanApiBaseUrl(getInput2("postman-region", env)),
     postmanIapubBaseUrl: resolvePostmanIapubBaseUrl(getInput2("postman-region", env)),
     authConfig: parseAuthConfig(getInput2("auth-config-json", env)),
-    secretsResolverEnabled: parseBooleanInput(getInput2("secrets-resolver-enabled", env), true),
+    secretsResolverEnabled: parseBooleanInput(
+      "secrets-resolver-enabled",
+      getInput2("secrets-resolver-enabled", env),
+      true
+    ),
     specPath: getInput2("spec-path", env) || void 0,
     debugDumpPath: getInput2("debug-dump-path", env) || void 0,
     collectionSyncMode: getInput2("collection-sync-mode", env) || "refresh",
     postmanAccessToken: getInput2("postman-access-token", env) || void 0,
-    failOnFlowWarning: parseBooleanInput(getInput2("fail-on-flow-warning", env), false),
-    keepTempCollectionOnFailure: parseBooleanInput(getInput2("keep-temp-collection-on-failure", env), false),
+    failOnFlowWarning: parseBooleanInput(
+      "fail-on-flow-warning",
+      getInput2("fail-on-flow-warning", env),
+      false
+    ),
+    keepTempCollectionOnFailure: parseBooleanInput(
+      "keep-temp-collection-on-failure",
+      getInput2("keep-temp-collection-on-failure", env),
+      false
+    ),
     tempCollectionPrefix: getInput2("temp-collection-prefix", env) || "[Smoke][Temp]",
     teamId: getInput2("team-id", env) || env.POSTMAN_TEAM_ID || void 0
   };
@@ -31331,6 +31362,22 @@ function ensureRequiredInputs(inputs) {
         throw new Error(`Missing required input: ${name}`);
       }
     }
+  }
+}
+function validateInputsBeforeSideEffects(inputs) {
+  ensureRequiredInputs(inputs);
+  if (inputs.collectionSyncMode !== "refresh") {
+    throw new Error(
+      `collection-sync-mode=refresh is the only supported mode for postman-smoke-flow-action; received ${inputs.collectionSyncMode}.`
+    );
+  }
+  const flowPath = inputs.flowPath?.trim();
+  if (!flowPath) {
+    return;
+  }
+  const { warnings } = validateFlowManifest(loadFlowManifest(flowPath));
+  if (warnings.length > 0 && inputs.failOnFlowWarning) {
+    throw new Error(`Flow validation produced ${warnings.length} warning(s) and fail-on-flow-warning=true.`);
   }
 }
 function createOutputs(summary2) {
@@ -31565,6 +31612,7 @@ function createSmokeClient(inputs, actionCore) {
 }
 async function runAction(actionCore = core_exports, env = process.env) {
   const inputs = readActionInputs(env);
+  validateInputsBeforeSideEffects(inputs);
   const mintHolder = {
     postmanAccessToken: inputs.postmanAccessToken,
     postmanApiKey: inputs.postmanApiKey,

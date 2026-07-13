@@ -48,11 +48,22 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
-function parseBooleanInput(value: string | undefined, defaultValue: boolean): boolean {
+function parseBooleanInput(
+  name: string,
+  value: string | undefined,
+  defaultValue: boolean
+): boolean {
   if (value === undefined || value === '') {
     return defaultValue;
   }
-  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+    return true;
+  }
+  if (['0', 'false', 'no', 'off'].includes(normalized)) {
+    return false;
+  }
+  throw new Error(`Invalid boolean value for ${name}: ${value}`);
 }
 
 function resolvePostmanApiBaseUrl(regionInput: string): string {
@@ -71,9 +82,25 @@ function resolvePostmanIapubBaseUrl(regionInput: string): string {
 }
 
 function getInput(name: string, env: NodeJS.ProcessEnv): string {
-  const canonicalEnvName = `INPUT_${name.replace(/ /g, '_').toUpperCase()}`;
-  const legacyEnvName = `INPUT_${name.replace(/ /g, '_').replace(/-/g, '_').toUpperCase()}`;
-  return String(env[canonicalEnvName] ?? env[legacyEnvName] ?? '').trim();
+  // GitHub runner form preserves hyphens: INPUT_PROJECT-NAME
+  const runnerEnvName = `INPUT_${name.replace(/ /g, '_').toUpperCase()}`;
+  // Normalized/CLI form replaces hyphens: INPUT_PROJECT_NAME
+  const normalizedEnvName = `INPUT_${name.replace(/ /g, '_').replace(/-/g, '_').toUpperCase()}`;
+  const hasRunner = Object.prototype.hasOwnProperty.call(env, runnerEnvName);
+  const hasNormalized = Object.prototype.hasOwnProperty.call(env, normalizedEnvName);
+
+  if (runnerEnvName !== normalizedEnvName && hasRunner && hasNormalized) {
+    const runnerValue = String(env[runnerEnvName] ?? '').trim();
+    const normalizedValue = String(env[normalizedEnvName] ?? '').trim();
+    if (runnerValue !== normalizedValue) {
+      throw new Error(
+        `Conflicting values for input ${name}: both ${runnerEnvName} and ${normalizedEnvName} are set differently.`
+      );
+    }
+  }
+
+  const raw = hasRunner ? env[runnerEnvName] : hasNormalized ? env[normalizedEnvName] : undefined;
+  return String(raw ?? '').trim();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -140,13 +167,25 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
     postmanApiBaseUrl: resolvePostmanApiBaseUrl(getInput('postman-region', env)),
     postmanIapubBaseUrl: resolvePostmanIapubBaseUrl(getInput('postman-region', env)),
     authConfig: parseAuthConfig(getInput('auth-config-json', env)),
-    secretsResolverEnabled: parseBooleanInput(getInput('secrets-resolver-enabled', env), true),
+    secretsResolverEnabled: parseBooleanInput(
+      'secrets-resolver-enabled',
+      getInput('secrets-resolver-enabled', env),
+      true
+    ),
     specPath: getInput('spec-path', env) || undefined,
     debugDumpPath: getInput('debug-dump-path', env) || undefined,
     collectionSyncMode: (getInput('collection-sync-mode', env) || 'refresh') as 'refresh' | 'version',
     postmanAccessToken: getInput('postman-access-token', env) || undefined,
-    failOnFlowWarning: parseBooleanInput(getInput('fail-on-flow-warning', env), false),
-    keepTempCollectionOnFailure: parseBooleanInput(getInput('keep-temp-collection-on-failure', env), false),
+    failOnFlowWarning: parseBooleanInput(
+      'fail-on-flow-warning',
+      getInput('fail-on-flow-warning', env),
+      false
+    ),
+    keepTempCollectionOnFailure: parseBooleanInput(
+      'keep-temp-collection-on-failure',
+      getInput('keep-temp-collection-on-failure', env),
+      false
+    ),
     tempCollectionPrefix: getInput('temp-collection-prefix', env) || '[Smoke][Temp]',
     teamId: getInput('team-id', env) || env.POSTMAN_TEAM_ID || undefined
   };
@@ -258,6 +297,24 @@ function ensureRequiredInputs(inputs: ActionInputs): void {
         throw new Error(`Missing required input: ${name}`);
       }
     }
+  }
+}
+
+function validateInputsBeforeSideEffects(inputs: ActionInputs): void {
+  ensureRequiredInputs(inputs);
+  if (inputs.collectionSyncMode !== 'refresh') {
+    throw new Error(
+      `collection-sync-mode=refresh is the only supported mode for postman-smoke-flow-action; received ${inputs.collectionSyncMode}.`
+    );
+  }
+
+  const flowPath = inputs.flowPath?.trim();
+  if (!flowPath) {
+    return;
+  }
+  const { warnings } = validateFlowManifest(loadFlowManifest(flowPath));
+  if (warnings.length > 0 && inputs.failOnFlowWarning) {
+    throw new Error(`Flow validation produced ${warnings.length} warning(s) and fail-on-flow-warning=true.`);
   }
 }
 
@@ -542,7 +599,10 @@ function createSmokeClient(
 }
 
 export async function runAction(actionCore: CoreLike = core, env: NodeJS.ProcessEnv = process.env): Promise<ActionOutputs> {
+  // Validate all input syntax/required fields before token mint, credential
+  // preflight, telemetry, or client construction. A typo must not start side effects.
   const inputs = readActionInputs(env);
+  validateInputsBeforeSideEffects(inputs);
 
   // PMAK-only runs: eagerly mint the short-lived access token from the service
   // -account PMAK so the access-token-only gateway reshape works exactly as

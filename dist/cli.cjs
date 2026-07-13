@@ -33,6 +33,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // node_modules/tunnel/lib/tunnel.js
 var require_tunnel = __commonJS({
@@ -26002,27 +26003,159 @@ var require_dist = __commonJS({
   }
 });
 
+// src/cli.ts
+var cli_exports = {};
+__export(cli_exports, {
+  assertCliNoFlowRefreshAllowed: () => assertCliNoFlowRefreshAllowed,
+  runCli: () => runCli
+});
+module.exports = __toCommonJS(cli_exports);
+
+// src/contracts.ts
+var smokeFlowActionContract = {
+  inputs: {
+    "project-name": { required: true },
+    "workspace-id": { required: true },
+    "spec-id": { required: true },
+    "smoke-collection-id": { required: true },
+    "flow-path": { required: false },
+    "postman-api-key": { required: false },
+    "postman-region": { required: false, default: "us" },
+    "auth-config-json": { required: false },
+    "secrets-resolver-enabled": { required: false, default: "true" },
+    "spec-path": { required: false },
+    "debug-dump-path": { required: false },
+    "collection-sync-mode": { required: false, default: "refresh" },
+    "postman-access-token": { required: false },
+    "fail-on-flow-warning": { required: false, default: "false" },
+    "keep-temp-collection-on-failure": { required: false, default: "false" },
+    "temp-collection-prefix": { required: false, default: "[Smoke][Temp]" },
+    "team-id": { required: false }
+  },
+  outputs: {
+    "smoke-collection-id": {},
+    "flow-apply-status": {},
+    "flow-apply-summary-json": {},
+    "temporary-smoke-collection-id": {},
+    "flow-step-count": {},
+    "resolved-operation-count": {},
+    "applied-binding-count": {},
+    "applied-extract-count": {},
+    "assertion-count": {}
+  }
+};
+
 // src/lib/cli-args.ts
-function applyArgsToEnv(argv, env) {
-  for (let index = 2; index < argv.length; index += 1) {
-    const key = argv[index];
-    if (!key?.startsWith("--")) {
+var ACKNOWLEDGE_NO_FLOW_REFRESH_FLAG = "acknowledge-no-flow-refresh";
+var BOOLEAN_TRUE = /* @__PURE__ */ new Set(["1", "true", "yes", "on"]);
+var BOOLEAN_FALSE = /* @__PURE__ */ new Set(["0", "false", "no", "off"]);
+var BOOLEAN_INPUT_OPTIONS = /* @__PURE__ */ new Set([
+  "secrets-resolver-enabled",
+  "fail-on-flow-warning",
+  "keep-temp-collection-on-failure"
+]);
+var KNOWN_INPUT_OPTIONS = new Set(Object.keys(smokeFlowActionContract.inputs));
+var KNOWN_OPTIONS = /* @__PURE__ */ new Set([...KNOWN_INPUT_OPTIONS, ACKNOWLEDGE_NO_FLOW_REFRESH_FLAG, "help", "version"]);
+function normalizeBooleanFlag(flagName, rawValue) {
+  const normalized = rawValue.trim().toLowerCase();
+  if (BOOLEAN_TRUE.has(normalized)) {
+    return "true";
+  }
+  if (BOOLEAN_FALSE.has(normalized)) {
+    return "false";
+  }
+  throw new Error(`Invalid boolean value for --${flagName}: ${rawValue}`);
+}
+function toInputEnvName(optionName) {
+  return `INPUT_${optionName.replace(/-/g, "_").toUpperCase()}`;
+}
+function setInputEnvValue(env, optionName, value) {
+  env[`INPUT_${optionName.toUpperCase()}`] = value;
+  env[toInputEnvName(optionName)] = value;
+}
+function parseCliArgs(argv, _baseEnv = {}) {
+  void _baseEnv;
+  const args = argv.slice(2);
+  const env = {};
+  const seen = /* @__PURE__ */ new Set();
+  let acknowledgeNoFlowRefresh = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (!token) {
       continue;
     }
-    const rawInput = key.slice(2);
-    const equalsIndex = rawInput.indexOf("=");
-    const inputName = equalsIndex >= 0 ? rawInput.slice(0, equalsIndex) : rawInput;
-    const value = equalsIndex >= 0 ? rawInput.slice(equalsIndex + 1) : argv[index + 1];
-    env[`INPUT_${inputName.replace(/-/g, "_").toUpperCase()}`] = value ?? "";
-    if (equalsIndex < 0) {
-      index += 1;
+    if (!token.startsWith("--")) {
+      throw new Error(`Unexpected positional argument: ${token}`);
     }
+    const raw = token.slice(2);
+    const equalsIndex = raw.indexOf("=");
+    const optionName = equalsIndex >= 0 ? raw.slice(0, equalsIndex) : raw;
+    if (!optionName || !KNOWN_OPTIONS.has(optionName)) {
+      throw new Error(`Unknown option: --${optionName || token.slice(2)}`);
+    }
+    if (optionName === "help" || optionName === "version") {
+      if (equalsIndex >= 0) {
+        throw new Error(`Option --${optionName} does not accept a value`);
+      }
+      if (args.length !== 1) {
+        throw new Error(`Option --${optionName} cannot be combined with other options`);
+      }
+      return { kind: optionName };
+    }
+    if (seen.has(optionName)) {
+      throw new Error(`Duplicate option: --${optionName}`);
+    }
+    seen.add(optionName);
+    let rawValue;
+    if (equalsIndex >= 0) {
+      rawValue = raw.slice(equalsIndex + 1);
+    } else {
+      const next = args[index + 1];
+      if (next !== void 0 && !next.startsWith("--")) {
+        rawValue = next;
+        index += 1;
+      } else if (optionName === ACKNOWLEDGE_NO_FLOW_REFRESH_FLAG) {
+        rawValue = "true";
+      } else {
+        throw new Error(`Missing value for --${optionName}`);
+      }
+    }
+    if (rawValue === "") {
+      throw new Error(`Missing value for --${optionName}`);
+    }
+    if (BOOLEAN_INPUT_OPTIONS.has(optionName) || optionName === ACKNOWLEDGE_NO_FLOW_REFRESH_FLAG) {
+      const normalized = normalizeBooleanFlag(optionName, rawValue);
+      if (optionName === ACKNOWLEDGE_NO_FLOW_REFRESH_FLAG) {
+        acknowledgeNoFlowRefresh = normalized === "true";
+        continue;
+      }
+      setInputEnvValue(env, optionName, normalized);
+      continue;
+    }
+    setInputEnvValue(env, optionName, rawValue);
   }
+  return {
+    kind: "run",
+    env,
+    acknowledgeNoFlowRefresh
+  };
 }
 
 // src/lib/logging.ts
 function summarizeError(error2) {
   return error2 instanceof Error ? error2.message : String(error2);
+}
+
+// src/action-version.ts
+var import_node_fs = require("node:fs");
+var import_node_path = require("node:path");
+function resolveActionVersion() {
+  try {
+    const raw = (0, import_node_fs.readFileSync)((0, import_node_path.join)(__dirname, "..", "package.json"), "utf8");
+    return JSON.parse(raw).version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 // node_modules/@actions/core/lib/core.js
@@ -28302,46 +28435,12 @@ function getIDToken(aud) {
 var import_node_fs4 = require("node:fs");
 var import_node_path3 = __toESM(require("node:path"), 1);
 
-// src/contracts.ts
-var smokeFlowActionContract = {
-  inputs: {
-    "project-name": { required: true },
-    "workspace-id": { required: true },
-    "spec-id": { required: true },
-    "smoke-collection-id": { required: true },
-    "flow-path": { required: false },
-    "postman-api-key": { required: false },
-    "postman-region": { required: false, default: "us" },
-    "auth-config-json": { required: false },
-    "secrets-resolver-enabled": { required: false, default: "true" },
-    "spec-path": { required: false },
-    "debug-dump-path": { required: false },
-    "collection-sync-mode": { required: false, default: "refresh" },
-    "postman-access-token": { required: false },
-    "fail-on-flow-warning": { required: false, default: "false" },
-    "keep-temp-collection-on-failure": { required: false, default: "false" },
-    "temp-collection-prefix": { required: false, default: "[Smoke][Temp]" },
-    "team-id": { required: false }
-  },
-  outputs: {
-    "smoke-collection-id": {},
-    "flow-apply-status": {},
-    "flow-apply-summary-json": {},
-    "temporary-smoke-collection-id": {},
-    "flow-step-count": {},
-    "resolved-operation-count": {},
-    "applied-binding-count": {},
-    "applied-extract-count": {},
-    "assertion-count": {}
-  }
-};
-
 // src/flow/parser.ts
-var import_node_fs = require("node:fs");
+var import_node_fs2 = require("node:fs");
 var import_yaml = __toESM(require_dist(), 1);
 
 // src/lib/paths.ts
-var import_node_path = __toESM(require("node:path"), 1);
+var import_node_path2 = __toESM(require("node:path"), 1);
 
 // src/lib/errors.ts
 var ValidationError = class extends Error {
@@ -28349,10 +28448,10 @@ var ValidationError = class extends Error {
 
 // src/lib/paths.ts
 function assertPathWithinCwd(targetPath, fieldName) {
-  const base = import_node_path.default.resolve(".");
-  const resolved = import_node_path.default.resolve(base, targetPath);
-  const relative2 = import_node_path.default.relative(base, resolved);
-  if (relative2.startsWith("..") || import_node_path.default.isAbsolute(relative2)) {
+  const base = import_node_path2.default.resolve(".");
+  const resolved = import_node_path2.default.resolve(base, targetPath);
+  const relative2 = import_node_path2.default.relative(base, resolved);
+  if (relative2.startsWith("..") || import_node_path2.default.isAbsolute(relative2)) {
     throw new ValidationError(`${fieldName} must stay within the repository root; received ${targetPath}`);
   }
   return resolved;
@@ -28361,7 +28460,7 @@ function assertPathWithinCwd(targetPath, fieldName) {
 // src/flow/parser.ts
 function loadFlowManifest(flowPath) {
   const resolved = assertPathWithinCwd(flowPath, "flow-path");
-  const raw = (0, import_node_fs.readFileSync)(resolved, "utf8");
+  const raw = (0, import_node_fs2.readFileSync)(resolved, "utf8");
   const parsed = (0, import_yaml.parse)(raw);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new ValidationError("flow.yaml must parse to an object.");
@@ -28370,7 +28469,7 @@ function loadFlowManifest(flowPath) {
 }
 
 // src/flow/resolver.ts
-var import_node_fs2 = require("node:fs");
+var import_node_fs3 = require("node:fs");
 var import_yaml2 = __toESM(require_dist(), 1);
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
@@ -28430,7 +28529,7 @@ function loadOperationMatches(specPath) {
   if (!specPath) {
     return /* @__PURE__ */ new Map();
   }
-  const document = (0, import_yaml2.parse)((0, import_node_fs2.readFileSync)(specPath, "utf8"));
+  const document = (0, import_yaml2.parse)((0, import_node_fs3.readFileSync)(specPath, "utf8"));
   const paths = asRecord(document?.paths);
   if (!paths) {
     return /* @__PURE__ */ new Map();
@@ -31031,7 +31130,7 @@ var proxyDispatcher;
 function getProxyDispatcher() {
   return proxyDispatcher ??= new import_undici2.EnvHttpProxyAgent();
 }
-function resolveActionVersion(explicit) {
+function resolveActionVersion2(explicit) {
   if (explicit) {
     return explicit;
   }
@@ -31117,7 +31216,7 @@ async function send(event, options) {
 function createTelemetryContext(options) {
   const env = options.env ?? process.env;
   const now = options.now ?? Date.now;
-  const actionVersion = resolveActionVersion(options.actionVersion);
+  const actionVersion = resolveActionVersion2(options.actionVersion);
   let teamId = "";
   let accountType = "unknown";
   let emitted = false;
@@ -31157,18 +31256,6 @@ function createTelemetryContext(options) {
   };
 }
 
-// src/action-version.ts
-var import_node_fs3 = require("node:fs");
-var import_node_path2 = require("node:path");
-function resolveActionVersion2() {
-  try {
-    const raw = (0, import_node_fs3.readFileSync)((0, import_node_path2.join)(__dirname, "..", "package.json"), "utf8");
-    return JSON.parse(raw).version ?? "unknown";
-  } catch {
-    return "unknown";
-  }
-}
-
 // src/index.ts
 var STABLE_COLLECTION_UPDATE_MAX_ATTEMPTS = 6;
 var STABLE_COLLECTION_UPDATE_VERIFY_COUNT = 3;
@@ -31178,11 +31265,18 @@ function sleep3(ms) {
     setTimeout(resolve2, ms);
   });
 }
-function parseBooleanInput(value, defaultValue) {
+function parseBooleanInput(name, value, defaultValue) {
   if (value === void 0 || value === "") {
     return defaultValue;
   }
-  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  throw new Error(`Invalid boolean value for ${name}: ${value}`);
 }
 function resolvePostmanApiBaseUrl(regionInput) {
   const region = String(regionInput || "us").trim().toLowerCase();
@@ -31195,9 +31289,21 @@ function resolvePostmanIapubBaseUrl(regionInput) {
   return "https://iapub.postman.co";
 }
 function getInput2(name, env) {
-  const canonicalEnvName = `INPUT_${name.replace(/ /g, "_").toUpperCase()}`;
-  const legacyEnvName = `INPUT_${name.replace(/ /g, "_").replace(/-/g, "_").toUpperCase()}`;
-  return String(env[canonicalEnvName] ?? env[legacyEnvName] ?? "").trim();
+  const runnerEnvName = `INPUT_${name.replace(/ /g, "_").toUpperCase()}`;
+  const normalizedEnvName = `INPUT_${name.replace(/ /g, "_").replace(/-/g, "_").toUpperCase()}`;
+  const hasRunner = Object.prototype.hasOwnProperty.call(env, runnerEnvName);
+  const hasNormalized = Object.prototype.hasOwnProperty.call(env, normalizedEnvName);
+  if (runnerEnvName !== normalizedEnvName && hasRunner && hasNormalized) {
+    const runnerValue = String(env[runnerEnvName] ?? "").trim();
+    const normalizedValue = String(env[normalizedEnvName] ?? "").trim();
+    if (runnerValue !== normalizedValue) {
+      throw new Error(
+        `Conflicting values for input ${name}: both ${runnerEnvName} and ${normalizedEnvName} are set differently.`
+      );
+    }
+  }
+  const raw = hasRunner ? env[runnerEnvName] : hasNormalized ? env[normalizedEnvName] : void 0;
+  return String(raw ?? "").trim();
 }
 function isRecord(value) {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -31256,13 +31362,25 @@ function readActionInputs(env = process.env) {
     postmanApiBaseUrl: resolvePostmanApiBaseUrl(getInput2("postman-region", env)),
     postmanIapubBaseUrl: resolvePostmanIapubBaseUrl(getInput2("postman-region", env)),
     authConfig: parseAuthConfig(getInput2("auth-config-json", env)),
-    secretsResolverEnabled: parseBooleanInput(getInput2("secrets-resolver-enabled", env), true),
+    secretsResolverEnabled: parseBooleanInput(
+      "secrets-resolver-enabled",
+      getInput2("secrets-resolver-enabled", env),
+      true
+    ),
     specPath: getInput2("spec-path", env) || void 0,
     debugDumpPath: getInput2("debug-dump-path", env) || void 0,
     collectionSyncMode: getInput2("collection-sync-mode", env) || "refresh",
     postmanAccessToken: getInput2("postman-access-token", env) || void 0,
-    failOnFlowWarning: parseBooleanInput(getInput2("fail-on-flow-warning", env), false),
-    keepTempCollectionOnFailure: parseBooleanInput(getInput2("keep-temp-collection-on-failure", env), false),
+    failOnFlowWarning: parseBooleanInput(
+      "fail-on-flow-warning",
+      getInput2("fail-on-flow-warning", env),
+      false
+    ),
+    keepTempCollectionOnFailure: parseBooleanInput(
+      "keep-temp-collection-on-failure",
+      getInput2("keep-temp-collection-on-failure", env),
+      false
+    ),
     tempCollectionPrefix: getInput2("temp-collection-prefix", env) || "[Smoke][Temp]",
     teamId: getInput2("team-id", env) || env.POSTMAN_TEAM_ID || void 0
   };
@@ -31350,6 +31468,22 @@ function ensureRequiredInputs(inputs) {
         throw new Error(`Missing required input: ${name}`);
       }
     }
+  }
+}
+function validateInputsBeforeSideEffects(inputs) {
+  ensureRequiredInputs(inputs);
+  if (inputs.collectionSyncMode !== "refresh") {
+    throw new Error(
+      `collection-sync-mode=refresh is the only supported mode for postman-smoke-flow-action; received ${inputs.collectionSyncMode}.`
+    );
+  }
+  const flowPath = inputs.flowPath?.trim();
+  if (!flowPath) {
+    return;
+  }
+  const { warnings } = validateFlowManifest(loadFlowManifest(flowPath));
+  if (warnings.length > 0 && inputs.failOnFlowWarning) {
+    throw new Error(`Flow validation produced ${warnings.length} warning(s) and fail-on-flow-warning=true.`);
   }
 }
 function createOutputs(summary2) {
@@ -31584,6 +31718,7 @@ function createSmokeClient(inputs, actionCore) {
 }
 async function runAction(actionCore = core_exports, env = process.env) {
   const inputs = readActionInputs(env);
+  validateInputsBeforeSideEffects(inputs);
   const mintHolder = {
     postmanAccessToken: inputs.postmanAccessToken,
     postmanApiKey: inputs.postmanApiKey,
@@ -31595,7 +31730,7 @@ async function runAction(actionCore = core_exports, env = process.env) {
     (secret) => actionCore.setSecret?.(secret)
   );
   inputs.postmanAccessToken = mintHolder.postmanAccessToken;
-  const telemetry = createTelemetryContext({ action: "postman-smoke-flow-action", actionVersion: resolveActionVersion2(), logger: actionCore });
+  const telemetry = createTelemetryContext({ action: "postman-smoke-flow-action", actionVersion: resolveActionVersion(), logger: actionCore });
   telemetry.setTeamId(inputs.teamId);
   if (inputs.postmanApiKey) {
     actionCore.setSecret?.(inputs.postmanApiKey);
@@ -31648,17 +31783,79 @@ var cliCore = {
     console.error(`error: ${message}`);
   }
 };
-async function main() {
-  const env = { ...process.env };
-  applyArgsToEnv(process.argv, env);
-  readActionInputs(env);
-  await runAction(cliCore, env);
-  process.stdout.write(`${JSON.stringify(outputs, null, 2)}
+function printHelp() {
+  process.stdout.write(`Usage: postman-smoke-flow [options]
+
+Apply a curated flow.yaml to a Postman Smoke collection, or refresh the
+canonical collection from the generated spec collection.
+
+Options mirror action.yml inputs as --kebab-case flags.
+
+Destructive no-flow refresh (omitting --flow-path) requires:
+  --${ACKNOWLEDGE_NO_FLOW_REFRESH_FLAG}
+
+Other:
+  --help       Show this help text and exit
+  --version    Print the package version and exit
 `);
 }
-main().catch((error2) => {
-  console.error(summarizeError(error2));
-  process.exitCode = 1;
+function printVersion() {
+  process.stdout.write(`${resolveActionVersion()}
+`);
+}
+function assertCliNoFlowRefreshAllowed(options) {
+  const flowPath = options.flowPath?.trim();
+  if (flowPath) {
+    return;
+  }
+  if (options.acknowledgeNoFlowRefresh) {
+    return;
+  }
+  throw new Error(
+    `Omitting --flow-path selects a destructive full canonical Smoke refresh. Re-run with --flow-path <path> or pass --${ACKNOWLEDGE_NO_FLOW_REFRESH_FLAG} to acknowledge.`
+  );
+}
+async function runCli(argv = process.argv, actionCore = cliCore, env = process.env) {
+  const parsed = parseCliArgs(argv, env);
+  if (parsed.kind === "help") {
+    printHelp();
+    return;
+  }
+  if (parsed.kind === "version") {
+    printVersion();
+    return;
+  }
+  const mergedEnv = { ...env, ...parsed.env };
+  const inputs = readActionInputs(mergedEnv);
+  assertCliNoFlowRefreshAllowed({
+    flowPath: inputs.flowPath,
+    acknowledgeNoFlowRefresh: parsed.acknowledgeNoFlowRefresh
+  });
+  await runAction(actionCore, mergedEnv);
+  return outputs;
+}
+async function main() {
+  const result = await runCli(process.argv, cliCore, process.env);
+  if (result) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}
+`);
+  }
+}
+function shouldRunMain() {
+  const cjsModule = typeof module !== "undefined" ? module : void 0;
+  const cjsRequire = typeof require !== "undefined" ? require : void 0;
+  return Boolean(cjsModule && cjsRequire && cjsRequire.main === cjsModule);
+}
+if (shouldRunMain()) {
+  main().catch((error2) => {
+    console.error(summarizeError(error2));
+    process.exitCode = 1;
+  });
+}
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  assertCliNoFlowRefreshAllowed,
+  runCli
 });
 /*! Bundled license information:
 

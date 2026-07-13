@@ -55,8 +55,9 @@ describe('smoke-flow telemetry account_type', () => {
     const env: NodeJS.ProcessEnv = {
       INPUT_POSTMAN_API_KEY: 'PMAK-xyz',
       INPUT_POSTMAN_ACCESS_TOKEN: 'pma_at_service',
-      // project-name omitted -> runSmokeFlow throws on the required-input gate,
-      // exercising the failure emit path.
+      INPUT_PROJECT_NAME: 'payments',
+      // Required inputs are valid; reshape fails later against stubbed fetch,
+      // exercising the failure emit path after validation/side-effect setup.
       INPUT_WORKSPACE_ID: 'ws-1',
       INPUT_SPEC_ID: 'spec-1',
       INPUT_SMOKE_COLLECTION_ID: 'col-1'
@@ -78,6 +79,7 @@ describe('smoke-flow telemetry account_type', () => {
 
     const env: NodeJS.ProcessEnv = {
       INPUT_POSTMAN_API_KEY: 'PMAK-xyz',
+      INPUT_PROJECT_NAME: 'payments',
       INPUT_WORKSPACE_ID: 'ws-1',
       INPUT_SPEC_ID: 'spec-1',
       INPUT_SMOKE_COLLECTION_ID: 'col-1'
