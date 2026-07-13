@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,8 +48,7 @@ describe('packed CLI executable', () => {
   it('ships dist/cli.cjs with a node shebang and executable mode', () => {
     const firstLine = readFileSync(distCli, 'utf8').split('\n')[0] ?? '';
     expect(firstLine).toBe('#!/usr/bin/env node');
-    const mode = execFileSync('stat', ['-f', '%Lp', distCli], { encoding: 'utf8' }).trim();
-    expect(Number.parseInt(mode, 8) & 0o111).toBeGreaterThan(0);
+    expect(statSync(distCli).mode & 0o111).toBeGreaterThan(0);
   });
 
   it('runs --help and --version from a packed install without side effects', () => {
