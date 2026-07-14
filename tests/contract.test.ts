@@ -116,7 +116,7 @@ describe('postman-smoke-flow-action contract', () => {
       'verify:dist': expect.any(String),
       lint: 'eslint .',
       'lint:fix': 'eslint . --fix',
-      test: 'vitest run',
+      test: 'vitest run && node --test .github/scripts/wait-for-e2e-gate.test.mjs',
       typecheck: 'tsc --noEmit -p tsconfig.json'
     });
   });
