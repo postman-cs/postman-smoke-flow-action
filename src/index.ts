@@ -588,6 +588,13 @@ export function buildSmokeRunIdentity(env: NodeJS.ProcessEnv = process.env): str
  * credential (service-account access tokens expire); it is never used for the
  * collection mutation itself.
  */
+export function resolveGatewayTeamContext(
+  teamId: string | undefined
+): { teamId: string; orgMode: true } | Record<string, never> {
+  const normalized = String(teamId ?? '').trim();
+  return normalized ? { teamId: normalized, orgMode: true } : {};
+}
+
 function createSmokeClient(
   inputs: ActionInputs,
   actionCore: CoreLike,
@@ -609,11 +616,10 @@ function createSmokeClient(
     apiBaseUrl: inputs.postmanApiBaseUrl,
     onToken: (token) => actionCore.setSecret?.(token)
   });
-  const teamId = String(inputs.teamId ?? '').trim();
   const workspaceId = String(inputs.workspaceId ?? '').trim();
   return new PostmanGatewaySmokeClient({
     tokenProvider: provider,
-    ...(teamId ? { teamId, orgMode: true } : {}),
+    ...resolveGatewayTeamContext(inputs.teamId),
     ...(workspaceId ? { workspaceId } : {}),
     runIdentity: buildSmokeRunIdentity(env)
   });
