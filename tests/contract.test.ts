@@ -125,7 +125,9 @@ describe('postman-smoke-flow-action contract', () => {
     expect(packageJson.scripts.bundle).toContain('chmod +x dist/cli.cjs');
     expect(packageJson.scripts.bundle).not.toContain('typecheck');
     expect(packageJson.scripts.build).toMatch(/npm run typecheck && npm run bundle/);
-    expect(packageJson.scripts['verify:dist:assert']).toBe('node scripts/verify-dist-artifact.mjs');
-    expect(packageJson.scripts['verify:dist']).toMatch(/npm run build && .*verify:dist:assert/);
+    expect(packageJson.scripts['verify:dist:assert']).toBe(
+      'git diff --ignore-space-at-eol --text --exit-code -- dist && node scripts/verify-dist-artifact.mjs'
+    );
+    expect(packageJson.scripts['verify:dist']).toBe('npm run build && npm run verify:dist:assert');
   });
 });
