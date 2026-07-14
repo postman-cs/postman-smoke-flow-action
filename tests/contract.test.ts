@@ -112,12 +112,20 @@ describe('postman-smoke-flow-action contract', () => {
   it('exposes the standard validation scripts used by sibling actions', () => {
     const packageJson = loadPackageJson();
     expect(packageJson.scripts).toMatchObject({
+      bundle: expect.any(String),
       build: expect.any(String),
+      'verify:dist:assert': expect.any(String),
       'verify:dist': expect.any(String),
       lint: 'eslint .',
       'lint:fix': 'eslint . --fix',
       test: 'vitest run && node --test .github/scripts/wait-for-e2e-gate.test.mjs',
       typecheck: 'tsc --noEmit -p tsconfig.json'
     });
+    expect(packageJson.scripts.bundle).toContain("--banner:js='#!/usr/bin/env node'");
+    expect(packageJson.scripts.bundle).toContain('chmod +x dist/cli.cjs');
+    expect(packageJson.scripts.bundle).not.toContain('typecheck');
+    expect(packageJson.scripts.build).toMatch(/npm run typecheck && npm run bundle/);
+    expect(packageJson.scripts['verify:dist:assert']).toBe('node scripts/verify-dist-artifact.mjs');
+    expect(packageJson.scripts['verify:dist']).toMatch(/npm run build && .*verify:dist:assert/);
   });
 });
