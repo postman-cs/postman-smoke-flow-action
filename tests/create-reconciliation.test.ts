@@ -320,8 +320,8 @@ describe('Wave 2 create reconciliation', () => {
     const itemPatchPaths = calls
       .filter((call) => call.method === 'patch' && call.path.includes('/items/'))
       .map((call) => call.path);
-    expect(itemPatchPaths).toContain('/v3/collections/cid/items/55363555-health-check');
-    expect(itemPatchPaths).toContain('/v3/collections/cid/items/55363555-admin-check');
+    expect(itemPatchPaths).toContain('/v3/collections/55363555-cid/items/55363555-health-check');
+    expect(itemPatchPaths).toContain('/v3/collections/55363555-cid/items/55363555-admin-check');
   });
 
   it('ambiguous nested request create adopts only the flat response item referenced by the requested parent stub', async () => {

@@ -29913,6 +29913,9 @@ function bareModelId(uid) {
   const u = String(uid ?? "").trim();
   return u.includes("-") ? u.slice(u.indexOf("-") + 1) : u;
 }
+function collectionItemsId(uid) {
+  return String(uid ?? "").trim();
+}
 function sleep(ms) {
   return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
@@ -30214,13 +30217,17 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
     return v3ExportToV2Collection(v3);
   }
   async updateCollection(collectionUid, collection) {
-    const cid = bareModelId(collectionUid);
+    const itemsCid = collectionItemsId(collectionUid);
+    const rootCid = bareModelId(collectionUid);
     const desired = asRecord3(collection);
     if (!desired) {
       throw new Error(`updateCollection: invalid collection payload for ${collectionUid}`);
     }
     await this.assertCanonicalBelongsToWorkspace(collectionUid);
-    await this.reconcileItemsRecursive(cid, desired.item, { id: cid, $kind: "collection" });
+    await this.reconcileItemsRecursive(itemsCid, desired.item, {
+      id: itemsCid,
+      $kind: "collection"
+    });
     const ops = [];
     const info2 = asRecord3(desired.info);
     const name = typeof info2?.name === "string" ? info2.name : void 0;
@@ -30237,14 +30244,14 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
       await this.gateway.request({
         service: "collection",
         method: "patch",
-        path: `/v3/collections/${cid}`,
+        path: `/v3/collections/${rootCid}`,
         body: ops,
         // Fixed-path add/replace operations are idempotent.
         maxRetries: 3
       });
     }
     if (clearCollectionAuth) {
-      await this.clearCollectionAuth(cid);
+      await this.clearCollectionAuth(rootCid);
     }
     const collScripts = v2EventsToV3CollectionScripts(desired.event);
     if (collScripts.length > 0) {
@@ -30252,7 +30259,7 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         await this.gateway.request({
           service: "collection",
           method: "patch",
-          path: `/v3/collections/${cid}`,
+          path: `/v3/collections/${rootCid}`,
           body: [{ op: "add", path: "/scripts", value: collScripts }],
           // Adding the same root script value is idempotent.
           maxRetries: 3
@@ -30326,7 +30333,8 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
   }
   listChildItems(listing, parentId, collectionCid) {
     const parentBare = bareModelId(parentId);
-    const isCollectionRoot = parentBare === collectionCid || parentId === collectionCid;
+    const collectionBare = bareModelId(collectionCid);
+    const isCollectionRoot = parentBare === collectionBare || parentId === collectionCid || bareModelId(parentId) === collectionBare;
     return listing.entries.filter((item) => {
       const itemParent = itemParentBareId(item, listing.parentByChildId);
       if (itemParent === null) {

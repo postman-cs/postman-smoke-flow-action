@@ -17,9 +17,21 @@ function asArray(value: unknown): JsonRecord[] {
   return Array.isArray(value) ? value.map(asRecord).filter((v): v is JsonRecord => Boolean(v)) : [];
 }
 
+/**
+ * Collection ROOT routes (GET/PATCH/DELETE `/v3/collections/:id`, `/export`)
+ * accept the bare model id. Collection ITEMS routes
+ * (`/v3/collections/:id/items/...`) must use the FULL public uid
+ * (`<owner>-<uuid>`): bare model ids intermittently 403 on Bifrost
+ * (live-proven 2026-07-14 on org and non-org sandboxes).
+ */
 function bareModelId(uid: string): string {
   const u = String(uid ?? '').trim();
   return u.includes('-') ? u.slice(u.indexOf('-') + 1) : u;
+}
+
+/** Collection id for ITEMS routes. Prefer the full public uid. */
+function collectionItemsId(uid: string): string {
+  return String(uid ?? '').trim();
 }
 
 function sleep(ms: number): Promise<void> {
@@ -452,7 +464,9 @@ export class PostmanGatewaySmokeClient {
   }
 
   async updateCollection(collectionUid: string, collection: unknown): Promise<void> {
-    const cid = bareModelId(collectionUid);
+    // Items routes need the full public uid; root PATCH still accepts bare.
+    const itemsCid = collectionItemsId(collectionUid);
+    const rootCid = bareModelId(collectionUid);
     const desired = asRecord(collection);
     if (!desired) {
       throw new Error(`updateCollection: invalid collection payload for ${collectionUid}`);
@@ -460,7 +474,10 @@ export class PostmanGatewaySmokeClient {
 
     await this.assertCanonicalBelongsToWorkspace(collectionUid);
 
-    await this.reconcileItemsRecursive(cid, desired.item, { id: cid, $kind: 'collection' });
+    await this.reconcileItemsRecursive(itemsCid, desired.item, {
+      id: itemsCid,
+      $kind: 'collection'
+    });
 
     // Collection-level: name, auth, variables.
     const ops: JsonRecord[] = [];
@@ -482,14 +499,14 @@ export class PostmanGatewaySmokeClient {
       await this.gateway.request({
         service: 'collection',
         method: 'patch',
-        path: `/v3/collections/${cid}`,
+        path: `/v3/collections/${rootCid}`,
         body: ops,
         // Fixed-path add/replace operations are idempotent.
         maxRetries: 3
       });
     }
     if (clearCollectionAuth) {
-      await this.clearCollectionAuth(cid);
+      await this.clearCollectionAuth(rootCid);
     }
 
     // Collection-level scripts (e.g. the OAuth token-cache pre-request) go in a
@@ -501,7 +518,7 @@ export class PostmanGatewaySmokeClient {
         await this.gateway.request({
           service: 'collection',
           method: 'patch',
-          path: `/v3/collections/${cid}`,
+          path: `/v3/collections/${rootCid}`,
           body: [{ op: 'add', path: '/scripts', value: collScripts }],
           // Adding the same root script value is idempotent.
           maxRetries: 3
@@ -579,7 +596,9 @@ export class PostmanGatewaySmokeClient {
 
   private listChildItems(listing: ItemListing, parentId: string, collectionCid: string): JsonRecord[] {
     const parentBare = bareModelId(parentId);
-    const isCollectionRoot = parentBare === collectionCid || parentId === collectionCid;
+    const collectionBare = bareModelId(collectionCid);
+    const isCollectionRoot =
+      parentBare === collectionBare || parentId === collectionCid || bareModelId(parentId) === collectionBare;
     return listing.entries.filter((item) => {
       const itemParent = itemParentBareId(item, listing.parentByChildId);
       if (itemParent === null) {
