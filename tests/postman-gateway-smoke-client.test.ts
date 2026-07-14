@@ -363,6 +363,29 @@ describe('PostmanGatewaySmokeClient', () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it('does not swallow permanent collection-script patch authorization errors', async () => {
+    let scriptPatchAttempts = 0;
+    const { client } = makeClient((env) => {
+      if (env.method === 'get' && env.path.endsWith('/items/')) return jsonResponse({ data: [] });
+      if (env.method === 'patch' && /\/v3\/collections\/cid$/.test(env.path)) {
+        const ops = env.body as J[];
+        if (ops.some((op) => op.path === '/scripts')) {
+          scriptPatchAttempts += 1;
+          return jsonResponse({ error: 'forbidden' }, 403);
+        }
+        return jsonResponse({ data: {} });
+      }
+      return jsonResponse({ data: {} });
+    });
+
+    await expect(client.updateCollection('55363555-cid', {
+      info: { name: '[Smoke] Reshaped' },
+      event: [{ listen: 'prerequest', script: { exec: ['console.log("x");'] } }],
+      item: []
+    })).rejects.toThrow('403');
+    expect(scriptPatchAttempts).toBe(1);
+  });
+
   it('deleteCollection swallows a 404', async () => {
     const { client, calls } = makeClient((env) => {
       if (env.method === 'delete') return jsonResponse({ error: 'not found' }, 404);
@@ -370,5 +393,18 @@ describe('PostmanGatewaySmokeClient', () => {
     });
     await expect(client.deleteCollection('55363555-gone')).resolves.toBeUndefined();
     expect(calls[0]?.path).toBe('/v3/collections/gone');
+  });
+
+  it('deleteCollection propagates a permanent authorization error without retrying', async () => {
+    let attempts = 0;
+    const { client } = makeClient((env) => {
+      if (env.method === 'delete') {
+        attempts += 1;
+        return jsonResponse({ error: 'forbidden' }, 403);
+      }
+      return jsonResponse({});
+    });
+    await expect(client.deleteCollection('55363555-owned')).rejects.toThrow('403');
+    expect(attempts).toBe(1);
   });
 });

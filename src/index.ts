@@ -1,4 +1,5 @@
 import * as core from '@actions/core';
+import { randomBytes } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -563,6 +564,22 @@ export async function runSmokeFlow(
 }
 
 /**
+ * Per-process identity embedded in temporary collection names so ambiguous
+ * generation responses can be reconciled without adopting a peer run's temp.
+ */
+export function buildSmokeRunIdentity(env: NodeJS.ProcessEnv = process.env): string {
+  const parts = [
+    env.GITHUB_RUN_ID,
+    env.GITHUB_RUN_ATTEMPT,
+    env.GITHUB_JOB,
+    randomBytes(4).toString('hex')
+  ]
+    .map((part) => String(part ?? '').trim())
+    .filter(Boolean);
+  return parts.join('-');
+}
+
+/**
  * Build the Smoke collection client. The reshape runs access-token-only through
  * the gateway (`PostmanGatewaySmokeClient`): generate via the specification
  * service, read via `GET /v3/collections/:cid/export`, and apply the curated
@@ -573,7 +590,8 @@ export async function runSmokeFlow(
  */
 function createSmokeClient(
   inputs: ActionInputs,
-  actionCore: CoreLike
+  actionCore: CoreLike,
+  env: NodeJS.ProcessEnv = process.env
 ): SmokeCollectionClient {
   const accessToken = String(inputs.postmanAccessToken ?? '').trim();
   if (!accessToken) {
@@ -592,9 +610,12 @@ function createSmokeClient(
     onToken: (token) => actionCore.setSecret?.(token)
   });
   const teamId = String(inputs.teamId ?? '').trim();
+  const workspaceId = String(inputs.workspaceId ?? '').trim();
   return new PostmanGatewaySmokeClient({
     tokenProvider: provider,
-    ...(teamId ? { teamId, orgMode: true } : {})
+    ...(teamId ? { teamId, orgMode: true } : {}),
+    ...(workspaceId ? { workspaceId } : {}),
+    runIdentity: buildSmokeRunIdentity(env)
   });
 }
 
@@ -640,7 +661,7 @@ export async function runAction(actionCore: CoreLike = core, env: NodeJS.Process
     log: actionCore
   });
   try {
-    const postman = createSmokeClient(inputs, actionCore);
+    const postman = createSmokeClient(inputs, actionCore, env);
     const outputs = await runSmokeFlow(inputs, {
       core: actionCore,
       postman
