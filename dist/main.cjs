@@ -31904,6 +31904,10 @@ function buildSmokeRunIdentity(env = process.env) {
   ].map((part) => String(part ?? "").trim()).filter(Boolean);
   return parts.join("-");
 }
+function resolveGatewayTeamContext(teamId) {
+  const normalized = String(teamId ?? "").trim();
+  return normalized ? { teamId: normalized, orgMode: true } : {};
+}
 function createSmokeClient(inputs, actionCore, env = process.env) {
   const accessToken = String(inputs.postmanAccessToken ?? "").trim();
   if (!accessToken) {
@@ -31917,11 +31921,10 @@ function createSmokeClient(inputs, actionCore, env = process.env) {
     apiBaseUrl: inputs.postmanApiBaseUrl,
     onToken: (token) => actionCore.setSecret?.(token)
   });
-  const teamId = String(inputs.teamId ?? "").trim();
   const workspaceId = String(inputs.workspaceId ?? "").trim();
   return new PostmanGatewaySmokeClient({
     tokenProvider: provider,
-    ...teamId ? { teamId, orgMode: true } : {},
+    ...resolveGatewayTeamContext(inputs.teamId),
     ...workspaceId ? { workspaceId } : {},
     runIdentity: buildSmokeRunIdentity(env)
   });
