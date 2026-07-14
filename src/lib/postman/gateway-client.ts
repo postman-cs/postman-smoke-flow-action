@@ -14,6 +14,12 @@ export interface GatewayRequest {
   body?: unknown;
   /** Extra route-specific headers (e.g. x-app-version, X-Entity-Type). */
   headers?: Record<string, string>;
+  /**
+   * Per-request override for transient retries. Safe GETs use the client
+   * default. Mutations default to zero and may opt in only when the caller has
+   * proved the operation idempotent.
+   */
+  maxRetries?: number;
 }
 
 export interface AccessTokenGatewayClientOptions {
@@ -40,17 +46,13 @@ function isExpiredAuthError(status: number, body: string): boolean {
 
 /**
  * Transient downstream failures the gateway surfaces intermittently (Bifrost
- * proxy read timeouts, gateway 5xx). Retried with backoff. `ESOCKETTIMEDOUT`
- * is the recurring one — a downstream read timeout, not a request the server
- * durably accepted, so retrying is safe for the onboarding ops (all guarded by
- * reuse-or-create idempotency + run-scoped teardown).
+ * proxy read timeouts, gateway 5xx). Safe reads may retry these with backoff.
+ * Unsafe create POSTs must set `maxRetries: 0` and reconcile after ambiguity —
+ * a 503 can still mean the server durably accepted the create.
  */
 function isTransientGatewayError(status: number, body: string): boolean {
-  if (status === 502 || status === 503 || status === 504) return true;
-  if (status >= 500 && (body.includes('ESOCKETTIMEDOUT') || body.includes('ETIMEDOUT') || body.includes('ECONNRESET') || body.includes('serverError') || body.includes('downstream'))) {
-    return true;
-  }
-  return false;
+  void body;
+  return status === 408 || status === 429 || status >= 500;
 }
 
 function defaultSleep(ms: number): Promise<void> {
@@ -127,15 +129,25 @@ export class AccessTokenGatewayClient {
   }
 
   /**
-   * Send a gateway request, refreshing the token once on an auth failure and
-   * retrying transient downstream failures (5xx / Bifrost read timeouts) with
-   * exponential backoff. The auth-refresh-once path is independent of the
-   * transient-retry budget.
+   * Send a gateway request, refreshing the token once after a definitive auth
+   * rejection. Safe GETs retry transient/statusless failures with backoff.
+   * Mutations are single-shot unless a caller explicitly opts in after proving
+   * its fixed-target operation idempotent.
    */
   async request(request: GatewayRequest): Promise<Response> {
     let attempt = 0;
+    const maxRetries = request.maxRetries ?? (request.method === 'get' ? this.maxRetries : 0);
     for (;;) {
-      let response = await this.send(request);
+      let response: Response;
+      try {
+        response = await this.send(request);
+      } catch (error) {
+        if (attempt >= maxRetries) throw error;
+        const delay = this.retryBaseDelayMs * 2 ** attempt;
+        attempt += 1;
+        await this.sleepImpl(delay);
+        continue;
+      }
       if (response.ok) {
         return response;
       }
@@ -151,7 +163,7 @@ export class AccessTokenGatewayClient {
         throw this.toHttpError(request, response, retryBody);
       }
 
-      if (isTransientGatewayError(response.status, body) && attempt < this.maxRetries) {
+      if (isTransientGatewayError(response.status, body) && attempt < maxRetries) {
         const delay = this.retryBaseDelayMs * 2 ** attempt;
         attempt += 1;
         await this.sleepImpl(delay);

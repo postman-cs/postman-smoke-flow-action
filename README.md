@@ -18,6 +18,10 @@ Part of the [Postman API Onboarding suite](https://github.com/postman-cs/postman
 jobs:
   smoke-flow:
     runs-on: ubuntu-latest
+    # The Postman API has no cross-process lease for collection edits.
+    concurrency:
+      group: postman-smoke-flow-${{ vars.POSTMAN_SMOKE_COLLECTION_ID }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v5
 
@@ -54,6 +58,11 @@ This action is designed to run directly after `postman-bootstrap-action` and bef
 jobs:
   onboarding:
     runs-on: ubuntu-latest
+    # This fixed project key is available before steps run. Do not use a
+    # same-job bootstrap step output in job-level concurrency.
+    concurrency:
+      group: postman-onboarding-core-payments
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v5
 
@@ -247,6 +256,8 @@ In flow mode (`flow-path` set), the action reads the curated manifest, generates
 In no-flow mode (`flow-path` omitted), the action still generates a temporary Smoke collection from the spec and refreshes the canonical Smoke collection from that generated collection. If Smoke runtime auth is configured, it applies that auth during the refresh. It does not add flow scripts, bindings, extracts, or curated ordering. OAuth2 client credentials are documented in [docs/smoke-oauth.md](docs/smoke-oauth.md), and API key auth is documented in [docs/smoke-api-key.md](docs/smoke-api-key.md).
 
 All collection operations — generating the temporary collection from the spec, reading it, reshaping the canonical collection, and deleting the temporary one — run through the Postman gateway under postman-access-token. The action never mutates baseline or contract collections, and it never writes runtime tokens or client secrets back to Postman environments.
+
+The action validates that the canonical collection belongs to `workspace-id`, assigns each temporary collection a run-unique identity, and deletes only the temporary ID it positively adopts. Unsafe create POSTs are submitted once and reconciled after statusless transport failures, HTTP 408/429, or 5xx responses. Postman does not expose a cross-process collection lease or create idempotency key, so workflows that can overlap must use a concurrency group keyed by `smoke-collection-id`, as shown in the Usage example. Job-level concurrency is evaluated before steps run, so a chained bootstrap workflow must use a pre-existing variable, reusable-workflow input, or fixed project key—not a same-job step output. This serializes cooperating CI runs; unrelated writers that ignore the key remain a residual risk.
 
 ## Credentials and regions
 

@@ -28432,6 +28432,7 @@ function getIDToken(aud) {
 }
 
 // src/index.ts
+var import_node_crypto2 = require("node:crypto");
 var import_node_fs4 = require("node:fs");
 var import_node_path3 = __toESM(require("node:path"), 1);
 
@@ -29775,11 +29776,8 @@ function isExpiredAuthError(status, body) {
   return status === 401 || body.includes("UNAUTHENTICATED") || body.includes("authenticationError");
 }
 function isTransientGatewayError(status, body) {
-  if (status === 502 || status === 503 || status === 504) return true;
-  if (status >= 500 && (body.includes("ESOCKETTIMEDOUT") || body.includes("ETIMEDOUT") || body.includes("ECONNRESET") || body.includes("serverError") || body.includes("downstream"))) {
-    return true;
-  }
-  return false;
+  void body;
+  return status === 408 || status === 429 || status >= 500;
 }
 function defaultSleep(ms) {
   return new Promise((resolve2) => setTimeout(resolve2, ms));
@@ -29837,15 +29835,25 @@ var AccessTokenGatewayClient = class {
     });
   }
   /**
-   * Send a gateway request, refreshing the token once on an auth failure and
-   * retrying transient downstream failures (5xx / Bifrost read timeouts) with
-   * exponential backoff. The auth-refresh-once path is independent of the
-   * transient-retry budget.
+   * Send a gateway request, refreshing the token once after a definitive auth
+   * rejection. Safe GETs retry transient/statusless failures with backoff.
+   * Mutations are single-shot unless a caller explicitly opts in after proving
+   * its fixed-target operation idempotent.
    */
   async request(request) {
     let attempt = 0;
+    const maxRetries = request.maxRetries ?? (request.method === "get" ? this.maxRetries : 0);
     for (; ; ) {
-      let response = await this.send(request);
+      let response;
+      try {
+        response = await this.send(request);
+      } catch (error2) {
+        if (attempt >= maxRetries) throw error2;
+        const delay = this.retryBaseDelayMs * 2 ** attempt;
+        attempt += 1;
+        await this.sleepImpl(delay);
+        continue;
+      }
       if (response.ok) {
         return response;
       }
@@ -29859,7 +29867,7 @@ var AccessTokenGatewayClient = class {
         const retryBody = await response.text().catch(() => "");
         throw this.toHttpError(request, response, retryBody);
       }
-      if (isTransientGatewayError(response.status, body) && attempt < this.maxRetries) {
+      if (isTransientGatewayError(response.status, body) && attempt < maxRetries) {
         const delay = this.retryBaseDelayMs * 2 ** attempt;
         attempt += 1;
         await this.sleepImpl(delay);
@@ -29908,6 +29916,11 @@ function bareModelId(uid) {
 function sleep(ms) {
   return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
+function isAmbiguousCreateError(error2) {
+  if (!(error2 instanceof HttpError)) return true;
+  return error2.status === 408 || error2.status === 429 || error2.status >= 500;
+}
+var isAmbiguousMutationError = isAmbiguousCreateError;
 function v3BodyToV2(body) {
   if (!body) return void 0;
   const content = typeof body.content === "string" ? body.content : "";
@@ -30027,26 +30040,59 @@ function v2EventsToV3CollectionScripts(events2) {
     return { type, code: exec2.join("\n"), language: "text/javascript" };
   }).filter((script) => Boolean(script));
 }
+function itemParentBareId(item, parentByChildId) {
+  const itemId = bareModelId(String(item.id ?? item.uid ?? ""));
+  const stubParent = itemId ? parentByChildId.get(itemId) : void 0;
+  if (stubParent) return stubParent;
+  const raw = asRecord3(item.position)?.parent;
+  if (raw === void 0 || raw === null || raw === "") return null;
+  if (typeof raw === "string") return bareModelId(raw);
+  const record = asRecord3(raw);
+  if (record && typeof record.id === "string") return bareModelId(String(record.id));
+  return null;
+}
 var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
   static GENERATION_LOCKED_MAX_RETRIES = 5;
   static GENERATION_POLL_ATTEMPTS = 90;
   static GENERATION_POLL_DELAY_MS = 2e3;
   gateway;
   sleepImpl;
+  workspaceId;
+  runIdentity;
+  ownedTemporaryCollectionIds = /* @__PURE__ */ new Set();
   constructor(options) {
     this.gateway = new AccessTokenGatewayClient({
       tokenProvider: options.tokenProvider,
       ...options.bifrostBaseUrl ? { bifrostBaseUrl: options.bifrostBaseUrl } : {},
       ...options.teamId ? { teamId: options.teamId } : {},
       ...options.orgMode !== void 0 ? { orgMode: options.orgMode } : {},
-      ...options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}
+      ...options.fetchImpl ? { fetchImpl: options.fetchImpl } : {},
+      ...options.sleepImpl ? { sleepImpl: options.sleepImpl } : {}
     });
     this.sleepImpl = options.sleepImpl ?? sleep;
+    const workspaceId = String(options.workspaceId ?? "").trim();
+    this.workspaceId = workspaceId || void 0;
+    const runIdentity = String(options.runIdentity ?? "").trim();
+    this.runIdentity = runIdentity || void 0;
   }
   async generateCollection(specId, projectName, prefix) {
-    const name = [prefix.trim(), projectName.trim()].filter(Boolean).join(" ");
-    const body = { name, options: { requestNameSource: "Fallback" } };
-    const taskId = await this.postGenerationWithLockRetry(specId, body);
+    const ownedName = [prefix.trim(), projectName.trim(), this.runIdentity].filter(Boolean).join(" ");
+    const body = { name: ownedName, options: { requestNameSource: "Fallback" } };
+    const preSnapshot = await this.listSpecCollectionUids(specId);
+    let taskId;
+    try {
+      taskId = await this.postGenerationWithLockRetry(specId, body);
+    } catch (error2) {
+      if (!isAmbiguousCreateError(error2)) {
+        throw error2;
+      }
+      const reconciled = await this.reconcileGeneratedCollection(specId, ownedName, preSnapshot);
+      if (!reconciled) {
+        throw error2;
+      }
+      this.rememberOwnedTemporaryCollection(reconciled);
+      return reconciled;
+    }
     if (taskId) {
       for (let attempt = 0; attempt < _PostmanGatewaySmokeClient.GENERATION_POLL_ATTEMPTS; attempt += 1) {
         await this.sleepImpl(_PostmanGatewaySmokeClient.GENERATION_POLL_DELAY_MS);
@@ -30068,17 +30114,12 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         }
       }
     }
-    const list = await this.gateway.requestJson({
-      service: "specification",
-      method: "get",
-      path: `/specifications/${specId}/collections`
-    });
-    const entries = asArray(asRecord3(list)?.data);
-    for (let i = entries.length - 1; i >= 0; i -= 1) {
-      const uid = String(entries[i]?.collection ?? entries[i]?.collectionId ?? entries[i]?.id ?? "").trim();
-      if (uid) return uid;
+    const owned = await this.reconcileGeneratedCollection(specId, ownedName, preSnapshot);
+    if (!owned) {
+      throw new Error(`Collection generation did not yield a collection uid for ${prefix}`);
     }
-    throw new Error(`Collection generation did not yield a collection uid for ${prefix}`);
+    this.rememberOwnedTemporaryCollection(owned);
+    return owned;
   }
   /** POST the generation request, retrying a 423-locked spec; returns the task id. */
   async postGenerationWithLockRetry(specId, body) {
@@ -30088,7 +30129,9 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
           service: "specification",
           method: "post",
           path: `/specifications/${specId}/collections`,
-          body
+          body,
+          // Unsafe create: never blind-retry an ambiguous accept.
+          maxRetries: 0
         });
         return String(asRecord3(created?.data)?.taskId ?? "").trim();
       } catch (error2) {
@@ -30099,6 +30142,63 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         await this.sleepImpl(5e3 * Math.pow(2, lockedAttempt));
       }
     }
+  }
+  async listSpecCollectionUids(specId) {
+    const list = await this.gateway.requestJson({
+      service: "specification",
+      method: "get",
+      path: `/specifications/${specId}/collections`
+    });
+    const uids = [];
+    for (const entry of asArray(asRecord3(list)?.data)) {
+      const uid = String(entry.collection ?? entry.collectionId ?? entry.id ?? "").trim();
+      if (uid) uids.push(uid);
+    }
+    return uids;
+  }
+  /**
+   * Adopt the temporary collection that matches this run's unique name, preferring
+   * IDs absent from the pre-run snapshot so peer temps are never selected.
+   */
+  async reconcileGeneratedCollection(specId, ownedName, preSnapshot) {
+    const pre = new Set(preSnapshot);
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const listed = (await this.listSpecCollectionUids(specId)).filter((uid) => !pre.has(uid));
+      const matches = [];
+      for (const uid of listed) {
+        try {
+          const exported = await this.gateway.requestJson({
+            service: "collection",
+            method: "get",
+            path: `/v3/collections/${bareModelId(uid)}/export`
+          });
+          const collection = asRecord3(asRecord3(exported?.data)?.collection) ?? asRecord3(exported?.data);
+          const name = typeof collection?.name === "string" ? collection.name : "";
+          if (name === ownedName) matches.push(uid);
+        } catch (error2) {
+          if (!(error2 instanceof HttpError && error2.status === 404)) throw error2;
+        }
+      }
+      if (matches.length === 1) return matches[0] ?? null;
+      if (matches.length > 1) {
+        throw new Error(
+          `Collection generation reconciled ambiguously for ${ownedName}: ${matches.join(", ")}`
+        );
+      }
+      if (attempt < 5) await this.sleepImpl(Math.min(2e3, 250 * 2 ** attempt));
+    }
+    return null;
+  }
+  rememberOwnedTemporaryCollection(collectionUid) {
+    const trimmed = String(collectionUid ?? "").trim();
+    if (!trimmed) return;
+    this.ownedTemporaryCollectionIds.add(trimmed);
+    this.ownedTemporaryCollectionIds.add(bareModelId(trimmed));
+  }
+  isOwnedTemporaryCollection(collectionUid) {
+    const trimmed = String(collectionUid ?? "").trim();
+    if (!trimmed) return false;
+    return this.ownedTemporaryCollectionIds.has(trimmed) || this.ownedTemporaryCollectionIds.has(bareModelId(trimmed));
   }
   async getCollection(collectionUid) {
     const cid = bareModelId(collectionUid);
@@ -30119,8 +30219,8 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
     if (!desired) {
       throw new Error(`updateCollection: invalid collection payload for ${collectionUid}`);
     }
-    await this.deleteAllItems(cid);
-    await this.createItemsRecursive(cid, desired.item, { id: cid, $kind: "collection" });
+    await this.assertCanonicalBelongsToWorkspace(collectionUid);
+    await this.reconcileItemsRecursive(cid, desired.item, { id: cid, $kind: "collection" });
     const ops = [];
     const info2 = asRecord3(desired.info);
     const name = typeof info2?.name === "string" ? info2.name : void 0;
@@ -30138,7 +30238,9 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         service: "collection",
         method: "patch",
         path: `/v3/collections/${cid}`,
-        body: ops
+        body: ops,
+        // Fixed-path add/replace operations are idempotent.
+        maxRetries: 3
       });
     }
     if (clearCollectionAuth) {
@@ -30146,12 +30248,39 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
     }
     const collScripts = v2EventsToV3CollectionScripts(desired.event);
     if (collScripts.length > 0) {
-      await this.gateway.request({
-        service: "collection",
-        method: "patch",
-        path: `/v3/collections/${cid}`,
-        body: [{ op: "add", path: "/scripts", value: collScripts }]
-      }).catch(() => void 0);
+      try {
+        await this.gateway.request({
+          service: "collection",
+          method: "patch",
+          path: `/v3/collections/${cid}`,
+          body: [{ op: "add", path: "/scripts", value: collScripts }],
+          // Adding the same root script value is idempotent.
+          maxRetries: 3
+        });
+      } catch (error2) {
+        if (!(error2 instanceof HttpError && error2.status === 400)) throw error2;
+      }
+    }
+  }
+  async assertCanonicalBelongsToWorkspace(collectionUid) {
+    if (!this.workspaceId) {
+      return;
+    }
+    const listed = await this.gateway.requestJson({
+      service: "collection",
+      method: "get",
+      path: `/v3/collections/?workspace=${encodeURIComponent(this.workspaceId)}`
+    });
+    const collections = asArray(asRecord3(listed)?.data ?? listed?.data);
+    const bare = bareModelId(collectionUid);
+    const found = collections.some((entry) => {
+      const id = String(entry.id ?? entry.uid ?? "").trim();
+      return id === collectionUid || bareModelId(id) === bare;
+    });
+    if (!found) {
+      throw new Error(
+        `Canonical collection ${collectionUid} does not belong to workspace ${this.workspaceId} (not found in workspace); refusing mutate`
+      );
     }
   }
   async clearCollectionAuth(cid) {
@@ -30160,7 +30289,10 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         service: "collection",
         method: "patch",
         path: `/v3/collections/${cid}`,
-        body: [{ op: "remove", path: "/auth" }]
+        body: [{ op: "remove", path: "/auth" }],
+        // Removing auth has one end state; a repeated missing-value response is
+        // handled below as successful reconciliation.
+        maxRetries: 3
       });
     } catch (error2) {
       if (isMissingPatchValueError(error2)) {
@@ -30169,40 +30301,140 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
       throw error2;
     }
   }
-  async createItemsRecursive(cid, items, parent) {
-    for (const item of asArray(items)) {
+  async listItems(cid) {
+    const listed = await this.gateway.requestJson({
+      service: "collection",
+      method: "get",
+      path: `/v3/collections/${cid}/items/`
+    });
+    const entries = asArray(listed?.data);
+    const parentByChildId = /* @__PURE__ */ new Map();
+    for (const parent of entries) {
+      const parentId = bareModelId(String(parent.id ?? parent.uid ?? ""));
+      if (!parentId) continue;
+      for (const stub of asArray(parent.items)) {
+        const childId = bareModelId(String(stub.id ?? stub.uid ?? ""));
+        if (!childId) continue;
+        const existingParent = parentByChildId.get(childId);
+        if (existingParent && existingParent !== parentId) {
+          throw new Error(`updateCollection: item ${childId} is referenced by multiple parents`);
+        }
+        parentByChildId.set(childId, parentId);
+      }
+    }
+    return { entries, parentByChildId };
+  }
+  listChildItems(listing, parentId, collectionCid) {
+    const parentBare = bareModelId(parentId);
+    const isCollectionRoot = parentBare === collectionCid || parentId === collectionCid;
+    return listing.entries.filter((item) => {
+      const itemParent = itemParentBareId(item, listing.parentByChildId);
+      if (itemParent === null) {
+        return isCollectionRoot;
+      }
+      return itemParent === parentBare || itemParent === bareModelId(parentId);
+    });
+  }
+  assertUniqueNames(items, parentId, label) {
+    const byName = /* @__PURE__ */ new Map();
+    for (const item of items) {
+      const name = String(item.name ?? "");
+      const group2 = byName.get(name) ?? [];
+      group2.push(item);
+      byName.set(name, group2);
+    }
+    for (const [name, group2] of byName) {
+      if (group2.length > 1) {
+        throw new Error(
+          `updateCollection: duplicate ${label} item name "${name}" under parent ${parentId}; refusing to reconcile`
+        );
+      }
+    }
+    const unique = /* @__PURE__ */ new Map();
+    for (const [name, group2] of byName) {
+      const only = group2[0];
+      if (only) unique.set(name, only);
+    }
+    return unique;
+  }
+  async reconcileItemsRecursive(cid, desiredItems, parent) {
+    const listing = await this.listItems(cid);
+    const siblings = this.listChildItems(listing, parent.id, cid);
+    const existingByName = this.assertUniqueNames(siblings, parent.id, "existing");
+    const desiredArray = asArray(desiredItems);
+    const desiredNames = /* @__PURE__ */ new Set();
+    for (const item of desiredArray) {
+      const name = typeof item.name === "string" ? item.name : "";
+      if (desiredNames.has(name)) {
+        throw new Error(`updateCollection: duplicate desired item name "${name}" under parent ${parent.id}`);
+      }
+      desiredNames.add(name);
+    }
+    for (const sibling of siblings) {
+      const name = String(sibling.name ?? "");
+      if (!desiredNames.has(name)) {
+        await this.deleteItemTolerant(cid, sibling);
+      }
+    }
+    const refreshed = this.listChildItems(await this.listItems(cid), parent.id, cid);
+    const remainingByName = this.assertUniqueNames(refreshed, parent.id, "existing");
+    for (const item of desiredArray) {
+      const name = typeof item.name === "string" ? item.name : "";
       const request = asRecord3(item.request);
       if (request) {
+        const existing = remainingByName.get(name);
+        if (existing && String(existing.$kind ?? "http-request") === "http-request") {
+          await this.updateRequestItem(cid, existing, item, request, parent);
+          continue;
+        }
+        if (existing) {
+          await this.deleteItemTolerant(cid, existing);
+        }
         await this.createRequestItem(cid, item, request, parent);
         continue;
       }
       if (Array.isArray(item.item)) {
-        const folderId = await this.createFolderItem(cid, item, parent);
-        await this.createItemsRecursive(cid, item.item, { id: folderId, $kind: "collection" });
+        const existing = remainingByName.get(name) ?? existingByName.get(name);
+        if (existing && String(existing.$kind ?? "") !== "collection") {
+          await this.deleteItemTolerant(cid, existing);
+        }
+        const folderId = existing && String(existing.$kind ?? "") === "collection" ? String(existing.id ?? "").trim() : await this.createFolderItem(cid, item, parent);
+        if (!folderId) {
+          throw new Error(`updateCollection: missing folder id for ${name || "<unnamed>"}`);
+        }
+        await this.reconcileItemsRecursive(cid, item.item, { id: folderId, $kind: "collection" });
       }
     }
   }
-  async createFolderItem(cid, folder, parent) {
-    const createBody = {
-      $kind: "collection",
-      name: typeof folder.name === "string" ? folder.name : "",
-      position: { parent }
-    };
-    const created = await this.gateway.requestJson({
-      service: "collection",
-      method: "post",
-      path: `/v3/collections/${cid}/items/`,
-      headers: { "X-Entity-Type": "folder" },
-      body: createBody
-    });
-    const data = asRecord3(created?.data);
-    const folderId = String(data?.id ?? data?.uid ?? "").trim();
-    if (!folderId) {
-      throw new Error(`updateCollection: gateway did not return an id for folder ${String(folder.name ?? "").trim() || "<unnamed>"}`);
+  async deleteItemTolerant(cid, item) {
+    const itemId = String(item.id ?? "").trim();
+    if (!itemId) return;
+    const kind = String(item.$kind ?? "http-request");
+    let lastAmbiguousError;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        await this.gateway.request({
+          service: "collection",
+          method: "delete",
+          path: `/v3/collections/${cid}/items/${itemId}`,
+          headers: { "X-Entity-Type": kind },
+          maxRetries: 0
+        });
+      } catch (error2) {
+        if (error2 instanceof HttpError && error2.status === 404) return;
+        if (!isAmbiguousMutationError(error2)) throw error2;
+        lastAmbiguousError = error2;
+      }
+      const remains = (await this.listItems(cid)).entries.some(
+        (candidate) => bareModelId(String(candidate.id ?? candidate.uid ?? "")) === bareModelId(itemId)
+      );
+      if (!remains) return;
+      if (attempt < 3) await this.sleepImpl(Math.min(2e3, 250 * 2 ** attempt));
     }
-    return folderId;
+    if (lastAmbiguousError) throw lastAmbiguousError;
+    throw new Error(`updateCollection: item ${itemId} survived delete on collection ${cid}`);
   }
-  async createRequestItem(cid, leaf, request, parent) {
+  requestCreateBody(leaf, request, parent) {
     const createBody = {
       $kind: "http-request",
       name: typeof leaf.name === "string" ? leaf.name : "",
@@ -30215,15 +30447,104 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
     if (body) createBody.body = body;
     const auth = v2AuthToV3(asRecord3(request.auth));
     if (auth) createBody.auth = auth;
-    const created = await this.gateway.requestJson({
+    return createBody;
+  }
+  async updateRequestItem(cid, existing, leaf, request, parent) {
+    const itemId = String(existing.id ?? existing.uid ?? "").trim();
+    if (!itemId) throw new Error(`updateCollection: existing request ${String(leaf.name ?? "<unnamed>")} has no id`);
+    const desired = this.requestCreateBody(leaf, request, parent);
+    const ops = Object.entries(desired).filter(([key]) => key !== "$kind").map(([key, value]) => ({ op: "add", path: `/${key}`, value }));
+    for (const optional of ["body", "auth"]) {
+      if (!(optional in desired) && optional in existing) {
+        ops.push({ op: "remove", path: `/${optional}` });
+      }
+    }
+    await this.gateway.request({
       service: "collection",
-      method: "post",
-      path: `/v3/collections/${cid}/items/`,
+      method: "patch",
+      path: `/v3/collections/${cid}/items/${itemId}`,
       headers: { "X-Entity-Type": "http-request" },
-      body: createBody
+      body: ops,
+      // Fixed-path request updates are idempotent. Missing optional removals
+      // after an ambiguous accepted patch are reconciled below.
+      maxRetries: 3
+    }).catch((error2) => {
+      if (isMissingPatchValueError(error2) && ops.some((op) => op.op === "remove")) return;
+      throw error2;
     });
-    const data = asRecord3(created?.data);
-    const newItemId = String(data?.id ?? data?.uid ?? "").trim();
+    await this.patchItemScripts(cid, itemId, v2EventsToV3Scripts(leaf.event));
+  }
+  async findChildByName(cid, parentId, name) {
+    const children = this.listChildItems(await this.listItems(cid), parentId, cid);
+    const matches = children.filter((item) => String(item.name ?? "") === name);
+    if (matches.length > 1) {
+      throw new Error(
+        `updateCollection: duplicate item name "${name}" under parent ${parentId} after create; refusing to adopt`
+      );
+    }
+    return matches[0] ?? null;
+  }
+  async createFolderItem(cid, folder, parent) {
+    const name = typeof folder.name === "string" ? folder.name : "";
+    const createBody = {
+      $kind: "collection",
+      name,
+      position: { parent }
+    };
+    try {
+      const created = await this.gateway.requestJson({
+        service: "collection",
+        method: "post",
+        path: `/v3/collections/${cid}/items/`,
+        headers: { "X-Entity-Type": "folder" },
+        body: createBody,
+        maxRetries: 0
+      });
+      const data = asRecord3(created?.data);
+      const folderId = String(data?.id ?? data?.uid ?? "").trim();
+      if (!folderId) {
+        throw new Error(
+          `updateCollection: gateway did not return an id for folder ${name.trim() || "<unnamed>"}`
+        );
+      }
+      return folderId;
+    } catch (error2) {
+      if (!isAmbiguousCreateError(error2)) {
+        throw error2;
+      }
+      const adopted = await this.findChildByName(cid, parent.id, name);
+      const folderId = String(adopted?.id ?? adopted?.uid ?? "").trim();
+      if (!folderId) {
+        throw error2;
+      }
+      return folderId;
+    }
+  }
+  async createRequestItem(cid, leaf, request, parent) {
+    const name = typeof leaf.name === "string" ? leaf.name : "";
+    const createBody = this.requestCreateBody(leaf, request, parent);
+    let newItemId;
+    try {
+      const created = await this.gateway.requestJson({
+        service: "collection",
+        method: "post",
+        path: `/v3/collections/${cid}/items/`,
+        headers: { "X-Entity-Type": "http-request" },
+        body: createBody,
+        maxRetries: 0
+      });
+      const data = asRecord3(created?.data);
+      newItemId = String(data?.id ?? data?.uid ?? "").trim();
+    } catch (error2) {
+      if (!isAmbiguousCreateError(error2)) {
+        throw error2;
+      }
+      const adopted = await this.findChildByName(cid, parent.id, name);
+      newItemId = String(adopted?.id ?? adopted?.uid ?? "").trim();
+      if (!newItemId) {
+        throw error2;
+      }
+    }
     const scripts = v2EventsToV3Scripts(leaf.event);
     if (newItemId && scripts.length > 0) {
       await this.patchItemScripts(cid, newItemId, scripts);
@@ -30251,7 +30572,8 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
           method: "patch",
           path: `/v3/collections/${cid}/items/${itemId}`,
           headers: { "X-Entity-Type": "http-request" },
-          body: [{ op: "add", path: "/scripts", value: scripts }]
+          body: [{ op: "add", path: "/scripts", value: scripts }],
+          maxRetries: 0
         });
         return;
       } catch (error2) {
@@ -30263,54 +30585,36 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
       }
     }
   }
-  /**
-   * Delete every item (leaves + folders) from a collection, then verify the
-   * collection is empty. The gateway's item-delete returns a spurious `500
-   * GENERIC_ERROR` even though the delete lands server-side (live-observed); a
-   * blind throw would abort the reconcile mid-replace. So per-item delete errors
-   * are tolerated and the *end state* is the source of truth: re-list and retry
-   * any survivors across a few rounds, throwing only if items genuinely persist.
-   */
-  async deleteAllItems(cid) {
-    const maxRounds = 4;
-    for (let round = 0; round < maxRounds; round += 1) {
-      const listed = await this.gateway.requestJson({
-        service: "collection",
-        method: "get",
-        path: `/v3/collections/${cid}/items/`
-      });
-      const items = asArray(listed?.data);
-      if (items.length === 0) return;
-      if (round === maxRounds - 1) {
-        throw new Error(`updateCollection: ${items.length} item(s) survived delete on collection ${cid}`);
-      }
-      for (const item of items) {
-        const itemId = String(item.id ?? "").trim();
-        if (!itemId) continue;
-        const kind = String(item.$kind ?? "http-request");
-        try {
-          await this.gateway.request({
-            service: "collection",
-            method: "delete",
-            path: `/v3/collections/${cid}/items/${itemId}`,
-            headers: { "X-Entity-Type": kind }
-          });
-        } catch {
-        }
+  async deleteCollection(collectionUid) {
+    if (this.runIdentity || this.ownedTemporaryCollectionIds.size > 0) {
+      if (!this.isOwnedTemporaryCollection(collectionUid)) {
+        throw new Error(
+          `refusing to delete collection ${collectionUid}: not positively owned by this run`
+        );
       }
     }
-  }
-  async deleteCollection(collectionUid) {
     const cid = bareModelId(collectionUid);
     try {
       await this.gateway.request({
         service: "collection",
         method: "delete",
-        path: `/v3/collections/${cid}`
+        path: `/v3/collections/${cid}`,
+        maxRetries: 0
       });
     } catch (error2) {
       if (error2 instanceof HttpError && error2.status === 404) {
         return;
+      }
+      if (!isAmbiguousMutationError(error2)) throw error2;
+      try {
+        await this.gateway.request({
+          service: "collection",
+          method: "get",
+          path: `/v3/collections/${cid}/export`
+        });
+      } catch (readError) {
+        if (readError instanceof HttpError && readError.status === 404) return;
+        throw readError;
       }
       throw error2;
     }
@@ -31697,7 +32001,16 @@ async function runSmokeFlow(inputs, dependencies) {
     }
   }
 }
-function createSmokeClient(inputs, actionCore) {
+function buildSmokeRunIdentity(env = process.env) {
+  const parts = [
+    env.GITHUB_RUN_ID,
+    env.GITHUB_RUN_ATTEMPT,
+    env.GITHUB_JOB,
+    (0, import_node_crypto2.randomBytes)(4).toString("hex")
+  ].map((part) => String(part ?? "").trim()).filter(Boolean);
+  return parts.join("-");
+}
+function createSmokeClient(inputs, actionCore, env = process.env) {
   const accessToken = String(inputs.postmanAccessToken ?? "").trim();
   if (!accessToken) {
     throw new Error(
@@ -31711,9 +32024,12 @@ function createSmokeClient(inputs, actionCore) {
     onToken: (token) => actionCore.setSecret?.(token)
   });
   const teamId = String(inputs.teamId ?? "").trim();
+  const workspaceId = String(inputs.workspaceId ?? "").trim();
   return new PostmanGatewaySmokeClient({
     tokenProvider: provider,
-    ...teamId ? { teamId, orgMode: true } : {}
+    ...teamId ? { teamId, orgMode: true } : {},
+    ...workspaceId ? { workspaceId } : {},
+    runIdentity: buildSmokeRunIdentity(env)
   });
 }
 async function runAction(actionCore = core_exports, env = process.env) {
@@ -31749,7 +32065,7 @@ async function runAction(actionCore = core_exports, env = process.env) {
     log: actionCore
   });
   try {
-    const postman = createSmokeClient(inputs, actionCore);
+    const postman = createSmokeClient(inputs, actionCore, env);
     const outputs2 = await runSmokeFlow(inputs, {
       core: actionCore,
       postman
