@@ -4,6 +4,10 @@ import type { AccessTokenProvider } from '../lib/postman/token-provider.js';
 
 type JsonRecord = Record<string, unknown>;
 type ParentRef = { id: string; $kind: 'collection' };
+type ItemListing = {
+  entries: JsonRecord[];
+  parentByChildId: Map<string, string>;
+};
 
 function asRecord(value: unknown): JsonRecord | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : null;
@@ -21,6 +25,14 @@ function bareModelId(uid: string): string {
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+/** Transient/ambiguous create responses where the server may have accepted the write. */
+function isAmbiguousCreateError(error: unknown): boolean {
+  if (!(error instanceof HttpError)) return true;
+  return error.status === 408 || error.status === 429 || error.status >= 500;
+}
+
+const isAmbiguousMutationError = isAmbiguousCreateError;
 
 /** v3 export body `{type:'json'|'text', content}` -> v2 `{mode:'raw', raw}`. */
 function v3BodyToV2(body: JsonRecord | null): JsonRecord | undefined {
@@ -206,6 +218,21 @@ function v2EventsToV3CollectionScripts(events: unknown): JsonRecord[] {
     .filter((script): script is JsonRecord => Boolean(script));
 }
 
+function itemParentBareId(item: JsonRecord, parentByChildId: ReadonlyMap<string, string>): string | null {
+  const itemId = bareModelId(String(item.id ?? item.uid ?? ''));
+  const stubParent = itemId ? parentByChildId.get(itemId) : undefined;
+  if (stubParent) return stubParent;
+
+  // Stub references are authoritative. Keep position.parent only as a forward-
+  // compatible fallback if a future listing starts returning it on full entries.
+  const raw = asRecord(item.position)?.parent;
+  if (raw === undefined || raw === null || raw === '') return null;
+  if (typeof raw === 'string') return bareModelId(raw);
+  const record = asRecord(raw);
+  if (record && typeof record.id === 'string') return bareModelId(String(record.id));
+  return null;
+}
+
 export interface PostmanGatewaySmokeClientOptions {
   tokenProvider: AccessTokenProvider;
   bifrostBaseUrl?: string;
@@ -213,6 +240,13 @@ export interface PostmanGatewaySmokeClientOptions {
   orgMode?: boolean;
   fetchImpl?: typeof fetch;
   sleepImpl?: (ms: number) => Promise<void>;
+  /** Workspace that must own the canonical collection before any mutate. */
+  workspaceId?: string;
+  /**
+   * Run-owned identity token embedded in temporary collection names so an
+   * ambiguous generate response can be reconciled without adopting a peer run.
+   */
+  runIdentity?: string;
 }
 
 /**
@@ -221,16 +255,15 @@ export interface PostmanGatewaySmokeClientOptions {
  * `updateCollection`/`deleteCollection`) with gateway operations so the reshape
  * runs without a postman-api-key:
  *
- * - generate: `specification POST /specifications/:id/collections` + task poll
- *   (mirrors bootstrap's gateway assets client).
+ * - generate: `specification POST /specifications/:id/collections` + task poll,
+ *   with run-unique naming, pre-run snapshot correlation, and no blind POST retry.
  * - read: `collection GET /v3/collections/:cid/export` -> v3 IR, adapted back to
  *   the v2.1 shape the resolver/transform/verify code consumes unchanged.
- * - update: full-replace reconcile — list + delete every existing item, then
- *   create the curated leaves in flow order (`POST /v3/collections/:cid/items/`,
- *   v2 body/auth accepted under `payload` on create), patch each item's scripts
- *   (`/scripts` beforeRequest/afterResponse — the runnable shape), then patch the
- *   collection-level name/auth/variables (`PATCH /v3/collections/:cid`).
- * - delete: `collection DELETE /v3/collections/:cid` (404-tolerant).
+ * - update: workspace ownership gate, then deterministic in-place item
+ *   reconciliation by name (fail-closed on duplicates). Folder/request creates
+ *   opt out of blind transport retries and reconcile after ambiguous 5xx.
+ * - delete: only temporary collection IDs positively owned by this run
+ *   (`collection DELETE /v3/collections/:cid`, 404-tolerant).
  *
  * Curated flow collections are already flat. No-flow refreshes can pass through
  * generated collection folders, so update writes the tree recursively to preserve
@@ -243,6 +276,9 @@ export class PostmanGatewaySmokeClient {
 
   private readonly gateway: AccessTokenGatewayClient;
   private readonly sleepImpl: (ms: number) => Promise<void>;
+  private readonly workspaceId?: string;
+  private readonly runIdentity?: string;
+  private readonly ownedTemporaryCollectionIds = new Set<string>();
 
   constructor(options: PostmanGatewaySmokeClientOptions) {
     this.gateway = new AccessTokenGatewayClient({
@@ -250,16 +286,35 @@ export class PostmanGatewaySmokeClient {
       ...(options.bifrostBaseUrl ? { bifrostBaseUrl: options.bifrostBaseUrl } : {}),
       ...(options.teamId ? { teamId: options.teamId } : {}),
       ...(options.orgMode !== undefined ? { orgMode: options.orgMode } : {}),
-      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {})
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      ...(options.sleepImpl ? { sleepImpl: options.sleepImpl } : {})
     });
     this.sleepImpl = options.sleepImpl ?? sleep;
+    const workspaceId = String(options.workspaceId ?? '').trim();
+    this.workspaceId = workspaceId || undefined;
+    const runIdentity = String(options.runIdentity ?? '').trim();
+    this.runIdentity = runIdentity || undefined;
   }
 
   async generateCollection(specId: string, projectName: string, prefix: string): Promise<string> {
-    const name = [prefix.trim(), projectName.trim()].filter(Boolean).join(' ');
-    const body = { name, options: { requestNameSource: 'Fallback' } };
+    const ownedName = [prefix.trim(), projectName.trim(), this.runIdentity].filter(Boolean).join(' ');
+    const body = { name: ownedName, options: { requestNameSource: 'Fallback' } };
+    const preSnapshot = await this.listSpecCollectionUids(specId);
 
-    const taskId = await this.postGenerationWithLockRetry(specId, body);
+    let taskId: string;
+    try {
+      taskId = await this.postGenerationWithLockRetry(specId, body);
+    } catch (error) {
+      if (!isAmbiguousCreateError(error)) {
+        throw error;
+      }
+      const reconciled = await this.reconcileGeneratedCollection(specId, ownedName, preSnapshot);
+      if (!reconciled) {
+        throw error;
+      }
+      this.rememberOwnedTemporaryCollection(reconciled);
+      return reconciled;
+    }
 
     if (taskId) {
       for (let attempt = 0; attempt < PostmanGatewaySmokeClient.GENERATION_POLL_ATTEMPTS; attempt += 1) {
@@ -283,17 +338,12 @@ export class PostmanGatewaySmokeClient {
       }
     }
 
-    const list = await this.gateway.requestJson<JsonRecord>({
-      service: 'specification',
-      method: 'get',
-      path: `/specifications/${specId}/collections`
-    });
-    const entries = asArray(asRecord(list)?.data);
-    for (let i = entries.length - 1; i >= 0; i -= 1) {
-      const uid = String(entries[i]?.collection ?? entries[i]?.collectionId ?? entries[i]?.id ?? '').trim();
-      if (uid) return uid;
+    const owned = await this.reconcileGeneratedCollection(specId, ownedName, preSnapshot);
+    if (!owned) {
+      throw new Error(`Collection generation did not yield a collection uid for ${prefix}`);
     }
-    throw new Error(`Collection generation did not yield a collection uid for ${prefix}`);
+    this.rememberOwnedTemporaryCollection(owned);
+    return owned;
   }
 
   /** POST the generation request, retrying a 423-locked spec; returns the task id. */
@@ -304,7 +354,9 @@ export class PostmanGatewaySmokeClient {
           service: 'specification',
           method: 'post',
           path: `/specifications/${specId}/collections`,
-          body
+          body,
+          // Unsafe create: never blind-retry an ambiguous accept.
+          maxRetries: 0
         });
         return String(asRecord(created?.data)?.taskId ?? '').trim();
       } catch (error) {
@@ -315,6 +367,74 @@ export class PostmanGatewaySmokeClient {
         await this.sleepImpl(5000 * Math.pow(2, lockedAttempt));
       }
     }
+  }
+
+  private async listSpecCollectionUids(specId: string): Promise<string[]> {
+    const list = await this.gateway.requestJson<JsonRecord>({
+      service: 'specification',
+      method: 'get',
+      path: `/specifications/${specId}/collections`
+    });
+    const uids: string[] = [];
+    for (const entry of asArray(asRecord(list)?.data)) {
+      const uid = String(entry.collection ?? entry.collectionId ?? entry.id ?? '').trim();
+      if (uid) uids.push(uid);
+    }
+    return uids;
+  }
+
+  /**
+   * Adopt the temporary collection that matches this run's unique name, preferring
+   * IDs absent from the pre-run snapshot so peer temps are never selected.
+   */
+  private async reconcileGeneratedCollection(
+    specId: string,
+    ownedName: string,
+    preSnapshot: readonly string[]
+  ): Promise<string | null> {
+    const pre = new Set(preSnapshot);
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const listed = (await this.listSpecCollectionUids(specId)).filter((uid) => !pre.has(uid));
+      const matches: string[] = [];
+      for (const uid of listed) {
+        try {
+          const exported = await this.gateway.requestJson<JsonRecord>({
+            service: 'collection',
+            method: 'get',
+            path: `/v3/collections/${bareModelId(uid)}/export`
+          });
+          const collection = asRecord(asRecord(exported?.data)?.collection) ?? asRecord(exported?.data);
+          const name = typeof collection?.name === 'string' ? collection.name : '';
+          if (name === ownedName) matches.push(uid);
+        } catch (error) {
+          if (!(error instanceof HttpError && error.status === 404)) throw error;
+        }
+      }
+      if (matches.length === 1) return matches[0] ?? null;
+      if (matches.length > 1) {
+        throw new Error(
+          `Collection generation reconciled ambiguously for ${ownedName}: ${matches.join(', ')}`
+        );
+      }
+      if (attempt < 5) await this.sleepImpl(Math.min(2000, 250 * 2 ** attempt));
+    }
+    return null;
+  }
+
+  private rememberOwnedTemporaryCollection(collectionUid: string): void {
+    const trimmed = String(collectionUid ?? '').trim();
+    if (!trimmed) return;
+    this.ownedTemporaryCollectionIds.add(trimmed);
+    this.ownedTemporaryCollectionIds.add(bareModelId(trimmed));
+  }
+
+  private isOwnedTemporaryCollection(collectionUid: string): boolean {
+    const trimmed = String(collectionUid ?? '').trim();
+    if (!trimmed) return false;
+    return (
+      this.ownedTemporaryCollectionIds.has(trimmed) ||
+      this.ownedTemporaryCollectionIds.has(bareModelId(trimmed))
+    );
   }
 
   async getCollection(collectionUid: string): Promise<JsonRecord> {
@@ -338,10 +458,9 @@ export class PostmanGatewaySmokeClient {
       throw new Error(`updateCollection: invalid collection payload for ${collectionUid}`);
     }
 
-    // Full-replace: delete every existing item (leaves + folders), then recreate.
-    await this.deleteAllItems(cid);
+    await this.assertCanonicalBelongsToWorkspace(collectionUid);
 
-    await this.createItemsRecursive(cid, desired.item, { id: cid, $kind: 'collection' });
+    await this.reconcileItemsRecursive(cid, desired.item, { id: cid, $kind: 'collection' });
 
     // Collection-level: name, auth, variables.
     const ops: JsonRecord[] = [];
@@ -364,7 +483,9 @@ export class PostmanGatewaySmokeClient {
         service: 'collection',
         method: 'patch',
         path: `/v3/collections/${cid}`,
-        body: ops
+        body: ops,
+        // Fixed-path add/replace operations are idempotent.
+        maxRetries: 3
       });
     }
     if (clearCollectionAuth) {
@@ -372,20 +493,44 @@ export class PostmanGatewaySmokeClient {
     }
 
     // Collection-level scripts (e.g. the OAuth token-cache pre-request) go in a
-    // SEPARATE patch: the root accepts only http:beforeRequest/http:afterRequest,
-    // and mixing a rejected script op into the ops array above would 400 the whole
-    // patch. Tolerated as best-effort so a script-shape rejection can't abort the
-    // reconcile after items + collection metadata already landed.
+    // separate patch. The root accepts only http:beforeRequest/http:afterRequest.
+    // A schema-shape 400 remains best-effort, but auth and server failures surface.
     const collScripts = v2EventsToV3CollectionScripts(desired.event);
     if (collScripts.length > 0) {
-      await this.gateway
-        .request({
+      try {
+        await this.gateway.request({
           service: 'collection',
           method: 'patch',
           path: `/v3/collections/${cid}`,
-          body: [{ op: 'add', path: '/scripts', value: collScripts }]
-        })
-        .catch(() => undefined);
+          body: [{ op: 'add', path: '/scripts', value: collScripts }],
+          // Adding the same root script value is idempotent.
+          maxRetries: 3
+        });
+      } catch (error) {
+        if (!(error instanceof HttpError && error.status === 400)) throw error;
+      }
+    }
+  }
+
+  private async assertCanonicalBelongsToWorkspace(collectionUid: string): Promise<void> {
+    if (!this.workspaceId) {
+      return;
+    }
+    const listed = await this.gateway.requestJson<JsonRecord>({
+      service: 'collection',
+      method: 'get',
+      path: `/v3/collections/?workspace=${encodeURIComponent(this.workspaceId)}`
+    });
+    const collections = asArray(asRecord(listed)?.data ?? listed?.data);
+    const bare = bareModelId(collectionUid);
+    const found = collections.some((entry) => {
+      const id = String(entry.id ?? entry.uid ?? '').trim();
+      return id === collectionUid || bareModelId(id) === bare;
+    });
+    if (!found) {
+      throw new Error(
+        `Canonical collection ${collectionUid} does not belong to workspace ${this.workspaceId} (not found in workspace); refusing mutate`
+      );
     }
   }
 
@@ -395,7 +540,10 @@ export class PostmanGatewaySmokeClient {
         service: 'collection',
         method: 'patch',
         path: `/v3/collections/${cid}`,
-        body: [{ op: 'remove', path: '/auth' }]
+        body: [{ op: 'remove', path: '/auth' }],
+        // Removing auth has one end state; a repeated missing-value response is
+        // handled below as successful reconciliation.
+        maxRetries: 3
       });
     } catch (error) {
       if (isMissingPatchValueError(error)) {
@@ -405,47 +553,152 @@ export class PostmanGatewaySmokeClient {
     }
   }
 
-  private async createItemsRecursive(cid: string, items: unknown, parent: ParentRef): Promise<void> {
-    for (const item of asArray(items)) {
+  private async listItems(cid: string): Promise<ItemListing> {
+    const listed = await this.gateway.requestJson<JsonRecord>({
+      service: 'collection',
+      method: 'get',
+      path: `/v3/collections/${cid}/items/`
+    });
+    const entries = asArray(listed?.data);
+    const parentByChildId = new Map<string, string>();
+    for (const parent of entries) {
+      const parentId = bareModelId(String(parent.id ?? parent.uid ?? ''));
+      if (!parentId) continue;
+      for (const stub of asArray(parent.items)) {
+        const childId = bareModelId(String(stub.id ?? stub.uid ?? ''));
+        if (!childId) continue;
+        const existingParent = parentByChildId.get(childId);
+        if (existingParent && existingParent !== parentId) {
+          throw new Error(`updateCollection: item ${childId} is referenced by multiple parents`);
+        }
+        parentByChildId.set(childId, parentId);
+      }
+    }
+    return { entries, parentByChildId };
+  }
+
+  private listChildItems(listing: ItemListing, parentId: string, collectionCid: string): JsonRecord[] {
+    const parentBare = bareModelId(parentId);
+    const isCollectionRoot = parentBare === collectionCid || parentId === collectionCid;
+    return listing.entries.filter((item) => {
+      const itemParent = itemParentBareId(item, listing.parentByChildId);
+      if (itemParent === null) {
+        return isCollectionRoot;
+      }
+      return itemParent === parentBare || itemParent === bareModelId(parentId);
+    });
+  }
+
+  private assertUniqueNames(items: JsonRecord[], parentId: string, label: string): Map<string, JsonRecord> {
+    const byName = new Map<string, JsonRecord[]>();
+    for (const item of items) {
+      const name = String(item.name ?? '');
+      const group = byName.get(name) ?? [];
+      group.push(item);
+      byName.set(name, group);
+    }
+    for (const [name, group] of byName) {
+      if (group.length > 1) {
+        throw new Error(
+          `updateCollection: duplicate ${label} item name "${name}" under parent ${parentId}; refusing to reconcile`
+        );
+      }
+    }
+    const unique = new Map<string, JsonRecord>();
+    for (const [name, group] of byName) {
+      const only = group[0];
+      if (only) unique.set(name, only);
+    }
+    return unique;
+  }
+
+  private async reconcileItemsRecursive(cid: string, desiredItems: unknown, parent: ParentRef): Promise<void> {
+    const listing = await this.listItems(cid);
+    const siblings = this.listChildItems(listing, parent.id, cid);
+    const existingByName = this.assertUniqueNames(siblings, parent.id, 'existing');
+
+    const desiredArray = asArray(desiredItems);
+    const desiredNames = new Set<string>();
+    for (const item of desiredArray) {
+      const name = typeof item.name === 'string' ? item.name : '';
+      if (desiredNames.has(name)) {
+        throw new Error(`updateCollection: duplicate desired item name "${name}" under parent ${parent.id}`);
+      }
+      desiredNames.add(name);
+    }
+
+    for (const sibling of siblings) {
+      const name = String(sibling.name ?? '');
+      if (!desiredNames.has(name)) {
+        await this.deleteItemTolerant(cid, sibling);
+      }
+    }
+
+    const refreshed = this.listChildItems(await this.listItems(cid), parent.id, cid);
+    const remainingByName = this.assertUniqueNames(refreshed, parent.id, 'existing');
+
+    for (const item of desiredArray) {
+      const name = typeof item.name === 'string' ? item.name : '';
       const request = asRecord(item.request);
       if (request) {
+        const existing = remainingByName.get(name);
+        if (existing && String(existing.$kind ?? 'http-request') === 'http-request') {
+          await this.updateRequestItem(cid, existing, item, request, parent);
+          continue;
+        }
+        if (existing) {
+          await this.deleteItemTolerant(cid, existing);
+        }
         await this.createRequestItem(cid, item, request, parent);
         continue;
       }
 
       if (Array.isArray(item.item)) {
-        const folderId = await this.createFolderItem(cid, item, parent);
-        await this.createItemsRecursive(cid, item.item, { id: folderId, $kind: 'collection' });
+        const existing = remainingByName.get(name) ?? existingByName.get(name);
+        if (existing && String(existing.$kind ?? '') !== 'collection') {
+          await this.deleteItemTolerant(cid, existing);
+        }
+        const folderId = existing && String(existing.$kind ?? '') === 'collection'
+          ? String(existing.id ?? '').trim()
+          : await this.createFolderItem(cid, item, parent);
+        if (!folderId) {
+          throw new Error(`updateCollection: missing folder id for ${name || '<unnamed>'}`);
+        }
+        await this.reconcileItemsRecursive(cid, item.item, { id: folderId, $kind: 'collection' });
       }
     }
   }
 
-  private async createFolderItem(cid: string, folder: JsonRecord, parent: ParentRef): Promise<string> {
-    const createBody: JsonRecord = {
-      $kind: 'collection',
-      name: typeof folder.name === 'string' ? folder.name : '',
-      position: { parent }
-    };
-    const created = await this.gateway.requestJson<JsonRecord>({
-      service: 'collection',
-      method: 'post',
-      path: `/v3/collections/${cid}/items/`,
-      headers: { 'X-Entity-Type': 'folder' },
-      body: createBody
-    });
-    const data = asRecord(created?.data);
-    const folderId = String(data?.id ?? data?.uid ?? '').trim();
-    if (!folderId) {
-      throw new Error(`updateCollection: gateway did not return an id for folder ${String(folder.name ?? '').trim() || '<unnamed>'}`);
+  private async deleteItemTolerant(cid: string, item: JsonRecord): Promise<void> {
+    const itemId = String(item.id ?? '').trim();
+    if (!itemId) return;
+    const kind = String(item.$kind ?? 'http-request');
+    let lastAmbiguousError: unknown;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        await this.gateway.request({
+          service: 'collection',
+          method: 'delete',
+          path: `/v3/collections/${cid}/items/${itemId}`,
+          headers: { 'X-Entity-Type': kind },
+          maxRetries: 0
+        });
+      } catch (error) {
+        if (error instanceof HttpError && error.status === 404) return;
+        if (!isAmbiguousMutationError(error)) throw error;
+        lastAmbiguousError = error;
+      }
+      const remains = (await this.listItems(cid)).entries.some(
+        (candidate) => bareModelId(String(candidate.id ?? candidate.uid ?? '')) === bareModelId(itemId)
+      );
+      if (!remains) return;
+      if (attempt < 3) await this.sleepImpl(Math.min(2000, 250 * 2 ** attempt));
     }
-    return folderId;
+    if (lastAmbiguousError) throw lastAmbiguousError;
+    throw new Error(`updateCollection: item ${itemId} survived delete on collection ${cid}`);
   }
 
-  private async createRequestItem(cid: string, leaf: JsonRecord, request: JsonRecord, parent: ParentRef): Promise<void> {
-    // The v3 IR item carries url/method/headers/body/auth at the ROOT (sibling
-    // fields), NOT under a `payload` wrapper — a payload wrapper is silently
-    // dropped (live-proven). Body/auth use the v3 IR shapes ({type,content} /
-    // {type,credentials}); headers are {key,value} pairs.
+  private requestCreateBody(leaf: JsonRecord, request: JsonRecord, parent: ParentRef): JsonRecord {
     const createBody: JsonRecord = {
       $kind: 'http-request',
       name: typeof leaf.name === 'string' ? leaf.name : '',
@@ -458,15 +711,127 @@ export class PostmanGatewaySmokeClient {
     if (body) createBody.body = body;
     const auth = v2AuthToV3(asRecord(request.auth));
     if (auth) createBody.auth = auth;
-    const created = await this.gateway.requestJson<JsonRecord>({
+    return createBody;
+  }
+
+  private async updateRequestItem(
+    cid: string,
+    existing: JsonRecord,
+    leaf: JsonRecord,
+    request: JsonRecord,
+    parent: ParentRef
+  ): Promise<void> {
+    const itemId = String(existing.id ?? existing.uid ?? '').trim();
+    if (!itemId) throw new Error(`updateCollection: existing request ${String(leaf.name ?? '<unnamed>')} has no id`);
+    const desired = this.requestCreateBody(leaf, request, parent);
+    const ops: JsonRecord[] = Object.entries(desired)
+      .filter(([key]) => key !== '$kind')
+      .map(([key, value]) => ({ op: 'add', path: `/${key}`, value }));
+    for (const optional of ['body', 'auth']) {
+      if (!(optional in desired) && optional in existing) {
+        ops.push({ op: 'remove', path: `/${optional}` });
+      }
+    }
+    await this.gateway.request({
       service: 'collection',
-      method: 'post',
-      path: `/v3/collections/${cid}/items/`,
+      method: 'patch',
+      path: `/v3/collections/${cid}/items/${itemId}`,
       headers: { 'X-Entity-Type': 'http-request' },
-      body: createBody
+      body: ops,
+      // Fixed-path request updates are idempotent. Missing optional removals
+      // after an ambiguous accepted patch are reconciled below.
+      maxRetries: 3
+    }).catch((error: unknown) => {
+      if (isMissingPatchValueError(error) && ops.some((op) => op.op === 'remove')) return;
+      throw error;
     });
-    const data = asRecord(created?.data);
-    const newItemId = String(data?.id ?? data?.uid ?? '').trim();
+    await this.patchItemScripts(cid, itemId, v2EventsToV3Scripts(leaf.event));
+  }
+
+  private async findChildByName(cid: string, parentId: string, name: string): Promise<JsonRecord | null> {
+    const children = this.listChildItems(await this.listItems(cid), parentId, cid);
+    const matches = children.filter((item) => String(item.name ?? '') === name);
+    if (matches.length > 1) {
+      throw new Error(
+        `updateCollection: duplicate item name "${name}" under parent ${parentId} after create; refusing to adopt`
+      );
+    }
+    return matches[0] ?? null;
+  }
+
+  private async createFolderItem(cid: string, folder: JsonRecord, parent: ParentRef): Promise<string> {
+    const name = typeof folder.name === 'string' ? folder.name : '';
+    const createBody: JsonRecord = {
+      $kind: 'collection',
+      name,
+      position: { parent }
+    };
+    try {
+      const created = await this.gateway.requestJson<JsonRecord>({
+        service: 'collection',
+        method: 'post',
+        path: `/v3/collections/${cid}/items/`,
+        headers: { 'X-Entity-Type': 'folder' },
+        body: createBody,
+        maxRetries: 0
+      });
+      const data = asRecord(created?.data);
+      const folderId = String(data?.id ?? data?.uid ?? '').trim();
+      if (!folderId) {
+        throw new Error(
+          `updateCollection: gateway did not return an id for folder ${name.trim() || '<unnamed>'}`
+        );
+      }
+      return folderId;
+    } catch (error) {
+      if (!isAmbiguousCreateError(error)) {
+        throw error;
+      }
+      const adopted = await this.findChildByName(cid, parent.id, name);
+      const folderId = String(adopted?.id ?? adopted?.uid ?? '').trim();
+      if (!folderId) {
+        throw error;
+      }
+      return folderId;
+    }
+  }
+
+  private async createRequestItem(
+    cid: string,
+    leaf: JsonRecord,
+    request: JsonRecord,
+    parent: ParentRef
+  ): Promise<void> {
+    // The v3 IR item carries url/method/headers/body/auth at the ROOT (sibling
+    // fields), NOT under a `payload` wrapper — a payload wrapper is silently
+    // dropped (live-proven). Body/auth use the v3 IR shapes ({type,content} /
+    // {type,credentials}); headers are {key,value} pairs.
+    const name = typeof leaf.name === 'string' ? leaf.name : '';
+    const createBody = this.requestCreateBody(leaf, request, parent);
+
+    let newItemId: string;
+    try {
+      const created = await this.gateway.requestJson<JsonRecord>({
+        service: 'collection',
+        method: 'post',
+        path: `/v3/collections/${cid}/items/`,
+        headers: { 'X-Entity-Type': 'http-request' },
+        body: createBody,
+        maxRetries: 0
+      });
+      const data = asRecord(created?.data);
+      newItemId = String(data?.id ?? data?.uid ?? '').trim();
+    } catch (error) {
+      if (!isAmbiguousCreateError(error)) {
+        throw error;
+      }
+      const adopted = await this.findChildByName(cid, parent.id, name);
+      newItemId = String(adopted?.id ?? adopted?.uid ?? '').trim();
+      if (!newItemId) {
+        throw error;
+      }
+    }
+
     const scripts = v2EventsToV3Scripts(leaf.event);
     if (newItemId && scripts.length > 0) {
       await this.patchItemScripts(cid, newItemId, scripts);
@@ -495,7 +860,8 @@ export class PostmanGatewaySmokeClient {
           method: 'patch',
           path: `/v3/collections/${cid}/items/${itemId}`,
           headers: { 'X-Entity-Type': 'http-request' },
-          body: [{ op: 'add', path: '/scripts', value: scripts }]
+          body: [{ op: 'add', path: '/scripts', value: scripts }],
+          maxRetries: 0
         });
         return;
       } catch (error) {
@@ -508,57 +874,37 @@ export class PostmanGatewaySmokeClient {
     }
   }
 
-  /**
-   * Delete every item (leaves + folders) from a collection, then verify the
-   * collection is empty. The gateway's item-delete returns a spurious `500
-   * GENERIC_ERROR` even though the delete lands server-side (live-observed); a
-   * blind throw would abort the reconcile mid-replace. So per-item delete errors
-   * are tolerated and the *end state* is the source of truth: re-list and retry
-   * any survivors across a few rounds, throwing only if items genuinely persist.
-   */
-  private async deleteAllItems(cid: string): Promise<void> {
-    const maxRounds = 4;
-    for (let round = 0; round < maxRounds; round += 1) {
-      const listed = await this.gateway.requestJson<JsonRecord>({
-        service: 'collection',
-        method: 'get',
-        path: `/v3/collections/${cid}/items/`
-      });
-      const items = asArray(listed?.data);
-      if (items.length === 0) return;
-      if (round === maxRounds - 1) {
-        throw new Error(`updateCollection: ${items.length} item(s) survived delete on collection ${cid}`);
-      }
-      for (const item of items) {
-        const itemId = String(item.id ?? '').trim();
-        if (!itemId) continue;
-        const kind = String(item.$kind ?? 'http-request');
-        try {
-          await this.gateway.request({
-            service: 'collection',
-            method: 'delete',
-            path: `/v3/collections/${cid}/items/${itemId}`,
-            headers: { 'X-Entity-Type': kind }
-          });
-        } catch {
-          // Tolerated: the gateway returns 500 on a delete that nonetheless
-          // lands. The next round's re-list is authoritative.
-        }
+  async deleteCollection(collectionUid: string): Promise<void> {
+    if (this.runIdentity || this.ownedTemporaryCollectionIds.size > 0) {
+      if (!this.isOwnedTemporaryCollection(collectionUid)) {
+        throw new Error(
+          `refusing to delete collection ${collectionUid}: not positively owned by this run`
+        );
       }
     }
-  }
 
-  async deleteCollection(collectionUid: string): Promise<void> {
     const cid = bareModelId(collectionUid);
     try {
       await this.gateway.request({
         service: 'collection',
         method: 'delete',
-        path: `/v3/collections/${cid}`
+        path: `/v3/collections/${cid}`,
+        maxRetries: 0
       });
     } catch (error) {
       if (error instanceof HttpError && error.status === 404) {
         return;
+      }
+      if (!isAmbiguousMutationError(error)) throw error;
+      try {
+        await this.gateway.request({
+          service: 'collection',
+          method: 'get',
+          path: `/v3/collections/${cid}/export`
+        });
+      } catch (readError) {
+        if (readError instanceof HttpError && readError.status === 404) return;
+        throw readError;
       }
       throw error;
     }
