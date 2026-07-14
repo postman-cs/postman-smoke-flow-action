@@ -132,9 +132,9 @@ describe('PostmanGatewaySmokeClient', () => {
       ]
     });
 
-    // delete the pre-existing item (bare cid in path)
+    // delete the pre-existing item (FULL public uid in items path)
     const del = calls.find((c) => c.method === 'delete' && c.path.includes('/items/'));
-    expect(del?.path).toBe('/v3/collections/cid/items/55363555-old');
+    expect(del?.path).toBe('/v3/collections/55363555-cid/items/55363555-old');
 
     // create the curated leaf with ROOT-level v3 IR fields (no payload wrapper)
     const create = calls.find((c) => c.method === 'post' && c.path.endsWith('/items/'));
@@ -229,9 +229,9 @@ describe('PostmanGatewaySmokeClient', () => {
       ['collection', 'v1'],
       ['http-request', 'List widgets']
     ]);
-    expect((createdItems[0]?.position as J).parent).toEqual({ id: 'cid', $kind: 'collection' });
+    expect((createdItems[0]?.position as J).parent).toEqual({ id: '55363555-cid', $kind: 'collection' });
     expect((createdItems[1]?.position as J).parent).toEqual({ id: '55363555-folder-health', $kind: 'collection' });
-    expect((createdItems[2]?.position as J).parent).toEqual({ id: 'cid', $kind: 'collection' });
+    expect((createdItems[2]?.position as J).parent).toEqual({ id: '55363555-cid', $kind: 'collection' });
     expect((createdItems[3]?.position as J).parent).toEqual({ id: '55363555-folder-v1', $kind: 'collection' });
     expect(createdItems[1]?.url).toBe('{{baseUrl}}/health');
     expect(createdItems[3]?.url).toBe('{{baseUrl}}/v1/widgets');
