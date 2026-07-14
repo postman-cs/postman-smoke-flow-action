@@ -41,4 +41,17 @@ describe('release workflow publishing contract', () => {
     expect(namedStep('Attach npm tarball to release')).not.toMatch(/\n\s+if:/);
     expect(namedStep('Upload tarball')).not.toMatch(/\n\s+if:/);
   });
+
+  it('advances the rolling major alias after an immutable release publishes', () => {
+    expect(releaseWorkflow).toContain('advance-major-alias:');
+    expect(releaseWorkflow).toContain('Force-move rolling major alias tag');
+    expect(namedStep('Force-move rolling major alias tag')).toContain('git tag -fa "$MAJOR"');
+    expect(namedStep('Force-move rolling major alias tag')).toContain('git push origin "$MAJOR" --force');
+    expect(releaseWorkflow).toMatch(
+      /advance-major-alias:[\s\S]*needs:[\s\S]*validate[\s\S]*publish/
+    );
+    expect(releaseWorkflow).toMatch(
+      /if: \$\{\{ !cancelled\(\) && needs\.publish\.result == 'success' && needs\.validate\.outputs\.npm_publish == 'true' \}\}/
+    );
+  });
 });

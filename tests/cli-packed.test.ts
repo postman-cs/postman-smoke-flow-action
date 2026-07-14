@@ -8,13 +8,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const distCli = path.join(repoRoot, 'dist', 'cli.cjs');
+const packagingSource = readFileSync(fileURLToPath(import.meta.url), 'utf8');
 
 describe('packed CLI executable', () => {
   let installRoot = '';
   let binPath = '';
 
   beforeAll(() => {
-    execFileSync('npm', ['run', 'build'], { cwd: repoRoot, stdio: 'pipe' });
     expect(existsSync(distCli)).toBe(true);
 
     installRoot = mkdtempSync(path.join(tmpdir(), 'smoke-flow-cli-pack-'));
@@ -45,10 +45,59 @@ describe('packed CLI executable', () => {
     }
   });
 
-  it('ships dist/cli.cjs with a node shebang and executable mode', () => {
+  it('does not rebuild dist from packaging tests', () => {
+    const executableLines = packagingSource
+      .split(/\r?\n/)
+      .filter((line) => !/^\s*(?:\/\/|expect\(|it\(|describe\()/.test(line))
+      .join('\n');
+    expect(executableLines).not.toMatch(/\bnpm run (?:build|bundle)\b/);
+    expect(executableLines).not.toMatch(/\besbuild\b/);
+    expect(executableLines).not.toMatch(/rm -rf dist/);
+  });
+
+  it('ships dist/cli.cjs with a node shebang, disk exec bit, and git-index 100755', () => {
     const firstLine = readFileSync(distCli, 'utf8').split('\n')[0] ?? '';
     expect(firstLine).toBe('#!/usr/bin/env node');
     expect(statSync(distCli).mode & 0o111).toBeGreaterThan(0);
+
+    const staged = execFileSync('git', ['ls-files', '--stage', '--', 'dist/cli.cjs'], {
+      cwd: repoRoot,
+      encoding: 'utf8'
+    });
+    expect(staged).toMatch(/^100755 /);
+  });
+
+  it('runs ./dist/cli.cjs --help/--version directly without credentials or writes', () => {
+    const packageJson = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8')) as {
+      version: string;
+    };
+    const sandbox = mkdtempSync(path.join(tmpdir(), 'smoke-flow-cli-direct-'));
+    try {
+      const env = {
+        PATH: process.env.PATH ?? '',
+        INPUT_POSTMAN_API_KEY: 'should-not-be-used',
+        POSTMAN_API_KEY: 'should-not-be-used',
+        POSTMAN_ACCESS_TOKEN: 'should-not-be-used',
+        INPUT_POSTMAN_ACCESS_TOKEN: 'should-not-be-used',
+        HOME: sandbox,
+        TMPDIR: sandbox
+      };
+
+      const help = spawnSync(distCli, ['--help'], { encoding: 'utf8', cwd: sandbox, env });
+      expect(help.status).toBe(0);
+      expect(help.stdout).toMatch(/Usage: postman-smoke-flow/);
+      expect(help.stderr).not.toMatch(/permission denied|exec format|syntax error|unexpected token|"use strict"/i);
+
+      const version = spawnSync(distCli, ['--version'], { encoding: 'utf8', cwd: sandbox, env });
+      expect(version.status).toBe(0);
+      expect(version.stdout.trim()).toBe(packageJson.version);
+      expect(version.stderr).toBe('');
+
+      const written = execFileSync('find', [sandbox, '-type', 'f'], { encoding: 'utf8' }).trim();
+      expect(written).toBe('');
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
   });
 
   it('runs --help and --version from a packed install without side effects', () => {
