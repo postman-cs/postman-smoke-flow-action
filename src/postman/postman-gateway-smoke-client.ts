@@ -24,8 +24,16 @@ function asArray(value: unknown): JsonRecord[] {
  * (`<owner>-<uuid>`): bare model ids intermittently 403 on Bifrost
  * (live-proven 2026-07-14 on org and non-org sandboxes).
  */
+const SMOKE_BARE_UUID_RE =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
 function bareModelId(uid: string): string {
   const u = String(uid ?? '').trim();
+  // A bare UUID already IS the model id, and it contains hyphens — splitting on
+  // the first hyphen would corrupt it (dropping its first segment). Guard that
+  // case; for a full `<owner>-<uuid>` public uid the owner is a single hyphenless
+  // segment, so stripping up to the first hyphen yields the uuid.
+  if (SMOKE_BARE_UUID_RE.test(u)) return u;
   return u.includes('-') ? u.slice(u.indexOf('-') + 1) : u;
 }
 
@@ -751,20 +759,71 @@ export class PostmanGatewaySmokeClient {
         ops.push({ op: 'remove', path: `/${optional}` });
       }
     }
-    await this.gateway.request({
-      service: 'collection',
-      method: 'patch',
-      path: `/v3/collections/${cid}/items/${itemId}`,
-      headers: { 'X-Entity-Type': 'http-request' },
-      body: ops,
-      // Fixed-path request updates are idempotent. Missing optional removals
-      // after an ambiguous accepted patch are reconciled below.
-      maxRetries: 3
-    }).catch((error: unknown) => {
-      if (isMissingPatchValueError(error) && ops.some((op) => op.op === 'remove')) return;
-      throw error;
-    });
+    try {
+      await this.gateway.request({
+        service: 'collection',
+        method: 'patch',
+        path: `/v3/collections/${cid}/items/${itemId}`,
+        headers: { 'X-Entity-Type': 'http-request' },
+        body: ops,
+        // Fixed-path request updates are idempotent. Missing optional removals
+        // after an ambiguous accepted patch are reconciled below.
+        maxRetries: 3
+      });
+    } catch (error) {
+      // A retried PATCH whose first attempt actually committed fails its removes
+      // as already-applied. That 400 only proves one remove target is absent,
+      // not that the whole batch landed — read the item back and only swallow
+      // the error when every intended op's end state holds.
+      if (
+        isMissingPatchValueError(error) &&
+        ops.some((op) => op.op === 'remove') &&
+        (await this.verifyItemOpsApplied(cid, itemId, ops))
+      ) {
+        // reconciled: the committed state matches the requested ops
+      } else {
+        throw error;
+      }
+    }
     await this.patchItemScripts(cid, itemId, v2EventsToV3Scripts(leaf.event));
+  }
+
+  /**
+   * Read a single item back and check every JSON-Patch op's intended end state.
+   * Removes must be strictly absent — that is the retried-timeout hazard this
+   * guards: the already-applied-400 only proves ONE remove target is gone, so we
+   * confirm EVERY remove landed. add/replace targets are checked for presence
+   * (not structural equality): the item write surface normalizes request fields
+   * server-side (raw url form, header shape, `position`), so the stored value is
+   * not byte-equal to the requested op value even on a correct commit — presence
+   * still detects a batch that never landed. Returns false on any read failure.
+   */
+  private async verifyItemOpsApplied(cid: string, itemId: string, ops: JsonRecord[]): Promise<boolean> {
+    let item: JsonRecord | null;
+    try {
+      const got = await this.gateway.requestJson<JsonRecord>({
+        service: 'collection',
+        method: 'get',
+        path: `/v3/collections/${cid}/items/${itemId}`,
+        headers: { 'X-Entity-Type': 'http-request' }
+      });
+      item = asRecord(got?.data) ?? asRecord(got);
+    } catch {
+      return false;
+    }
+    if (!item) return false;
+    for (const op of ops) {
+      const rawPath = String(op.path ?? '');
+      const field = rawPath.startsWith('/') ? rawPath.slice(1) : rawPath;
+      if (!field) return false;
+      const value = item[field];
+      if (op.op === 'remove') {
+        if (!(value === undefined || value === null)) return false;
+      } else if (value === undefined || value === null) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private async findChildByName(cid: string, parentId: string, name: string): Promise<JsonRecord | null> {
