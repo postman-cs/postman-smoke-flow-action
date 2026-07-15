@@ -31266,9 +31266,8 @@ function resolveBranchIdentity(env = process.env, overrides = {}) {
 }
 function parseChannelRules(input) {
   const raw = clean(input);
-  if (!raw) return [];
   const rules = [];
-  for (const part of raw.split(",")) {
+  for (const part of raw ? raw.split(",") : []) {
     const entry = part.trim();
     if (!entry) continue;
     const eq = entry.indexOf("=");
@@ -31287,6 +31286,9 @@ function parseChannelRules(input) {
       );
     }
     rules.push({ pattern, code });
+  }
+  if (!rules.some((rule) => rule.pattern === "release/*")) {
+    rules.push({ pattern: "release/*", code: "RC" });
   }
   return rules;
 }
