@@ -26030,7 +26030,10 @@ var smokeFlowActionContract = {
     "fail-on-flow-warning": { required: false, default: "false" },
     "keep-temp-collection-on-failure": { required: false, default: "false" },
     "temp-collection-prefix": { required: false, default: "[Smoke][Temp]" },
-    "team-id": { required: false }
+    "team-id": { required: false },
+    "branch-strategy": { required: false, default: "legacy" },
+    "canonical-branch": { required: false },
+    "channels": { required: false }
   },
   outputs: {
     "smoke-collection-id": {},
@@ -26041,7 +26044,9 @@ var smokeFlowActionContract = {
     "resolved-operation-count": {},
     "applied-binding-count": {},
     "applied-extract-count": {},
-    "assertion-count": {}
+    "assertion-count": {},
+    "sync-status": {},
+    "branch-decision": {}
   }
 };
 
@@ -28433,7 +28438,7 @@ function getIDToken(aud) {
 
 // src/index.ts
 var import_node_crypto2 = require("node:crypto");
-var import_node_fs4 = require("node:fs");
+var import_node_fs5 = require("node:fs");
 var import_node_path3 = __toESM(require("node:path"), 1);
 
 // src/flow/parser.ts
@@ -31235,6 +31240,285 @@ async function runCredentialPreflight(args) {
   args.log.info(result.message);
 }
 
+// src/lib/repo-branch-decision.ts
+var import_node_fs4 = require("node:fs");
+var ContractError = class extends Error {
+  code;
+  constructor(code, message) {
+    super(`${code}: ${message}`);
+    this.code = code;
+    this.name = "ContractError";
+  }
+};
+function clean(value) {
+  const trimmed = (value ?? "").trim();
+  return trimmed.length > 0 ? trimmed : void 0;
+}
+function stripRefPrefix(ref) {
+  const raw = clean(ref);
+  if (!raw) {
+    return { kind: "unknown" };
+  }
+  if (raw.startsWith("refs/heads/")) {
+    return { name: raw.slice("refs/heads/".length), kind: "branch" };
+  }
+  if (raw.startsWith("refs/tags/")) {
+    return { name: raw.slice("refs/tags/".length), kind: "tag" };
+  }
+  if (raw.startsWith("refs/pull/") || raw.startsWith("refs/merge")) {
+    return { kind: "unknown" };
+  }
+  return { name: raw, kind: "branch" };
+}
+function detectProvider(env) {
+  if (clean(env.GITHUB_ACTIONS) || clean(env.GITHUB_REPOSITORY)) return "github";
+  if (clean(env.GITLAB_CI) || clean(env.CI_PROJECT_PATH)) return "gitlab";
+  if (clean(env.BITBUCKET_REPO_SLUG) || clean(env.BITBUCKET_BRANCH)) return "bitbucket";
+  if (clean(env.TF_BUILD) || clean(env.BUILD_REPOSITORY_URI)) return "azure-devops";
+  return "unknown";
+}
+function readGithubEvent(env) {
+  const path8 = clean(env.GITHUB_EVENT_PATH);
+  if (!path8) return void 0;
+  try {
+    return JSON.parse((0, import_node_fs4.readFileSync)(path8, "utf8"));
+  } catch {
+    return void 0;
+  }
+}
+function resolveBranchIdentity(env = process.env, overrides = {}) {
+  const provider = detectProvider(env);
+  const explicitDefault = clean(overrides.defaultBranch);
+  let headBranch;
+  let rawRef;
+  let refKind;
+  let isPrContext = false;
+  let isForkPr = false;
+  let defaultBranch = explicitDefault;
+  let headSha;
+  switch (provider) {
+    case "github": {
+      const event = readGithubEvent(env);
+      headSha = clean(env.GITHUB_SHA);
+      defaultBranch ??= clean(event?.repository?.default_branch);
+      const headRef = clean(env.GITHUB_HEAD_REF);
+      if (headRef) {
+        isPrContext = true;
+        headBranch = headRef;
+        rawRef = clean(env.GITHUB_REF) ?? headRef;
+        refKind = "branch";
+        const headRepo = event?.pull_request?.head?.repo?.full_name;
+        const baseRepo = event?.pull_request?.base?.repo?.full_name ?? event?.repository?.full_name;
+        isForkPr = Boolean(headRepo && baseRepo && headRepo !== baseRepo);
+        headSha = clean(event?.pull_request?.head?.sha) ?? headSha;
+      } else {
+        rawRef = clean(env.GITHUB_REF) ?? clean(env.GITHUB_REF_NAME);
+        const parsed = stripRefPrefix(rawRef);
+        headBranch = parsed.kind === "branch" ? parsed.name : void 0;
+        refKind = parsed.kind;
+      }
+      break;
+    }
+    case "gitlab": {
+      headSha = clean(env.CI_COMMIT_SHA);
+      defaultBranch ??= clean(env.CI_DEFAULT_BRANCH);
+      const mrSource = clean(env.CI_MERGE_REQUEST_SOURCE_BRANCH_NAME);
+      if (mrSource) {
+        isPrContext = true;
+        headBranch = mrSource;
+        rawRef = mrSource;
+        refKind = "branch";
+        const sourceProject = clean(env.CI_MERGE_REQUEST_SOURCE_PROJECT_ID);
+        const targetProject = clean(env.CI_MERGE_REQUEST_PROJECT_ID);
+        isForkPr = Boolean(sourceProject && targetProject && sourceProject !== targetProject);
+      } else if (clean(env.CI_COMMIT_TAG)) {
+        rawRef = clean(env.CI_COMMIT_TAG);
+        refKind = "tag";
+      } else {
+        headBranch = clean(env.CI_COMMIT_BRANCH) ?? clean(env.CI_COMMIT_REF_NAME);
+        rawRef = headBranch;
+        refKind = headBranch ? "branch" : "unknown";
+      }
+      break;
+    }
+    case "bitbucket": {
+      headSha = clean(env.BITBUCKET_COMMIT);
+      if (clean(env.BITBUCKET_TAG)) {
+        rawRef = clean(env.BITBUCKET_TAG);
+        refKind = "tag";
+      } else {
+        headBranch = clean(env.BITBUCKET_BRANCH);
+        rawRef = headBranch;
+        refKind = headBranch ? "branch" : "unknown";
+        isPrContext = Boolean(clean(env.BITBUCKET_PR_ID));
+      }
+      break;
+    }
+    case "azure-devops": {
+      headSha = clean(env.BUILD_SOURCEVERSION);
+      const prSource = clean(env.SYSTEM_PULLREQUEST_SOURCEBRANCH);
+      if (prSource) {
+        isPrContext = true;
+        const parsed = stripRefPrefix(prSource);
+        headBranch = parsed.kind === "branch" ? parsed.name : void 0;
+        rawRef = prSource;
+        refKind = parsed.kind;
+        const forkFlag = clean(env.SYSTEM_PULLREQUEST_ISFORK);
+        isForkPr = forkFlag?.toLowerCase() === "true";
+      } else {
+        rawRef = clean(env.BUILD_SOURCEBRANCH);
+        const parsed = stripRefPrefix(rawRef);
+        headBranch = parsed.kind === "branch" ? parsed.name : void 0;
+        refKind = parsed.kind;
+      }
+      break;
+    }
+    default: {
+      refKind = "unknown";
+    }
+  }
+  if (refKind === "branch" && headBranch && defaultBranch && headBranch === defaultBranch) {
+    refKind = "default-branch";
+  }
+  return { provider, headBranch, rawRef, defaultBranch, refKind, isPrContext, isForkPr, headSha };
+}
+function parseChannelRules(input) {
+  const raw = clean(input);
+  if (!raw) return [];
+  const rules = [];
+  for (const part of raw.split(",")) {
+    const entry = part.trim();
+    if (!entry) continue;
+    const eq = entry.indexOf("=");
+    if (eq <= 0 || eq === entry.length - 1) {
+      throw new ContractError(
+        "CONTRACT_CHANNELS_INPUT_INVALID",
+        `channels entry "${entry}" must be <branch-or-glob>=<CODE>`
+      );
+    }
+    const pattern = entry.slice(0, eq).trim();
+    const code = entry.slice(eq + 1).trim().toUpperCase();
+    if (!/^[A-Z][A-Z0-9_-]{0,15}$/.test(code)) {
+      throw new ContractError(
+        "CONTRACT_CHANNELS_INPUT_INVALID",
+        `channel code "${code}" must be 1-16 chars, A-Z 0-9 _ -, starting with a letter`
+      );
+    }
+    rules.push({ pattern, code });
+  }
+  return rules;
+}
+function matchChannel(branch, rules) {
+  for (const rule of rules) {
+    if (rule.pattern.endsWith("*")) {
+      const prefix = rule.pattern.slice(0, -1);
+      if (branch.startsWith(prefix)) return rule;
+    } else if (branch === rule.pattern) {
+      return rule;
+    }
+  }
+  return void 0;
+}
+function resolveBranchDecision(options) {
+  const { strategy, identity } = options;
+  const channels = options.channels ?? [];
+  if (strategy === "legacy") {
+    return {
+      tier: "legacy",
+      strategy,
+      identity,
+      canonicalBranch: clean(options.canonicalBranch) ?? identity.defaultBranch,
+      reason: "branch-strategy legacy: branch-blind pre-v2 behavior"
+    };
+  }
+  const canonicalBranch = clean(options.canonicalBranch) ?? identity.defaultBranch;
+  if (!canonicalBranch) {
+    throw new ContractError(
+      "CONTRACT_DEFAULT_BRANCH_UNRESOLVED",
+      `cannot resolve the canonical branch on ${identity.provider} (no explicit canonical-branch input and the provider exposes no default-branch variable). Set the canonical-branch input.`
+    );
+  }
+  if (identity.refKind === "tag" || identity.refKind === "unknown" || !identity.headBranch) {
+    return {
+      tier: "gated",
+      strategy,
+      identity,
+      canonicalBranch,
+      reason: `ref kind ${identity.refKind}: never canonical/preview-eligible; no-op with annotation`
+    };
+  }
+  if (identity.headBranch === canonicalBranch) {
+    return {
+      tier: "canonical",
+      strategy,
+      identity,
+      canonicalBranch,
+      reason: `head branch equals canonical branch ${canonicalBranch}`
+    };
+  }
+  const channel = matchChannel(identity.headBranch, channels);
+  if (channel) {
+    return {
+      tier: "channel",
+      strategy,
+      identity,
+      canonicalBranch,
+      channel,
+      reason: `branch ${identity.headBranch} matches channel ${channel.pattern}=${channel.code}`
+    };
+  }
+  if (strategy === "preview") {
+    if (identity.isForkPr) {
+      return {
+        tier: "gated",
+        strategy,
+        identity,
+        canonicalBranch,
+        reason: "fork PR: preview-ineligible (same-repo gate), gated instead"
+      };
+    }
+    return {
+      tier: "preview",
+      strategy,
+      identity,
+      canonicalBranch,
+      reason: `branch ${identity.headBranch} under branch-strategy preview`
+    };
+  }
+  return {
+    tier: "gated",
+    strategy,
+    identity,
+    canonicalBranch,
+    reason: `branch ${identity.headBranch} under branch-strategy publish-gate`
+  };
+}
+var BRANCH_DECISION_ENV = "POSTMAN_BRANCH_DECISION";
+function serializeBranchDecision(decision) {
+  return JSON.stringify(decision);
+}
+function parseBranchDecision(raw) {
+  const value = clean(raw);
+  if (!value) return void 0;
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new ContractError("CONTRACT_BRANCH_DECISION_INVALID", "POSTMAN_BRANCH_DECISION is not valid JSON");
+  }
+  const candidate = parsed;
+  const tiers = ["canonical", "channel", "preview", "gated", "legacy"];
+  if (!candidate || typeof candidate !== "object" || !tiers.includes(candidate.tier) || !candidate.identity) {
+    throw new ContractError("CONTRACT_BRANCH_DECISION_INVALID", "POSTMAN_BRANCH_DECISION does not carry a valid BranchDecision");
+  }
+  return candidate;
+}
+function resolveEffectiveBranchDecision(options, env = process.env) {
+  const inherited = parseBranchDecision(env[BRANCH_DECISION_ENV]);
+  if (inherited) return inherited;
+  return resolveBranchDecision(options);
+}
+
 // node_modules/@postman-cse/automation-telemetry-core/dist/ci-context.js
 function norm(value) {
   const trimmed = (value ?? "").trim();
@@ -31737,7 +32021,10 @@ function readActionInputs(env = process.env) {
       false
     ),
     tempCollectionPrefix: getInput2("temp-collection-prefix", env) || "[Smoke][Temp]",
-    teamId: getInput2("team-id", env) || env.POSTMAN_TEAM_ID || void 0
+    teamId: getInput2("team-id", env) || env.POSTMAN_TEAM_ID || void 0,
+    branchStrategy: getInput2("branch-strategy", env) || "legacy",
+    canonicalBranch: getInput2("canonical-branch", env) || void 0,
+    channels: getInput2("channels", env) || void 0
   };
 }
 function writeDebugDump(debugDumpPath, collection, actionCore) {
@@ -31745,8 +32032,8 @@ function writeDebugDump(debugDumpPath, collection, actionCore) {
     return;
   }
   const resolvedPath = import_node_path3.default.isAbsolute(debugDumpPath) ? debugDumpPath : import_node_path3.default.resolve(process.cwd(), debugDumpPath);
-  (0, import_node_fs4.mkdirSync)(import_node_path3.default.dirname(resolvedPath), { recursive: true });
-  (0, import_node_fs4.writeFileSync)(resolvedPath, `${JSON.stringify(collection, null, 2)}
+  (0, import_node_fs5.mkdirSync)(import_node_path3.default.dirname(resolvedPath), { recursive: true });
+  (0, import_node_fs5.writeFileSync)(resolvedPath, `${JSON.stringify(collection, null, 2)}
 `, "utf8");
   actionCore.info(`Wrote transformed collection debug dump to ${resolvedPath}`);
 }
@@ -31842,6 +32129,7 @@ function validateInputsBeforeSideEffects(inputs) {
   }
 }
 function createOutputs(summary2) {
+  const envDecision = process.env[BRANCH_DECISION_ENV];
   return {
     "smoke-collection-id": summary2.canonicalSmokeCollectionId,
     "flow-apply-status": summary2.status,
@@ -31851,7 +32139,9 @@ function createOutputs(summary2) {
     "resolved-operation-count": String(summary2.resolvedOperationCount),
     "applied-binding-count": String(summary2.appliedBindingCount),
     "applied-extract-count": String(summary2.appliedExtractCount),
-    "assertion-count": String(summary2.assertionCount)
+    "assertion-count": String(summary2.assertionCount),
+    "sync-status": summary2.status === "skipped" ? "skipped-branch-gate" : "synced",
+    "branch-decision": envDecision ?? ""
   };
 }
 function describeAuthConfig(authConfig) {
@@ -32086,9 +32376,49 @@ function createSmokeClient(inputs, actionCore, env = process.env) {
     runIdentity: buildSmokeRunIdentity(env)
   });
 }
+function decideBranchTier(inputs, env = process.env) {
+  return resolveEffectiveBranchDecision(
+    {
+      strategy: inputs.branchStrategy ?? "legacy",
+      identity: resolveBranchIdentity(env, { defaultBranch: inputs.canonicalBranch }),
+      canonicalBranch: inputs.canonicalBranch,
+      channels: parseChannelRules(inputs.channels)
+    },
+    env
+  );
+}
+async function runGatedSkip(inputs, decision, actionCore) {
+  actionCore.info(`branch-aware sync: gated run (${decision.reason}) \u2014 skipping smoke-flow reshape, zero workspace writes`);
+  const outputs2 = {
+    "smoke-collection-id": inputs.smokeCollectionId,
+    "flow-apply-status": "skipped",
+    "flow-apply-summary-json": JSON.stringify({ status: "skipped-branch-gate", reason: decision.reason }),
+    "temporary-smoke-collection-id": "",
+    "flow-step-count": "0",
+    "resolved-operation-count": "0",
+    "applied-binding-count": "0",
+    "applied-extract-count": "0",
+    "assertion-count": "0",
+    "sync-status": "skipped-branch-gate",
+    "branch-decision": serializeBranchDecision(decision)
+  };
+  for (const [name, value] of Object.entries(outputs2)) {
+    actionCore.setOutput(name, value);
+  }
+  process.env[BRANCH_DECISION_ENV] = serializeBranchDecision(decision);
+  return outputs2;
+}
 async function runAction(actionCore = core_exports, env = process.env) {
   const inputs = readActionInputs(env);
   validateInputsBeforeSideEffects(inputs);
+  const branchDecision = decideBranchTier(inputs, env);
+  if (branchDecision.tier === "gated") {
+    return runGatedSkip(inputs, branchDecision, actionCore);
+  }
+  if (branchDecision.tier !== "legacy") {
+    actionCore.info(`branch-aware sync: tier=${branchDecision.tier} (${branchDecision.reason})`);
+    process.env[BRANCH_DECISION_ENV] = serializeBranchDecision(branchDecision);
+  }
   const mintHolder = {
     postmanAccessToken: inputs.postmanAccessToken,
     postmanApiKey: inputs.postmanApiKey,

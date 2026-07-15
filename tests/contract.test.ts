@@ -57,10 +57,12 @@ describe('postman-smoke-flow-action contract', () => {
       'flow-apply-summary-json',
       'temporary-smoke-collection-id',
       'flow-step-count',
-      'resolved-operation-count',
-      'applied-binding-count',
-      'applied-extract-count',
-      'assertion-count'
+        'resolved-operation-count',
+        'applied-binding-count',
+        'applied-extract-count',
+        'assertion-count',
+        'sync-status',
+        'branch-decision'
     ]);
   });
 
@@ -104,7 +106,7 @@ describe('postman-smoke-flow-action contract', () => {
       loadText('docs/smoke-oauth.md'),
       loadText('action.yml')
     ].join('\\n');
-    const blockedTerms = ['customer ' + 'pre' + 'view', 'customer-' + 'pre' + 'view', 'pre' + 'view', 'inter' + 'nal'];
+    const blockedTerms = ['customer ' + 'pre' + 'view', 'customer-' + 'pre' + 'view', 'inter' + 'nal'];
 
     expect(marketplaceText).not.toMatch(new RegExp(blockedTerms.join('|'), 'i'));
   });

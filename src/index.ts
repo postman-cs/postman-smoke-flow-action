@@ -24,6 +24,15 @@ import {
   getMemoizedSessionIdentity,
   runCredentialPreflight
 } from './postman/credential-identity.js';
+import {
+  BRANCH_DECISION_ENV,
+  parseChannelRules,
+  resolveBranchIdentity,
+  resolveEffectiveBranchDecision,
+  serializeBranchDecision,
+  type BranchDecision,
+  type BranchStrategy
+} from './lib/repo-branch-decision.js';
 import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
 import { resolveActionVersion } from './action-version.js';
 
@@ -188,7 +197,10 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
       false
     ),
     tempCollectionPrefix: getInput('temp-collection-prefix', env) || '[Smoke][Temp]',
-    teamId: getInput('team-id', env) || env.POSTMAN_TEAM_ID || undefined
+    teamId: getInput('team-id', env) || env.POSTMAN_TEAM_ID || undefined,
+    branchStrategy: getInput('branch-strategy', env) || 'legacy',
+    canonicalBranch: getInput('canonical-branch', env) || undefined,
+    channels: getInput('channels', env) || undefined
   };
 }
 
@@ -320,6 +332,7 @@ function validateInputsBeforeSideEffects(inputs: ActionInputs): void {
 }
 
 function createOutputs(summary: FlowApplySummary): ActionOutputs {
+  const envDecision = process.env[BRANCH_DECISION_ENV];
   return {
     'smoke-collection-id': summary.canonicalSmokeCollectionId,
     'flow-apply-status': summary.status,
@@ -329,7 +342,9 @@ function createOutputs(summary: FlowApplySummary): ActionOutputs {
     'resolved-operation-count': String(summary.resolvedOperationCount),
     'applied-binding-count': String(summary.appliedBindingCount),
     'applied-extract-count': String(summary.appliedExtractCount),
-    'assertion-count': String(summary.assertionCount)
+    'assertion-count': String(summary.assertionCount),
+    'sync-status': summary.status === 'skipped' ? 'skipped-branch-gate' : 'synced',
+    'branch-decision': envDecision ?? ''
   };
 }
 
@@ -625,11 +640,59 @@ function createSmokeClient(
   });
 }
 
+export function decideBranchTier(
+  inputs: Pick<ActionInputs, 'branchStrategy' | 'canonicalBranch' | 'channels'>,
+  env: NodeJS.ProcessEnv = process.env
+): BranchDecision {
+  return resolveEffectiveBranchDecision(
+    {
+      strategy: (inputs.branchStrategy as BranchStrategy) ?? 'legacy',
+      identity: resolveBranchIdentity(env, { defaultBranch: inputs.canonicalBranch }),
+      canonicalBranch: inputs.canonicalBranch,
+      channels: parseChannelRules(inputs.channels)
+    },
+    env
+  );
+}
+
+async function runGatedSkip(
+  inputs: ActionInputs,
+  decision: BranchDecision,
+  actionCore: CoreLike
+): Promise<ActionOutputs> {
+  actionCore.info(`branch-aware sync: gated run (${decision.reason}) — skipping smoke-flow reshape, zero workspace writes`);
+  const outputs: ActionOutputs = {
+    'smoke-collection-id': inputs.smokeCollectionId,
+    'flow-apply-status': 'skipped',
+    'flow-apply-summary-json': JSON.stringify({ status: 'skipped-branch-gate', reason: decision.reason }),
+    'temporary-smoke-collection-id': '',
+    'flow-step-count': '0',
+    'resolved-operation-count': '0',
+    'applied-binding-count': '0',
+    'applied-extract-count': '0',
+    'assertion-count': '0',
+    'sync-status': 'skipped-branch-gate',
+    'branch-decision': serializeBranchDecision(decision)
+  };
+  for (const [name, value] of Object.entries(outputs)) {
+    actionCore.setOutput(name, value);
+  }
+  process.env[BRANCH_DECISION_ENV] = serializeBranchDecision(decision);
+  return outputs;
+}
+
 export async function runAction(actionCore: CoreLike = core, env: NodeJS.ProcessEnv = process.env): Promise<ActionOutputs> {
-  // Validate all input syntax/required fields before token mint, credential
-  // preflight, telemetry, or client construction. A typo must not start side effects.
+  // Branch-aware sync: decide BEFORE any credential validation or mint.
   const inputs = readActionInputs(env);
   validateInputsBeforeSideEffects(inputs);
+  const branchDecision = decideBranchTier(inputs, env);
+  if (branchDecision.tier === 'gated') {
+    return runGatedSkip(inputs, branchDecision, actionCore);
+  }
+  if (branchDecision.tier !== 'legacy') {
+    actionCore.info(`branch-aware sync: tier=${branchDecision.tier} (${branchDecision.reason})`);
+    process.env[BRANCH_DECISION_ENV] = serializeBranchDecision(branchDecision);
+  }
 
   // PMAK-only runs: eagerly mint the short-lived access token from the service
   // -account PMAK so the access-token-only gateway reshape works exactly as

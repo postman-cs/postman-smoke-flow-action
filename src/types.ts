@@ -56,6 +56,9 @@ export type ActionInputs = {
   keepTempCollectionOnFailure: boolean;
   tempCollectionPrefix: string;
   teamId?: string;
+  branchStrategy?: string;
+  canonicalBranch?: string;
+  channels?: string;
 };
 
 export type SmokeOAuthConfig = {
@@ -130,6 +133,8 @@ export type ActionOutputs = {
   'applied-binding-count': string;
   'applied-extract-count': string;
   'assertion-count': string;
+  'sync-status': string;
+  'branch-decision': string;
 };
 
 export type CoreLike = {

@@ -62,6 +62,16 @@ inputs:
   team-id:
     description: Optional Postman team ID, used only to attribute non-identifying usage telemetry to your team. The action runs identically with or without it.
     required: false
+  branch-strategy:
+    description: Branch-aware sync strategy. legacy (default) keeps branch-blind behavior; publish-gate restricts canonical writes to the canonical branch and skips on other branches; preview additionally maintains suffixed per-branch preview asset sets.
+    required: false
+    default: legacy
+  canonical-branch:
+    description: Explicit canonical branch (the sole writer of canonical assets). Defaults to the provider-resolved default branch; required on providers without a default-branch variable (Bitbucket, Azure DevOps) when branch-strategy is not legacy.
+    required: false
+  channels:
+    description: Comma-separated channel map for long-lived promotion branches, e.g. "develop=DEV, staging=STAGE, release/*=RC".
+    required: false
 outputs:
   smoke-collection-id:
     description: Canonical Smoke collection ID after curated flow application.
@@ -81,6 +91,10 @@ outputs:
     description: Number of extracts applied as test logic.
   assertion-count:
     description: Number of generated assertions applied across flow steps.
+  sync-status:
+    description: 'Branch-aware sync status: synced, skipped-branch-gate, or empty under branch-strategy legacy.'
+  branch-decision:
+    description: Serialized BranchDecision JSON for downstream actions (also exported as POSTMAN_BRANCH_DECISION).
 runs:
   using: node24
   main: dist/main.cjs
