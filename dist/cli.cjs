@@ -29909,8 +29909,10 @@ function asRecord3(value) {
 function asArray(value) {
   return Array.isArray(value) ? value.map(asRecord3).filter((v) => Boolean(v)) : [];
 }
+var SMOKE_BARE_UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 function bareModelId(uid) {
   const u = String(uid ?? "").trim();
+  if (SMOKE_BARE_UUID_RE.test(u)) return u;
   return u.includes("-") ? u.slice(u.indexOf("-") + 1) : u;
 }
 function collectionItemsId(uid) {
@@ -30467,20 +30469,61 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         ops.push({ op: "remove", path: `/${optional}` });
       }
     }
-    await this.gateway.request({
-      service: "collection",
-      method: "patch",
-      path: `/v3/collections/${cid}/items/${itemId}`,
-      headers: { "X-Entity-Type": "http-request" },
-      body: ops,
-      // Fixed-path request updates are idempotent. Missing optional removals
-      // after an ambiguous accepted patch are reconciled below.
-      maxRetries: 3
-    }).catch((error2) => {
-      if (isMissingPatchValueError(error2) && ops.some((op) => op.op === "remove")) return;
-      throw error2;
-    });
+    try {
+      await this.gateway.request({
+        service: "collection",
+        method: "patch",
+        path: `/v3/collections/${cid}/items/${itemId}`,
+        headers: { "X-Entity-Type": "http-request" },
+        body: ops,
+        // Fixed-path request updates are idempotent. Missing optional removals
+        // after an ambiguous accepted patch are reconciled below.
+        maxRetries: 3
+      });
+    } catch (error2) {
+      if (isMissingPatchValueError(error2) && ops.some((op) => op.op === "remove") && await this.verifyItemOpsApplied(cid, itemId, ops)) {
+      } else {
+        throw error2;
+      }
+    }
     await this.patchItemScripts(cid, itemId, v2EventsToV3Scripts(leaf.event));
+  }
+  /**
+   * Read a single item back and check every JSON-Patch op's intended end state.
+   * Removes must be strictly absent — that is the retried-timeout hazard this
+   * guards: the already-applied-400 only proves ONE remove target is gone, so we
+   * confirm EVERY remove landed. add/replace targets are checked for presence
+   * (not structural equality): the item write surface normalizes request fields
+   * server-side (raw url form, header shape, `position`), so the stored value is
+   * not byte-equal to the requested op value even on a correct commit — presence
+   * still detects a batch that never landed. Returns false on any read failure.
+   */
+  async verifyItemOpsApplied(cid, itemId, ops) {
+    let item;
+    try {
+      const got = await this.gateway.requestJson({
+        service: "collection",
+        method: "get",
+        path: `/v3/collections/${cid}/items/${itemId}`,
+        headers: { "X-Entity-Type": "http-request" }
+      });
+      item = asRecord3(got?.data) ?? asRecord3(got);
+    } catch {
+      return false;
+    }
+    if (!item) return false;
+    for (const op of ops) {
+      const rawPath = String(op.path ?? "");
+      const field = rawPath.startsWith("/") ? rawPath.slice(1) : rawPath;
+      if (!field) return false;
+      const value = item[field];
+      if (op.op === "remove") {
+        if (!(value === void 0 || value === null)) return false;
+      } else if (value === void 0 || value === null) {
+        return false;
+      }
+    }
+    return true;
   }
   async findChildByName(cid, parentId, name) {
     const children = this.listChildItems(await this.listItems(cid), parentId, cid);

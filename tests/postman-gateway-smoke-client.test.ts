@@ -407,4 +407,87 @@ describe('PostmanGatewaySmokeClient', () => {
     await expect(client.deleteCollection('55363555-owned')).rejects.toThrow('403');
     expect(attempts).toBe(1);
   });
+
+  describe('updateRequestItem safe reconciliation (retried-timeout remove)', () => {
+    // Existing item carries body+auth; the curated leaf drops both, so the item
+    // PATCH includes remove /body + remove /auth. A retried PATCH whose first
+    // attempt actually committed fails the removes as already-applied (400). The
+    // fix must read the item back and only swallow the 400 when every op landed.
+    function scenario(readbackItem: J) {
+      let itemPatchAttempts = 0;
+      let itemReads = 0;
+      const existing = {
+        id: '55363555-leaf',
+        $kind: 'http-request',
+        name: 'Do Post',
+        body: { mode: 'raw', raw: 'x' },
+        auth: { type: 'bearer' }
+      };
+      const { client, calls } = makeClient((env) => {
+        if (env.method === 'get' && env.path.endsWith('/items/')) {
+          return jsonResponse({ data: [existing] });
+        }
+        // single-item readback for verifyItemOpsApplied
+        if (env.method === 'get' && /\/items\/55363555-leaf$/.test(env.path)) {
+          itemReads += 1;
+          return jsonResponse({ data: readbackItem });
+        }
+        if (env.method === 'patch' && /\/items\/55363555-leaf$/.test(env.path)) {
+          const ops = env.body as J[];
+          if (ops.some((op) => op.path === '/scripts')) return jsonResponse({ data: {} });
+          itemPatchAttempts += 1;
+          if (itemPatchAttempts === 1) {
+            return jsonResponse(
+              { error: { name: 'serverError', details: 'ESOCKETTIMEDOUT', source: 'downstream' } },
+              500
+            );
+          }
+          return jsonResponse(
+            { error: { name: 'invalidParamsError', message: 'Remove operation must point to an existing value' } },
+            400
+          );
+        }
+        return jsonResponse({ data: {} });
+      });
+      return { client, calls, get itemPatchAttempts() { return itemPatchAttempts; }, get itemReads() { return itemReads; } };
+    }
+
+    const desired = {
+      info: { name: '[Smoke] Reshaped' },
+      item: [{ name: 'Do Post', request: { method: 'POST', url: 'https://x/post' } }]
+    };
+
+    // The added fields the item write surface stores (name/method/url/headers/
+    // position); the readback must carry them for the add-presence checks.
+    const committedLeaf = {
+      id: '55363555-leaf',
+      $kind: 'http-request',
+      name: 'Do Post',
+      method: 'POST',
+      url: 'https://x/post',
+      headers: [] as J[],
+      position: { parent: { id: '55363555-cid', $kind: 'collection' } }
+    };
+
+    it('swallows the already-applied 400 only after a readback confirms the committed end state', async () => {
+      // Readback shows the intended end state: body + auth absent (removed).
+      const s = scenario({ ...committedLeaf });
+      await expect(client_run(s.client, desired)).resolves.toBeUndefined();
+      expect(s.itemPatchAttempts).toBe(2);
+      expect(s.itemReads).toBe(1);
+    });
+
+    it('surfaces the 400 when the readback still shows a stale value the batch never removed', async () => {
+      // Readback still carries auth: the batch did not fully land, so the 400
+      // must surface rather than being swallowed.
+      const s = scenario({ ...committedLeaf, auth: { type: 'bearer' } });
+      await expect(client_run(s.client, desired)).rejects.toThrow('400');
+      expect(s.itemPatchAttempts).toBe(2);
+      expect(s.itemReads).toBe(1);
+    });
+  });
 });
+
+function client_run(client: PostmanGatewaySmokeClient, desired: unknown): Promise<void> {
+  return client.updateCollection('55363555-cid', desired);
+}
