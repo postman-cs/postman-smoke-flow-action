@@ -32410,11 +32410,11 @@ async function runGatedSkip(inputs, decision, actionCore) {
 }
 async function runAction(actionCore = core_exports, env = process.env) {
   const inputs = readActionInputs(env);
-  validateInputsBeforeSideEffects(inputs);
   const branchDecision = decideBranchTier(inputs, env);
   if (branchDecision.tier === "gated") {
     return runGatedSkip(inputs, branchDecision, actionCore);
   }
+  validateInputsBeforeSideEffects(inputs);
   if (branchDecision.tier !== "legacy") {
     actionCore.info(`branch-aware sync: tier=${branchDecision.tier} (${branchDecision.reason})`);
     process.env[BRANCH_DECISION_ENV] = serializeBranchDecision(branchDecision);

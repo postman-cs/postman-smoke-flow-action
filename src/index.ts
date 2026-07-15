@@ -684,11 +684,11 @@ async function runGatedSkip(
 export async function runAction(actionCore: CoreLike = core, env: NodeJS.ProcessEnv = process.env): Promise<ActionOutputs> {
   // Branch-aware sync: decide BEFORE any credential validation or mint.
   const inputs = readActionInputs(env);
-  validateInputsBeforeSideEffects(inputs);
   const branchDecision = decideBranchTier(inputs, env);
   if (branchDecision.tier === 'gated') {
     return runGatedSkip(inputs, branchDecision, actionCore);
   }
+  validateInputsBeforeSideEffects(inputs);
   if (branchDecision.tier !== 'legacy') {
     actionCore.info(`branch-aware sync: tier=${branchDecision.tier} (${branchDecision.reason})`);
     process.env[BRANCH_DECISION_ENV] = serializeBranchDecision(branchDecision);
