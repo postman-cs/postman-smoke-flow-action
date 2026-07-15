@@ -1,23 +1,23 @@
 # postman-smoke-flow-action
 
-Reshapes generated Postman Smoke collection to match curated `flow.yaml`, with optional OAuth2 token acquisition. Runs as standalone step that consumes bootstrap's `smoke-collection-id` output. Dual entry: GitHub Action (`dist/main.cjs`) and CLI (`dist/cli.cjs`, bin `postman-smoke-flow`).
+Reshapes generated Postman Smoke collection to match curated `flow.yaml`, w/ optional OAuth2 token acquisition. Runs as standalone step consuming bootstrap's `smoke-collection-id` output. Dual entry: GitHub Action (`dist/main.cjs`) + CLI (`dist/cli.cjs`, bin `postman-smoke-flow`).
 
 ## Structure
 
 ```
 src/
-  index.ts                       # GitHub Action entry: reads inputs, applies flow, sets outputs
-  cli.ts                         # CLI adapter for non-GitHub CI
-  main.ts                        # Core orchestration: load flow.yaml -> transform -> write collection
-  contracts.ts                   # Input/output type definitions
+  index.ts                       # Action entry: reads inputs, applies flow, sets outputs
+  cli.ts                         # CLI adapter
+  main.ts                        # Core: load flow.yaml -> transform -> write collection
+  contracts.ts                   # I/O types
   types.ts                       # Shared flow + collection types
   flow/
     parser.ts                    # Parse curated flow.yaml
-    resolver.ts                  # Resolve flow steps against the generated Smoke collection
-    validator.ts                 # Validate flow shape and references
+    resolver.ts                  # Resolve flow steps against generated Smoke collection
+    validator.ts                 # Validate flow shape + references
   postman/
-    postman-gateway-smoke-client.ts # Live client: generate/read/reshape/delete via the access-token gateway
-    postman-smoke-client.ts      # Legacy PMAK client; imported for its method types only (Pick<...>), never instantiated
+    postman-gateway-smoke-client.ts # Live client: generate/read/reshape/delete via access-token gateway
+    postman-smoke-client.ts      # Legacy PMAK client; imported for method types only (Pick<...>), never instantiated
     collection-transform.ts      # Reorder/reshape requests, seed OAuth vars + per-request bearer auth
     scripts.ts                   # Injected pre-request/test scripts (chaining, OAuth2 token mint)
     credential-identity.ts       # iapub session-identity preflight + memoized consumerType for telemetry
@@ -28,7 +28,7 @@ src/
     paths.ts                     # Path resolution helpers
     postman/
       gateway-client.ts          # AccessTokenGatewayClient: /ws/proxy envelope transport
-      token-provider.ts          # AccessTokenProvider: holds the access token, re-mints from PMAK on 401
+      token-provider.ts          # AccessTokenProvider: holds access token, re-mints from PMAK on 401
 tests/
 ```
 
@@ -36,27 +36,28 @@ tests/
 
 ```bash
 npm ci && npm test && npm run typecheck && npm run build
-npm run verify:dist:assert  # read-only dist contract (CI after one build)
-npm run verify:dist         # rebuild + git diff + assert (hooks/release)
+npm run verify:dist:assert  # read-only dist contract (CI)
+npm run verify:dist         # rebuild + git diff + assert
 ```
 
 ## Key Behaviors
 
-- **Gateway reshape**: `postman-access-token` required. Temp gets unique run name. Create sends once. Ambiguous result uses read-back. Canonical must belong to workspace. Item listing is flat; parent `items` stubs define direct children. Adoption needs parent plus name. Duplicates fail. Cleanup deletes owned temp only. `postman-api-key` only refreshes token.
-- **Flow apply**: Loads curated `flow.yaml`, resolves each step against generated Smoke collection, and rewrites canonical collection so request order, chaining, and variables match flow.
-- **OAuth2 (optional)**: When configured, seeds collection variables and pre-request script that mints a `client_credentials` bearer token, then applies that token as per-request bearer auth so smoke run authenticates before exercising endpoints.
+- **Gateway reshape**: `postman-access-token` required. Temp gets unique run name. Create sends once. Ambiguous result uses read-back. Canonical must belong to workspace. Item listing flat; parent `items` stubs define direct children. Adoption needs parent + name. Duplicates fail. Cleanup deletes owned temp only. `postman-api-key` only refreshes token.
+- **Flow apply**: Loads curated `flow.yaml`, resolves each step against generated Smoke collection, rewrites canonical collection so request order, chaining, variables match flow.
+- **OAuth2 (optional)**: When configured, seeds collection variables + pre-request script that mints `client_credentials` bearer token, applies token as per-request bearer auth so smoke run authenticates before exercising endpoints.
 - **Idempotent reshape**: Canonical changes in place. API has no cross-process lease. Workflow must use `concurrency` key from canonical collection id.
 
 ## Gotchas
 
-- `main.cjs` is Action entry (not `index.cjs` as in sibling actions); the CLI is `cli.cjs`. Wire pre-write logic into both.
-- flow is applied to collection bootstrap generated; this action assumes that collection already exists (it does not generate one).
+- `main.cjs` = Action entry (not `index.cjs` as in sibling actions); CLI = `cli.cjs`. Wire pre-write logic into both.
+- Flow applied to collection bootstrap generated; this action assumes collection already exists (does not generate one).
 
 ## CI
 
-`.github/workflows/ci.yml` bundles once, then queues at most two checks on one
-runner. Typecheck runs once. Dist uses read-only `verify:dist:assert`; no pack
-race. Every check prints a `::group::` result even when another check fails.
+`.github/workflows/ci.yml` bundles once, queues at most two checks on one runner. Typecheck once. Dist read-only `verify:dist:assert`; no pack race. Every check prints `::group::` result even on failure.
 
 See workspace `../../docs/CI.md` for shared rationale.
-Never log, commit, or embed access tokens, PMAKs, or other secrets; mask output via `createSecretMasker()`.
+
+## Anti-Patterns
+
+- Never log, commit, or embed access tokens, PMAKs, or other secrets; mask output via `createSecretMasker()`
