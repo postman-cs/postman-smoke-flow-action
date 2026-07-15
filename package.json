@@ -1,6 +1,6 @@
 {
   "name": "@postman-cse/onboarding-smoke-flow",
-  "version": "2.1.3",
+  "version": "2.1.4",
   "description": "GitHub Action and CLI for applying curated Postman Smoke collection flows.",
   "type": "module",
   "main": "dist/main.cjs",
