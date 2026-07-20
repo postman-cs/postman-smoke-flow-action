@@ -563,8 +563,12 @@ describe('runSmokeFlow', () => {
 
       expect(outputs['flow-apply-status']).toBe('success');
       expect(postman.updateCollection).toHaveBeenCalledTimes(2);
-      expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('Canonical Smoke collection update was not stable'));
-      expect(core.info).toHaveBeenCalledWith(expect.stringContaining('persisted after 2 attempt'));
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringMatching(/Canonical Smoke collection update for col-smoke was not stable.*Automatically reapplying/)
+      );
+      expect(core.info).toHaveBeenCalledWith(
+        expect.stringMatching(/Canonical Smoke collection update for col-smoke persisted after 2 attempt/)
+      );
       expect(JSON.stringify(finalCollection)).toContain('Auto-generated OAuth2 client-credentials token cache');
       expect(JSON.stringify(finalCollection)).toContain('https://api.example.com/payments');
     } finally {
@@ -668,10 +672,15 @@ describe('runSmokeFlow', () => {
         ...createInputs(tempDir),
         flowPath: undefined,
         authConfig: undefined
-      }, createDependencies(core, postman))).rejects.toThrow('generated Smoke request(s) missing URL: createPayment');
+      }, createDependencies(core, postman))).rejects.toThrow(
+        /Canonical Smoke collection update for col-smoke did not persist.*generated Smoke request\(s\) missing URL: createPayment.*Fix the reported verification mismatch; if another sync is overwriting collection col-smoke, stop or serialize that sync before rerunning/
+      );
       expect(postman.generateCollection).toHaveBeenCalledOnce();
       expect(postman.updateCollection).toHaveBeenCalledTimes(6);
       expect(postman.deleteCollection).toHaveBeenCalledWith('temp-123');
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringMatching(/Canonical Smoke collection update for col-smoke was not stable.*Automatically reapplying/)
+      );
     } finally {
       process.chdir(previousCwd);
       rmSync(tempDir, { recursive: true, force: true });
@@ -713,10 +722,66 @@ describe('runSmokeFlow', () => {
 
       expect(outputs['flow-apply-status']).toBe('success');
       expect(postman.updateCollection).toHaveBeenCalledTimes(2);
-      expect(core.warning).toHaveBeenCalledWith(expect.stringContaining('Canonical Smoke collection update was not stable'));
-      expect(core.info).toHaveBeenCalledWith(expect.stringContaining('persisted after 2 attempt'));
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringMatching(/Canonical Smoke collection update for col-smoke was not stable.*Automatically reapplying/)
+      );
+      expect(core.info).toHaveBeenCalledWith(
+        expect.stringMatching(/Canonical Smoke collection update for col-smoke persisted after 2 attempt/)
+      );
       expect(JSON.stringify(finalCollection)).toContain('Auto-generated OAuth2 client-credentials token cache');
       expect(JSON.stringify(finalCollection)).toContain('Extract createPayment.paymentId');
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('warns with masked remediation when temporary cleanup fails and still throws the original apply error', async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-'));
+    const previousCwd = process.cwd();
+    process.chdir(tempDir);
+
+    const core: CoreLike = {
+      setOutput: vi.fn(),
+      info: vi.fn(),
+      warning: vi.fn(),
+      setFailed: vi.fn()
+    };
+
+    const postman = createFlowPostmanMock({
+      info: { name: '[Smoke][Temp] payments' },
+      item: [
+        {
+          name: 'createPayment',
+          request: {
+            method: 'POST',
+            url: 'https://api.example.com/payments'
+          }
+        }
+      ]
+    });
+    postman.updateCollection.mockRejectedValue(new Error('canonical apply failed'));
+    postman.deleteCollection.mockRejectedValue(
+      new Error('cleanup denied for credential PMAK-123')
+    );
+
+    try {
+      await expect(
+        runSmokeFlow(createInputs(tempDir), createDependencies(core, postman))
+      ).rejects.toThrow('canonical apply failed');
+
+      expect(postman.deleteCollection).toHaveBeenCalledTimes(2);
+      expect(postman.deleteCollection).toHaveBeenCalledWith('temp-123');
+
+      const warned = (core.warning as ReturnType<typeof vi.fn>).mock.calls.map((call) => String(call[0] ?? ''));
+      expect(warned).toHaveLength(2);
+      for (const message of warned) {
+        expect(message).toContain('Failed to delete temporary Smoke collection temp-123');
+        expect(message).toContain('cleanup denied for credential [REDACTED]');
+        expect(message).toContain('The temporary collection remains');
+        expect(message).toContain('delete collection temp-123 after verifying collection-delete permission');
+        expect(message).not.toContain('PMAK-123');
+      }
     } finally {
       process.chdir(previousCwd);
       rmSync(tempDir, { recursive: true, force: true });

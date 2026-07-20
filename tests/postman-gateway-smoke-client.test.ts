@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { PostmanGatewaySmokeClient } from '../src/postman/postman-gateway-smoke-client.js';
 import { AccessTokenProvider } from '../src/lib/postman/token-provider.js';
+import { createSecretMasker } from '../src/lib/secrets.js';
 
 type J = Record<string, unknown>;
 
@@ -27,13 +28,24 @@ function gatewayFetch(handler: (env: Envelope) => Response): { fetchImpl: typeof
   return { fetchImpl, calls };
 }
 
-function makeClient(handler: (env: Envelope) => Response, teamId?: string): { client: PostmanGatewaySmokeClient; calls: Envelope[] } {
+function makeClient(
+  handler: (env: Envelope) => Response,
+  options: {
+    teamId?: string;
+    warning?: (message: string) => void;
+    secretMasker?: (input: string) => string;
+    accessToken?: string;
+  } = {}
+): { client: PostmanGatewaySmokeClient; calls: Envelope[] } {
   const { fetchImpl, calls } = gatewayFetch(handler);
-  const provider = new AccessTokenProvider({ accessToken: 'tok' });
+  const accessToken = options.accessToken ?? 'tok';
+  const provider = new AccessTokenProvider({ accessToken });
   const client = new PostmanGatewaySmokeClient({
     tokenProvider: provider,
     fetchImpl,
-    ...(teamId ? { teamId, orgMode: true } : {})
+    ...(options.teamId ? { teamId: options.teamId, orgMode: true } : {}),
+    ...(options.warning ? { warning: options.warning } : {}),
+    ...(options.secretMasker ? { secretMasker: options.secretMasker } : {})
   });
   return { client, calls };
 }
@@ -384,6 +396,52 @@ describe('PostmanGatewaySmokeClient', () => {
       item: []
     })).rejects.toThrow('403');
     expect(scriptPatchAttempts).toBe(1);
+  });
+
+  it('warns once and still resolves when collection-level runtime-script patch returns 400', async () => {
+    const secretToken = 'pma_at_secret_token_value';
+    const warning = vi.fn();
+    let scriptPatchAttempts = 0;
+    const { client } = makeClient(
+      (env) => {
+        if (env.method === 'get' && env.path.endsWith('/items/')) return jsonResponse({ data: [] });
+        if (env.method === 'patch' && /\/v3\/collections\/cid$/.test(env.path)) {
+          const ops = env.body as J[];
+          if (ops.some((op) => op.path === '/scripts')) {
+            scriptPatchAttempts += 1;
+            return jsonResponse(
+              { error: { message: `schema rejected token ${secretToken}` } },
+              400
+            );
+          }
+          return jsonResponse({ data: {} });
+        }
+        return jsonResponse({ data: {} });
+      },
+      {
+        warning,
+        secretMasker: createSecretMasker([secretToken]),
+        accessToken: secretToken
+      }
+    );
+
+    await expect(
+      client.updateCollection('55363555-cid', {
+        info: { name: '[Smoke] Reshaped' },
+        event: [{ listen: 'prerequest', script: { exec: ['console.log("x");'] } }],
+        item: []
+      })
+    ).resolves.toBeUndefined();
+
+    expect(scriptPatchAttempts).toBe(1);
+    expect(warning).toHaveBeenCalledTimes(1);
+    const warned = String(warning.mock.calls[0]?.[0] ?? '');
+    expect(warned).toContain('Failed collection-level runtime-script patch for collection 55363555-cid');
+    expect(warned).toContain('400');
+    expect(warned).toContain('Collection update continued, but required runtime scripts may be absent');
+    expect(warned).toContain('verify collection-script support/permissions');
+    expect(warned).toContain('[REDACTED]');
+    expect(warned).not.toContain(secretToken);
   });
 
   it('deleteCollection swallows a 404', async () => {

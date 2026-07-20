@@ -183,11 +183,92 @@ describe('Wave 2 create reconciliation', () => {
         info: { name: '[Smoke] payments' },
         item: [{ name: 'Echo', request: { method: 'GET', url: 'https://example.com' } }]
       })
-    ).rejects.toThrow(/workspace|does not belong|not found in workspace/i);
+    ).rejects.toThrow(
+      /Canonical collection 55363555-canonical was absent from workspace ws-owned collection list.*Pass the workspace that owns the canonical collection, or the matching collection ID/
+    );
 
     expect(calls.some((c) => c.method === 'delete')).toBe(false);
     expect(calls.some((c) => c.method === 'patch')).toBe(false);
     expect(calls.some((c) => c.method === 'post' && c.path.endsWith('/items/'))).toBe(false);
+  });
+
+  it('fails generation with remediation when the task reports failed', async () => {
+    let generationPosts = 0;
+    const { client, calls } = makeClient((env) => {
+      if (env.service === 'specification' && env.method === 'get' && env.path === '/specifications/spec-1/collections') {
+        return jsonResponse({ data: [] });
+      }
+      if (env.service === 'specification' && env.method === 'post' && env.path === '/specifications/spec-1/collections') {
+        generationPosts += 1;
+        return jsonResponse({ data: { taskId: 'task-failed-1' } });
+      }
+      if (env.service === 'specification' && env.method === 'get' && env.path === '/tasks') {
+        return jsonResponse({ data: { 'task-failed-1': 'failed' } });
+      }
+      return jsonResponse({});
+    });
+
+    await expect(client.generateCollection('spec-1', 'payments', '[Smoke][Temp]')).rejects.toThrow(
+      /Collection generation task failed for spec spec-1 task task-failed-1 \(status=failed\).*Inspect the spec generation\/task state and permissions, then rerun/
+    );
+    expect(generationPosts).toBe(1);
+    expect(
+      calls.filter((c) => c.service === 'specification' && c.method === 'post' && c.path.endsWith('/collections'))
+    ).toHaveLength(1);
+  });
+
+  it('fails generation with remediation when no run-owned temporary UID is found', async () => {
+    let generationPosts = 0;
+    const { client, calls } = makeClient((env) => {
+      if (env.service === 'specification' && env.method === 'get' && env.path === '/specifications/spec-1/collections') {
+        return jsonResponse({ data: generationPosts > 0 ? [{ collection: '33333333-foreign-temp', state: 'in-sync' }] : [] });
+      }
+      if (env.service === 'specification' && env.method === 'post' && env.path === '/specifications/spec-1/collections') {
+        generationPosts += 1;
+        return jsonResponse({ data: { taskId: 'task-missing-uid' } });
+      }
+      if (env.service === 'specification' && env.method === 'get' && env.path === '/tasks') {
+        return jsonResponse({ data: { 'task-missing-uid': 'completed' } });
+      }
+      if (env.service === 'collection' && env.method === 'get' && env.path.endsWith('/export')) {
+        return collectionExport('[Smoke][Temp] payments run-other', '33333333-foreign-temp');
+      }
+      return jsonResponse({});
+    });
+
+    await expect(client.generateCollection('spec-1', 'payments', '[Smoke][Temp]')).rejects.toThrow(
+      /Collection generation for spec spec-1 did not yield a run-owned temporary collection named \[Smoke\]\[Temp\] payments run-abc.*Inspect the spec generation\/task state and permissions, then rerun/
+    );
+    expect(generationPosts).toBe(1);
+    expect(
+      calls.filter((c) => c.service === 'specification' && c.method === 'post' && c.path.endsWith('/collections'))
+    ).toHaveLength(1);
+  });
+
+  it('fails generation with remediation when the task poll times out', async () => {
+    let generationPosts = 0;
+    const { client, calls, sleep } = makeClient((env) => {
+      if (env.service === 'specification' && env.method === 'get' && env.path === '/specifications/spec-1/collections') {
+        return jsonResponse({ data: [] });
+      }
+      if (env.service === 'specification' && env.method === 'post' && env.path === '/specifications/spec-1/collections') {
+        generationPosts += 1;
+        return jsonResponse({ data: { taskId: 'task-timeout-1' } });
+      }
+      if (env.service === 'specification' && env.method === 'get' && env.path === '/tasks') {
+        return jsonResponse({ data: { 'task-timeout-1': 'in-progress' } });
+      }
+      return jsonResponse({});
+    });
+
+    await expect(client.generateCollection('spec-1', 'payments', '[Smoke][Temp]')).rejects.toThrow(
+      /Collection generation timed out for spec spec-1 task task-timeout-1.*Inspect the spec generation\/task state and permissions, then rerun/
+    );
+    expect(generationPosts).toBe(1);
+    expect(
+      calls.filter((c) => c.service === 'specification' && c.method === 'post' && c.path.endsWith('/collections'))
+    ).toHaveLength(1);
+    expect(sleep).toHaveBeenCalled();
   });
 
   it('fails closed on duplicate item names instead of picking one during reconcile', async () => {

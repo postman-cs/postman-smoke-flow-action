@@ -28700,6 +28700,18 @@ function redactSecrets(input, secretValues, replacement = REDACTED) {
 function createSecretMasker(secretValues, replacement = REDACTED) {
   return (input) => redactSecrets(input, secretValues, replacement);
 }
+function createMutableSecretMasker(initialSecretValues = [], replacement = REDACTED) {
+  const secrets = normalizeSecretValues(initialSecretValues);
+  return {
+    mask: (input) => redactSecrets(input, secrets, replacement),
+    add(value) {
+      const normalized = String(value ?? "").trim();
+      if (normalized && !secrets.includes(normalized)) {
+        secrets.push(normalized);
+      }
+    }
+  };
+}
 function headerEntries(headers) {
   if (headers instanceof Headers) {
     return Array.from(headers.entries());
@@ -30069,15 +30081,20 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
   sleepImpl;
   workspaceId;
   runIdentity;
+  warning;
+  secretMasker;
   ownedTemporaryCollectionIds = /* @__PURE__ */ new Set();
   constructor(options) {
+    this.secretMasker = options.secretMasker ?? createSecretMasker([options.tokenProvider.current()]);
+    this.warning = options.warning;
     this.gateway = new AccessTokenGatewayClient({
       tokenProvider: options.tokenProvider,
       ...options.bifrostBaseUrl ? { bifrostBaseUrl: options.bifrostBaseUrl } : {},
       ...options.teamId ? { teamId: options.teamId } : {},
       ...options.orgMode !== void 0 ? { orgMode: options.orgMode } : {},
       ...options.fetchImpl ? { fetchImpl: options.fetchImpl } : {},
-      ...options.sleepImpl ? { sleepImpl: options.sleepImpl } : {}
+      ...options.sleepImpl ? { sleepImpl: options.sleepImpl } : {},
+      secretMasker: this.secretMasker
     });
     this.sleepImpl = options.sleepImpl ?? sleep;
     const workspaceId = String(options.workspaceId ?? "").trim();
@@ -30114,19 +30131,25 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         });
         const status = String(asRecord3(task?.data)?.[taskId] ?? "").toLowerCase();
         if (status === "failed" || status === "error") {
-          throw new Error(`Collection generation task failed for ${prefix}`);
+          throw new Error(
+            `Collection generation task failed for spec ${specId} task ${taskId} (status=${status}). Inspect the spec generation/task state and permissions, then rerun.`
+          );
         }
         if (status && status !== "in-progress" && status !== "pending" && status !== "queued") {
           break;
         }
         if (attempt === _PostmanGatewaySmokeClient.GENERATION_POLL_ATTEMPTS - 1) {
-          throw new Error(`Collection generation timed out for ${prefix}`);
+          throw new Error(
+            `Collection generation timed out for spec ${specId} task ${taskId}. Inspect the spec generation/task state and permissions, then rerun.`
+          );
         }
       }
     }
     const owned = await this.reconcileGeneratedCollection(specId, ownedName, preSnapshot);
     if (!owned) {
-      throw new Error(`Collection generation did not yield a collection uid for ${prefix}`);
+      throw new Error(
+        `Collection generation for spec ${specId} did not yield a run-owned temporary collection named ${ownedName}. Inspect the spec generation/task state and permissions, then rerun.`
+      );
     }
     this.rememberOwnedTemporaryCollection(owned);
     return owned;
@@ -30192,7 +30215,7 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
       if (matches.length === 1) return matches[0] ?? null;
       if (matches.length > 1) {
         throw new Error(
-          `Collection generation reconciled ambiguously for ${ownedName}: ${matches.join(", ")}`
+          `Collection generation for spec ${specId} reconciled ambiguously for run-owned temporary name ${ownedName}: ${matches.join(", ")}. Remove the stale run-owned temporary collection(s), then rerun.`
         );
       }
       if (attempt < 5) await this.sleepImpl(Math.min(2e3, 250 * 2 ** attempt));
@@ -30273,6 +30296,10 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         });
       } catch (error2) {
         if (!(error2 instanceof HttpError && error2.status === 400)) throw error2;
+        const cause = this.secretMasker(summarizeError(error2));
+        this.warning?.(
+          `Failed collection-level runtime-script patch for collection ${collectionUid}: ${cause}. Collection update continued, but required runtime scripts may be absent; verify collection-script support/permissions for this collection/workspace, then rerun.`
+        );
       }
     }
   }
@@ -30293,7 +30320,7 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
     });
     if (!found) {
       throw new Error(
-        `Canonical collection ${collectionUid} does not belong to workspace ${this.workspaceId} (not found in workspace); refusing mutate`
+        `Canonical collection ${collectionUid} was absent from workspace ${this.workspaceId} collection list; refusing mutate. Pass the workspace that owns the canonical collection, or the matching collection ID.`
       );
     }
   }
@@ -31906,6 +31933,13 @@ function sleep3(ms) {
     setTimeout(resolve2, ms);
   });
 }
+function createInputSecretMasker(inputs) {
+  return createSecretMasker([inputs.postmanApiKey, inputs.postmanAccessToken]);
+}
+function formatTemporaryCollectionCleanupWarning(tempCollectionId, cleanupError, mask) {
+  const cause = mask(summarizeError(cleanupError));
+  return `Failed to delete temporary Smoke collection ${tempCollectionId}: ${cause}. The temporary collection remains; delete collection ${tempCollectionId} after verifying collection-delete permission, or rerun cleanup after permissions recover.`;
+}
 function parseBooleanInput(name, value, defaultValue) {
   if (value === void 0 || value === "") {
     return defaultValue;
@@ -32087,7 +32121,7 @@ async function updateCanonicalCollectionUntilStable(options) {
     if (stability.stable) {
       if (attempt > 1) {
         options.dependencies.core.info(
-          `Canonical Smoke collection update persisted after ${attempt} attempt(s): ${latestVerification.summary}.`
+          `Canonical Smoke collection update for ${options.inputs.smokeCollectionId} persisted after ${attempt} attempt(s): ${latestVerification.summary}.`
         );
       }
       return transformed;
@@ -32095,12 +32129,12 @@ async function updateCanonicalCollectionUntilStable(options) {
     sourceCollection = options.refreshSourceFromLatest === false ? options.initialSourceCollection : stability.latestCollection;
     if (attempt < STABLE_COLLECTION_UPDATE_MAX_ATTEMPTS) {
       options.dependencies.core.warning(
-        `Canonical Smoke collection update was not stable after attempt ${attempt}: ${latestVerification.summary}. Reapplying to the latest collection.`
+        `Canonical Smoke collection update for ${options.inputs.smokeCollectionId} was not stable after attempt ${attempt}: ${latestVerification.summary}. Automatically reapplying the update.`
       );
     }
   }
   throw new Error(
-    `Canonical Smoke collection update did not persist after ${STABLE_COLLECTION_UPDATE_MAX_ATTEMPTS} attempt(s): ${latestVerification.summary}.`
+    `Canonical Smoke collection update for ${options.inputs.smokeCollectionId} did not persist after ${STABLE_COLLECTION_UPDATE_MAX_ATTEMPTS} attempt(s): ${latestVerification.summary}. Fix the reported verification mismatch; if another sync is overwriting collection ${options.inputs.smokeCollectionId}, stop or serialize that sync before rerunning.`
   );
 }
 function ensureRequiredInputs(inputs) {
@@ -32156,6 +32190,7 @@ function getCollectionName(collection) {
 }
 async function runWithoutFlowManifest(inputs, dependencies) {
   const authApplied = Boolean(inputs.authConfig?.enabled);
+  const secretMasker = createInputSecretMasker(inputs);
   let tempCollectionId = "";
   let tempCollectionDeleted = false;
   let runFailed = false;
@@ -32214,14 +32249,16 @@ async function runWithoutFlowManifest(inputs, dependencies) {
       appliedBindingCount: 0,
       appliedExtractCount: 0,
       assertionCount: 0,
-      warnings: [...warnings, summarizeError(error2)]
+      warnings: [...warnings, secretMasker(summarizeError(error2))]
     };
     if (tempCollectionId && !inputs.keepTempCollectionOnFailure) {
       try {
         await dependencies.postman.deleteCollection(tempCollectionId);
         tempCollectionDeleted = true;
       } catch (cleanupError) {
-        dependencies.core.warning(`Failed to delete temporary Smoke collection ${tempCollectionId}: ${summarizeError(cleanupError)}`);
+        dependencies.core.warning(
+          formatTemporaryCollectionCleanupWarning(tempCollectionId, cleanupError, secretMasker)
+        );
       }
     }
     throw Object.assign(error2 instanceof Error ? error2 : new Error(String(error2)), {
@@ -32235,7 +32272,9 @@ async function runWithoutFlowManifest(inputs, dependencies) {
         dependencies.core.info(`Deleted temporary Smoke collection ${tempCollectionId}`);
       } catch (cleanupError) {
         if (!inputs.keepTempCollectionOnFailure) {
-          dependencies.core.warning(`Failed to delete temporary Smoke collection ${tempCollectionId}: ${summarizeError(cleanupError)}`);
+          dependencies.core.warning(
+            formatTemporaryCollectionCleanupWarning(tempCollectionId, cleanupError, secretMasker)
+          );
         }
       }
     }
@@ -32259,6 +32298,7 @@ async function runSmokeFlow(inputs, dependencies) {
   const manifest = loadFlowManifest(flowPath);
   const { flow, warnings } = validateFlowManifest(manifest);
   const flowName = flow.name;
+  const secretMasker = createInputSecretMasker(inputs);
   warnings.forEach((warning2) => dependencies.core.warning(warning2.message));
   if (warnings.length > 0 && inputs.failOnFlowWarning) {
     throw new Error(`Flow validation produced ${warnings.length} warning(s) and fail-on-flow-warning=true.`);
@@ -32317,14 +32357,16 @@ async function runSmokeFlow(inputs, dependencies) {
       appliedBindingCount: 0,
       appliedExtractCount: 0,
       assertionCount: 0,
-      warnings: [...warnings.map((warning2) => warning2.message), summarizeError(error2)]
+      warnings: [...warnings.map((warning2) => warning2.message), secretMasker(summarizeError(error2))]
     };
     if (tempCollectionId && !inputs.keepTempCollectionOnFailure) {
       try {
         await dependencies.postman.deleteCollection(tempCollectionId);
         tempCollectionDeleted = true;
       } catch (cleanupError) {
-        dependencies.core.warning(`Failed to delete temporary Smoke collection ${tempCollectionId}: ${summarizeError(cleanupError)}`);
+        dependencies.core.warning(
+          formatTemporaryCollectionCleanupWarning(tempCollectionId, cleanupError, secretMasker)
+        );
       }
     }
     throw Object.assign(error2 instanceof Error ? error2 : new Error(String(error2)), {
@@ -32338,7 +32380,9 @@ async function runSmokeFlow(inputs, dependencies) {
         dependencies.core.info(`Deleted temporary Smoke collection ${tempCollectionId}`);
       } catch (cleanupError) {
         if (!inputs.keepTempCollectionOnFailure) {
-          dependencies.core.warning(`Failed to delete temporary Smoke collection ${tempCollectionId}: ${summarizeError(cleanupError)}`);
+          dependencies.core.warning(
+            formatTemporaryCollectionCleanupWarning(tempCollectionId, cleanupError, secretMasker)
+          );
         }
       }
     }
@@ -32364,18 +32408,28 @@ function createSmokeClient(inputs, actionCore, env = process.env) {
       "postman-access-token is required and could not be minted from postman-api-key (see the warning above for the diagnosis): the Smoke collection reshape runs access-token-only through the Postman gateway. Provide a valid service-account postman-api-key so the action can mint one, or mint it with postman-resolve-service-token-action and pass it as postman-access-token (postman-api-key alone never drives the reshape)."
     );
   }
+  const mutableMasker = createMutableSecretMasker([
+    inputs.postmanApiKey,
+    inputs.postmanAccessToken,
+    accessToken
+  ]);
   const provider = new AccessTokenProvider({
     accessToken,
     apiKey: inputs.postmanApiKey || void 0,
     apiBaseUrl: inputs.postmanApiBaseUrl,
-    onToken: (token) => actionCore.setSecret?.(token)
+    onToken: (token) => {
+      actionCore.setSecret?.(token);
+      mutableMasker.add(token);
+    }
   });
   const workspaceId = String(inputs.workspaceId ?? "").trim();
   return new PostmanGatewaySmokeClient({
     tokenProvider: provider,
     ...resolveGatewayTeamContext(inputs.teamId),
     ...workspaceId ? { workspaceId } : {},
-    runIdentity: buildSmokeRunIdentity(env)
+    runIdentity: buildSmokeRunIdentity(env),
+    secretMasker: mutableMasker.mask,
+    warning: (message) => actionCore.warning(message)
   });
 }
 function decideBranchTier(inputs, env = process.env) {

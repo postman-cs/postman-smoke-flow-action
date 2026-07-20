@@ -1,6 +1,8 @@
 import { HttpError } from '../lib/http-error.js';
+import { summarizeError } from '../lib/logging.js';
 import { AccessTokenGatewayClient } from '../lib/postman/gateway-client.js';
 import type { AccessTokenProvider } from '../lib/postman/token-provider.js';
+import { createSecretMasker, type SecretMasker } from '../lib/secrets.js';
 
 type JsonRecord = Record<string, unknown>;
 type ParentRef = { id: string; $kind: 'collection' };
@@ -267,6 +269,10 @@ export interface PostmanGatewaySmokeClientOptions {
    * ambiguous generate response can be reconciled without adopting a peer run.
    */
   runIdentity?: string;
+  /** Optional operator warning sink for best-effort partial-success paths. */
+  warning?: (message: string) => void;
+  /** Optional secret masker for operator-facing warning/error text. */
+  secretMasker?: SecretMasker;
 }
 
 /**
@@ -298,16 +304,22 @@ export class PostmanGatewaySmokeClient {
   private readonly sleepImpl: (ms: number) => Promise<void>;
   private readonly workspaceId?: string;
   private readonly runIdentity?: string;
+  private readonly warning?: (message: string) => void;
+  private readonly secretMasker: SecretMasker;
   private readonly ownedTemporaryCollectionIds = new Set<string>();
 
   constructor(options: PostmanGatewaySmokeClientOptions) {
+    this.secretMasker =
+      options.secretMasker ?? createSecretMasker([options.tokenProvider.current()]);
+    this.warning = options.warning;
     this.gateway = new AccessTokenGatewayClient({
       tokenProvider: options.tokenProvider,
       ...(options.bifrostBaseUrl ? { bifrostBaseUrl: options.bifrostBaseUrl } : {}),
       ...(options.teamId ? { teamId: options.teamId } : {}),
       ...(options.orgMode !== undefined ? { orgMode: options.orgMode } : {}),
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-      ...(options.sleepImpl ? { sleepImpl: options.sleepImpl } : {})
+      ...(options.sleepImpl ? { sleepImpl: options.sleepImpl } : {}),
+      secretMasker: this.secretMasker
     });
     this.sleepImpl = options.sleepImpl ?? sleep;
     const workspaceId = String(options.workspaceId ?? '').trim();
@@ -347,20 +359,26 @@ export class PostmanGatewaySmokeClient {
         });
         const status = String(asRecord(task?.data)?.[taskId] ?? '').toLowerCase();
         if (status === 'failed' || status === 'error') {
-          throw new Error(`Collection generation task failed for ${prefix}`);
+          throw new Error(
+            `Collection generation task failed for spec ${specId} task ${taskId} (status=${status}). Inspect the spec generation/task state and permissions, then rerun.`
+          );
         }
         if (status && status !== 'in-progress' && status !== 'pending' && status !== 'queued') {
           break;
         }
         if (attempt === PostmanGatewaySmokeClient.GENERATION_POLL_ATTEMPTS - 1) {
-          throw new Error(`Collection generation timed out for ${prefix}`);
+          throw new Error(
+            `Collection generation timed out for spec ${specId} task ${taskId}. Inspect the spec generation/task state and permissions, then rerun.`
+          );
         }
       }
     }
 
     const owned = await this.reconcileGeneratedCollection(specId, ownedName, preSnapshot);
     if (!owned) {
-      throw new Error(`Collection generation did not yield a collection uid for ${prefix}`);
+      throw new Error(
+        `Collection generation for spec ${specId} did not yield a run-owned temporary collection named ${ownedName}. Inspect the spec generation/task state and permissions, then rerun.`
+      );
     }
     this.rememberOwnedTemporaryCollection(owned);
     return owned;
@@ -433,7 +451,7 @@ export class PostmanGatewaySmokeClient {
       if (matches.length === 1) return matches[0] ?? null;
       if (matches.length > 1) {
         throw new Error(
-          `Collection generation reconciled ambiguously for ${ownedName}: ${matches.join(', ')}`
+          `Collection generation for spec ${specId} reconciled ambiguously for run-owned temporary name ${ownedName}: ${matches.join(', ')}. Remove the stale run-owned temporary collection(s), then rerun.`
         );
       }
       if (attempt < 5) await this.sleepImpl(Math.min(2000, 250 * 2 ** attempt));
@@ -533,6 +551,10 @@ export class PostmanGatewaySmokeClient {
         });
       } catch (error) {
         if (!(error instanceof HttpError && error.status === 400)) throw error;
+        const cause = this.secretMasker(summarizeError(error));
+        this.warning?.(
+          `Failed collection-level runtime-script patch for collection ${collectionUid}: ${cause}. Collection update continued, but required runtime scripts may be absent; verify collection-script support/permissions for this collection/workspace, then rerun.`
+        );
       }
     }
   }
@@ -554,7 +576,7 @@ export class PostmanGatewaySmokeClient {
     });
     if (!found) {
       throw new Error(
-        `Canonical collection ${collectionUid} does not belong to workspace ${this.workspaceId} (not found in workspace); refusing mutate`
+        `Canonical collection ${collectionUid} was absent from workspace ${this.workspaceId} collection list; refusing mutate. Pass the workspace that owns the canonical collection, or the matching collection ID.`
       );
     }
   }
