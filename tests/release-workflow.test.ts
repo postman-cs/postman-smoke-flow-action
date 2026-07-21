@@ -39,7 +39,23 @@ describe('release workflow publishing contract', () => {
     expect(namedStep('Check npm package version')).toContain('already_published=true');
     expect(namedStep('Publish to npm')).toContain("if: needs.validate.outputs.npm_publish == 'true' && steps.npm_package.outputs.already_published != 'true'");
     expect(namedStep('Attach npm tarball to release')).not.toMatch(/\n\s+if:/);
-    expect(namedStep('Upload tarball')).not.toMatch(/\n\s+if:/);
+    expect(namedStep('Upload tarball and SEA binary')).not.toMatch(/\n\s+if:/);
+  });
+
+  it('builds, smoke-tests, and attaches the self-contained SEA binary on release', () => {
+    // Tag pushes do not trigger sea-binary.yml, so the release job must build and
+    // execute the binary before any publish/upload, and ship it as a release asset.
+    expect(namedStep('Build self-contained SEA binary')).toContain('bash scripts/build-sea.sh');
+    const smoke = namedStep('Smoke test SEA binary with an empty environment');
+    expect(smoke).toContain('env -i PATH=/nonexistent');
+    expect(smoke).toContain('postman-smoke-flow-${VERSION}-linux-x64');
+    expect(smoke).toContain('version not embedded');
+    // Hermetic-runtime guard: the smoke must prove ambient NODE_OPTIONS is ignored.
+    expect(smoke).toContain("NODE_OPTIONS='--this-flag-does-not-exist'");
+    expect(smoke).toContain('honored ambient NODE_OPTIONS');
+    expect(namedStep('Upload tarball and SEA binary')).toContain(
+      'build/sea/postman-smoke-flow-*-linux-x64'
+    );
   });
 
   it('advances the rolling major alias after an immutable release publishes', () => {

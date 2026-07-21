@@ -31810,6 +31810,9 @@ function createTelemetryContext(options) {
 var import_node_fs4 = require("node:fs");
 var import_node_path2 = require("node:path");
 function resolveActionVersion2() {
+  if (false) {
+    return void 0;
+  }
   try {
     const raw = (0, import_node_fs4.readFileSync)((0, import_node_path2.join)(__dirname, "..", "package.json"), "utf8");
     return JSON.parse(raw).version ?? "unknown";
@@ -31927,7 +31930,7 @@ function readActionInputs(env = process.env) {
     specId: getInput2("spec-id", env),
     smokeCollectionId: getInput2("smoke-collection-id", env),
     flowPath: getInput2("flow-path", env) || void 0,
-    postmanApiKey: getInput2("postman-api-key", env),
+    postmanApiKey: getInput2("postman-api-key", env) || env.POSTMAN_API_KEY || "",
     postmanApiBaseUrl: resolvePostmanApiBaseUrl(getInput2("postman-region", env)),
     postmanIapubBaseUrl: resolvePostmanIapubBaseUrl(getInput2("postman-region", env)),
     authConfig: parseAuthConfig(getInput2("auth-config-json", env)),
@@ -31939,7 +31942,7 @@ function readActionInputs(env = process.env) {
     specPath: getInput2("spec-path", env) || void 0,
     debugDumpPath: getInput2("debug-dump-path", env) || void 0,
     collectionSyncMode: getInput2("collection-sync-mode", env) || "refresh",
-    postmanAccessToken: getInput2("postman-access-token", env) || void 0,
+    postmanAccessToken: getInput2("postman-access-token", env) || env.POSTMAN_ACCESS_TOKEN || void 0,
     failOnFlowWarning: parseBooleanInput(
       "fail-on-flow-warning",
       getInput2("fail-on-flow-warning", env),

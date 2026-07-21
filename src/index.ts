@@ -189,7 +189,7 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
     specId: getInput('spec-id', env),
     smokeCollectionId: getInput('smoke-collection-id', env),
     flowPath: getInput('flow-path', env) || undefined,
-    postmanApiKey: getInput('postman-api-key', env),
+    postmanApiKey: getInput('postman-api-key', env) || env.POSTMAN_API_KEY || '',
     postmanApiBaseUrl: resolvePostmanApiBaseUrl(getInput('postman-region', env)),
     postmanIapubBaseUrl: resolvePostmanIapubBaseUrl(getInput('postman-region', env)),
     authConfig: parseAuthConfig(getInput('auth-config-json', env)),
@@ -201,7 +201,7 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
     specPath: getInput('spec-path', env) || undefined,
     debugDumpPath: getInput('debug-dump-path', env) || undefined,
     collectionSyncMode: (getInput('collection-sync-mode', env) || 'refresh') as 'refresh' | 'version',
-    postmanAccessToken: getInput('postman-access-token', env) || undefined,
+    postmanAccessToken: getInput('postman-access-token', env) || env.POSTMAN_ACCESS_TOKEN || undefined,
     failOnFlowWarning: parseBooleanInput(
       'fail-on-flow-warning',
       getInput('fail-on-flow-warning', env),
