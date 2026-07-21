@@ -1,6 +1,6 @@
 {
   "name": "@postman-cse/onboarding-smoke-flow",
-  "version": "2.1.5",
+  "version": "2.1.6",
   "description": "GitHub Action and CLI for applying curated Postman Smoke collection flows.",
   "type": "module",
   "main": "dist/main.cjs",
@@ -37,24 +37,24 @@
   "dependencies": {
     "@actions/core": "^3.0.1",
     "@postman-cse/automation-telemetry-core": "^0.2.0",
-    "undici": "^6.24.0",
+    "undici": "^8.8.0",
     "yaml": "^2.9.0"
   },
   "overrides": {
-    "undici": "^6.24.0",
+    "undici": "^8.8.0",
     "picomatch": ">=4.0.4"
   },
   "devDependencies": {
-    "@commitlint/cli": "^21.2.0",
+    "@commitlint/cli": "^21.2.1",
     "@commitlint/config-conventional": "^21.2.0",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.1.0",
     "esbuild": "0.28.1",
-    "eslint": "^10.4.1",
+    "eslint": "^10.7.0",
     "postject": "1.0.0-alpha.6",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.60.0",
-    "vitest": "^4.1.7"
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^4.1.10"
   },
   "repository": {
     "type": "git",
