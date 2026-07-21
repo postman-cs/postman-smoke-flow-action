@@ -248,16 +248,20 @@ See [docs/cli.md](docs/cli.md) for GitLab CI, Bitbucket Pipelines, Azure DevOps,
 For CI that cannot install npm or Node — locked-down Jenkins, bare Bitbucket agents, boxes with no package-registry access — a single self-contained executable is published as a GitHub Release asset. It bakes the Node runtime and the full bundle into one file, so the target needs no npm, no Node install, and no package-registry access. It is not network-isolated: the run still needs outbound access to the Postman API/gateway.
 
 ```bash
-VERSION=2.1.4   # set to the release that carries the binary
-curl -fsSL -o postman-smoke-flow \
-  "https://github.com/postman-cs/postman-smoke-flow-action/releases/download/v${VERSION}/postman-smoke-flow-${VERSION}-linux-x64"
-chmod +x postman-smoke-flow
+VERSION=2.1.6   # example: use a release that carries the binary
+ASSET="postman-smoke-flow-${VERSION}-linux-x64"
+BASE_URL="https://github.com/postman-cs/postman-smoke-flow-action/releases/download/v${VERSION}"
+curl -fsSLO "${BASE_URL}/${ASSET}"
+curl -fsSLO "${BASE_URL}/${ASSET}.sha256"
+shasum -a 256 -c "${ASSET}.sha256"
+chmod +x "$ASSET"
+mv "$ASSET" postman-smoke-flow
 
 export POSTMAN_ACCESS_TOKEN="<minted-token>"
 ./postman-smoke-flow --project-name core-payments --workspace-id ws-123 --smoke-collection-id col-smoke --flow-path ./flow.yaml
 ```
 
-Credentials resolve from a CLI flag, then the `INPUT_*` env var, then a plain `POSTMAN_ACCESS_TOKEN` / `POSTMAN_API_KEY` — so Jenkins `withCredentials` works with no flag. The binary makes **no runtime tool downloads** (it reshapes the Smoke collection over the access-token gateway; it does not run the collection). Its outbound calls are the region API host, the Bifrost gateway, and iapub. Omitting `--flow-path` triggers a destructive full-canonical Smoke refresh, so it must be paired with `--acknowledge-no-flow-refresh` when intentional. Current target is `linux-x64`. Full runbook, credential minting, the host allowlist, and a Jenkins pipeline: [Self-contained binary](docs/self-contained-binary.md).
+Credentials resolve from a CLI flag, then the `INPUT_*` env var, then a plain `POSTMAN_ACCESS_TOKEN` / `POSTMAN_API_KEY` — so Jenkins `withCredentials` works with no flag. Proxy-only agents must set `NODE_USE_ENV_PROXY=1` alongside `HTTP_PROXY` / `HTTPS_PROXY`. The binary makes **no runtime tool downloads** (it reshapes the Smoke collection over the access-token gateway; it does not run the collection). Its business calls use the region API host, Bifrost gateway, and iapub; best-effort completion telemetry uses `events.pm-cse.dev`. Omitting `--flow-path` triggers a destructive full-canonical Smoke refresh, so it must be paired with `--acknowledge-no-flow-refresh` when intentional. Current target is `linux-x64`. Full runbook, credential minting, the complete host allowlist, and a Jenkins pipeline: [Self-contained binary](docs/self-contained-binary.md).
 
 ## How it works
 

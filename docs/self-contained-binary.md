@@ -14,10 +14,14 @@ The binary is built and smoke-tested natively in CI on every release (`.github/w
 Download the release asset and mark it executable. Pin an explicit version:
 
 ```bash
-VERSION=2.1.4   # set to the release that carries the binary
-curl -fsSL -o postman-smoke-flow \
-  "https://github.com/postman-cs/postman-smoke-flow-action/releases/download/v${VERSION}/postman-smoke-flow-${VERSION}-linux-x64"
-chmod +x postman-smoke-flow
+VERSION=2.1.6   # example: use a release that carries the binary
+ASSET="postman-smoke-flow-${VERSION}-linux-x64"
+BASE_URL="https://github.com/postman-cs/postman-smoke-flow-action/releases/download/v${VERSION}"
+curl -fsSLO "${BASE_URL}/${ASSET}"
+curl -fsSLO "${BASE_URL}/${ASSET}.sha256"
+shasum -a 256 -c "${ASSET}.sha256"
+chmod +x "$ASSET"
+mv "$ASSET" postman-smoke-flow
 
 ./postman-smoke-flow --version   # -> matches ${VERSION}
 ```
@@ -58,11 +62,21 @@ Mint against the API base for your region — `api.getpostman.com` for US, `api.
 
 The binary bundles its runtime, but the reshape is an online operation. The agent needs outbound access (direct or via an HTTP/HTTPS proxy) to Postman for the entire run. On agents that enforce an outbound allowlist, allow **all** of the following (prod defaults). The region only changes the API host; the Bifrost and iapub hosts are the same for US and EU:
 
+Node 24 does not activate `HTTP_PROXY` / `HTTPS_PROXY` handling for `fetch` by default. On a proxy-only agent, enable it explicitly; `NO_PROXY` remains available for bypasses:
+
+```bash
+export NODE_USE_ENV_PROXY=1
+export HTTPS_PROXY="http://proxy.example:8080"
+```
+
+Do not put `--use-env-proxy` in `NODE_OPTIONS`: the SEA deliberately ignores `NODE_OPTIONS` so ambient Node flags cannot change its runtime. `NODE_USE_ENV_PROXY=1` is the supported switch for the binary.
+
 | Host | Purpose |
 | --- | --- |
 | `api.getpostman.com` (US) / `api.eu.postman.com` (EU) | Public API — token minting/re-mint |
 | `bifrost-premium-https-v4.gw.postman.com` | Bifrost proxy — the access-token gateway for the Smoke collection generate/reshape/delete (`/ws/proxy`) |
 | `iapub.postman.co` | Session identity preflight (`/api/sessions/current`) |
+| `events.pm-cse.dev` | Best-effort anonymous completion telemetry; disable with `POSTMAN_ACTIONS_TELEMETRY=off` or `DO_NOT_TRACK=1` |
 
 Allowlisting only the API host is **not** enough: the gateway reshape and identity preflight will fail even though minting succeeds. This action does not contact `gateway.postman.com` or `dl-cli.pstmn.io` (those appear in the endpoint profile but are not used by this action), and it makes no runtime tool downloads.
 
@@ -96,8 +110,9 @@ pipeline {
   agent { label 'linux' }
 
   environment {
-    SMOKE_FLOW_VERSION = '2.1.4'   // set to the release that carries the binary
+    SMOKE_FLOW_VERSION = '2.1.6'   // example: use a release that carries the binary
     POSTMAN_REGION = 'us'          // EU data residency: 'eu'
+    NODE_USE_ENV_PROXY = '1'       // enables HTTP_PROXY / HTTPS_PROXY when configured
   }
 
   stages {
@@ -106,9 +121,13 @@ pipeline {
         sh '''
           set -eu
           # Prefer your internal mirror in locked-down environments:
-          URL="https://github.com/postman-cs/postman-smoke-flow-action/releases/download/v${SMOKE_FLOW_VERSION}/postman-smoke-flow-${SMOKE_FLOW_VERSION}-linux-x64"
-          curl -fsSL "$URL" -o postman-smoke-flow
-          chmod +x postman-smoke-flow
+          ASSET="postman-smoke-flow-${SMOKE_FLOW_VERSION}-linux-x64"
+          BASE_URL="https://github.com/postman-cs/postman-smoke-flow-action/releases/download/v${SMOKE_FLOW_VERSION}"
+          curl -fsSLO "$BASE_URL/$ASSET"
+          curl -fsSLO "$BASE_URL/$ASSET.sha256"
+          shasum -a 256 -c "$ASSET.sha256"
+          chmod +x "$ASSET"
+          mv "$ASSET" postman-smoke-flow
           ./postman-smoke-flow --version
         '''
       }
@@ -157,5 +176,3 @@ pipeline {
 - **Network:** not air-gapped — requires outbound access to the Postman API/gateway hosts for the whole run. See [Network requirements](#network-requirements).
 - **Collection must exist:** this action reshapes an existing canonical Smoke collection (`--smoke-collection-id`); it does not create one. Run `postman-bootstrap-action` first.
 - **Version:** the embedded `--version` and telemetry version are baked in at build time from the release tag; the versioned filename (`postman-smoke-flow-<version>-linux-x64`) also carries it.
-```
-

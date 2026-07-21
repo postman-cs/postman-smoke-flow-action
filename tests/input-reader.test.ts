@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { readActionInputs } from '../src/index.js';
+import { parseCliArgs } from '../src/lib/cli-args.js';
 
 describe('readActionInputs', () => {
   it('reads hyphenated GitHub Action inputs from canonical runner env names', () => {
@@ -43,6 +44,49 @@ describe('readActionInputs', () => {
     const inputs = readActionInputs({} as NodeJS.ProcessEnv);
 
     expect(inputs.secretsResolverEnabled).toBe(true);
+  });
+
+  it('resolves credentials from flags, action inputs, then plain environment variables', () => {
+    const plain = readActionInputs({
+      POSTMAN_API_KEY: 'plain-api-key',
+      POSTMAN_ACCESS_TOKEN: 'plain-access-token'
+    });
+    expect(plain.postmanApiKey).toBe('plain-api-key');
+    expect(plain.postmanAccessToken).toBe('plain-access-token');
+
+    const actionInput = readActionInputs({
+      INPUT_POSTMAN_API_KEY: 'input-api-key',
+      INPUT_POSTMAN_ACCESS_TOKEN: 'input-access-token',
+      POSTMAN_API_KEY: 'plain-api-key',
+      POSTMAN_ACCESS_TOKEN: 'plain-access-token'
+    });
+    expect(actionInput.postmanApiKey).toBe('input-api-key');
+    expect(actionInput.postmanAccessToken).toBe('input-access-token');
+
+    const parsed = parseCliArgs(
+      [
+        'node',
+        'postman-smoke-flow',
+        '--postman-api-key',
+        'flag-api-key',
+        '--postman-access-token',
+        'flag-access-token'
+      ],
+      {}
+    );
+    expect(parsed.kind).toBe('run');
+    if (parsed.kind !== 'run') {
+      return;
+    }
+    const cli = readActionInputs({
+      INPUT_POSTMAN_API_KEY: 'input-api-key',
+      INPUT_POSTMAN_ACCESS_TOKEN: 'input-access-token',
+      POSTMAN_API_KEY: 'plain-api-key',
+      POSTMAN_ACCESS_TOKEN: 'plain-access-token',
+      ...parsed.env
+    });
+    expect(cli.postmanApiKey).toBe('flag-api-key');
+    expect(cli.postmanAccessToken).toBe('flag-access-token');
   });
 
   it('treats missing flow-path as undefined for no-flow Smoke refreshes', () => {
