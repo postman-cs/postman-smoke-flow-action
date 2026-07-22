@@ -92,4 +92,23 @@ describe('release workflow publishing contract', () => {
       /if: \$\{\{ !cancelled\(\) && needs\.publish\.result == 'success' && needs\.validate\.outputs\.npm_publish == 'true' \}\}/
     );
   });
+
+  it('publishes on validate success and monitor-dispatches after immutable npm tags', () => {
+    expect(releaseWorkflow).not.toContain('gate_required');
+    expect(releaseWorkflow).not.toContain('live-e2e-gate:');
+    expect(releaseWorkflow).toMatch(/publish:\n\s+needs: validate\n/);
+    expect(releaseWorkflow).toContain('dispatch-live-monitor:');
+    expect(releaseWorkflow).toMatch(
+      /dispatch-live-monitor:[\s\S]*needs:[\s\S]*validate[\s\S]*publish/
+    );
+    expect(releaseWorkflow).toMatch(
+      /dispatch-live-monitor:[\s\S]*if: \$\{\{ needs\.validate\.outputs\.npm_publish == 'true' && needs\.publish\.result == 'success' \}\}/
+    );
+    expect(releaseWorkflow).toMatch(/dispatch-live-monitor:[\s\S]*continue-on-error: true/);
+    const aliasJob =
+      releaseWorkflow.match(/advance-major-alias:[\s\S]*?(?=\n {2}[a-z-]+:|\n?$)/)?.[0] ?? '';
+    expect(aliasJob).toContain('needs:');
+    expect(aliasJob).not.toContain('dispatch-live-monitor');
+    expect(releaseWorkflow).toContain('node .github/scripts/dispatch-e2e-monitor.mjs');
+  });
 });

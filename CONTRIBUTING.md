@@ -46,19 +46,22 @@ $(go env GOPATH)/bin/actionlint
 Ordinary PRs use the deterministic offline gate. Live sandbox coverage runs on
 immutable releases and nightly in `postman-cs/postman-actions-e2e`.
 
-## Release Gate
+## Release Monitor
 
-Immutable release tags for this repo are blocked by the central live e2e suite in
-`postman-cs/postman-actions-e2e` before any GitHub release, npm package, or
-release tarball is published. The release workflow validates locally, dispatches
-the e2e workflow with this exact tag pinned for `postman-smoke-flow-action`,
-waits for the correlated run to succeed, and only then publishes.
+Immutable release tags publish after local validation succeeds (tests, typecheck,
+lint, dist verify, actionlint, and SEA artifact smoke checks). Publish does
+**not** wait on live sandbox e2e. After an immutable npm publish tag finishes
+publishing, the release workflow fire-and-forgets a single dispatch to
+`postman-cs/postman-actions-e2e` with this exact tag pinned for
+`postman-smoke-flow-action` (`action` / `ref` / `gate_correlation_id` /
+`suite=smoke`). The monitor job uses `continue-on-error: true` and is not a
+dependency of the rolling major-alias job.
 
-The rolling `v1` alias validates locally but skips npm publish
-and the live e2e gate. `E2E_DISPATCH_TOKEN` is release-critical for immutable
-publishing tags; if it is missing, invalid, or the e2e fails/times out, the
-release must stop before public artifacts are created. Record the e2e run URL
-and conclusion from the release logs as release evidence.
+The rolling major alias validates locally but skips npm publish and the live
+e2e monitor. `E2E_DISPATCH_TOKEN` is required only for the post-publish monitor
+job; a missing, denied, or failed dispatch can fail that job alone and must not
+block GitHub release, npm publish, tarball upload, or alias advancement. Record
+the dispatch notice from the release logs as monitor evidence when available.
 
 ## Commit Messages
 
@@ -80,7 +83,7 @@ This project uses [Conventional Commits](https://www.conventionalcommits.org/en/
 feat: support additional smoke flow assertions
 fix: preserve request auth when applying flow.yaml
 docs: clarify smoke collection inputs
-ci: block release on live e2e gate
+ci: dispatch live e2e monitor after publish
 ```
 
 ## Reporting Issues
