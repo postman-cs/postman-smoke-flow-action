@@ -136,10 +136,9 @@ describe('CI and SEA PR workflow contracts', () => {
     expect(windows.match(/^\s*- run: npm ci\s*$/gm) ?? []).toHaveLength(0);
   });
 
-  it('runs sole direct unconditional npm test on Windows with no queue or build gates', () => {
-    expect(windows.match(/^\s*- run: npm test\s*$/gm) ?? []).toHaveLength(1);
-    expect(windows).not.toMatch(/npm test --/);
-    expect(windows).not.toMatch(/npm test -/);
+  it('runs sole direct unconditional node test script on Windows with no queue or build gates', () => {
+    expect(windows.match(/^\s*- run: node --run test\s*$/gm) ?? []).toHaveLength(1);
+    expect(windows).not.toContain('npm test');
 
     expect(windows).not.toContain('Run Windows gates');
     expect(windows).not.toContain('shell: pwsh');
