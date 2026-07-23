@@ -103,8 +103,14 @@ describe('CI and SEA PR workflow contracts', () => {
   it('pins actionlint 1.7.11 at $RUNNER_TEMP with zero Go setup or go install', () => {
     const install = namedStep(linux, 'Install actionlint');
     expect(install.length).toBeGreaterThan(0);
+    expect(install).toContain(
+      'https://raw.githubusercontent.com/rhysd/actionlint/393031adb9afb225ee52ae2ccd7a5af5525e03e8/scripts/download-actionlint.bash'
+    );
+    expect(install).toMatch(/393031adb9afb225ee52ae2ccd7a5af5525e03e8/);
+    expect(install.match(/393031adb9afb225ee52ae2ccd7a5af5525e03e8/)?.[0]).toHaveLength(40);
     expect(install).toContain('download-actionlint.bash) 1.7.11 "$RUNNER_TEMP"');
     expect(install).toContain('ACTIONLINT_BIN=$RUNNER_TEMP/actionlint');
+    expect(ciWorkflow).not.toContain('/main/scripts/download-actionlint.bash');
 
     expect(ciWorkflow).not.toContain('actions/setup-go');
     expect(ciWorkflow).not.toContain('go install github.com/rhysd/actionlint');

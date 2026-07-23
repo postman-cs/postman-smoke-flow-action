@@ -27,7 +27,7 @@ Then lint workflows with [`actionlint`](https://github.com/rhysd/actionlint) `1.
 
 ```bash
 tmp="$(mktemp -d)"
-bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.11 "$tmp"
+bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/393031adb9afb225ee52ae2ccd7a5af5525e03e8/scripts/download-actionlint.bash) 1.7.11 "$tmp"
 "$tmp/actionlint"
 ```
 
@@ -85,7 +85,7 @@ This project uses [Conventional Commits](https://www.conventionalcommits.org/en/
 feat: support additional smoke flow assertions
 fix: preserve request auth when applying flow.yaml
 docs: clarify smoke collection inputs
-ci: block release on live e2e gate
+ci: dispatch post-release smoke monitor asynchronously
 ```
 
 ## Reporting Issues

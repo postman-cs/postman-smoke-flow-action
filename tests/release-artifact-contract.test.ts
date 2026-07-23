@@ -6,7 +6,12 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { classifyRelease } from '../scripts/classify-release.mjs';
+import {
+  aliasCanAdvance,
+  classifyRelease,
+  compareSemver,
+  parseSemver
+} from '../scripts/classify-release.mjs';
 import {
   assertNpmSriMatch,
   computeNpmSri,
@@ -16,6 +21,7 @@ import {
 } from '../scripts/verify-release-artifacts.mjs';
 
 const VERIFIER = join(process.cwd(), 'scripts/verify-release-artifacts.mjs');
+const CLASSIFIER = join(process.cwd(), 'scripts/classify-release.mjs');
 
 const PACKAGE_NAME = '@postman-cse/onboarding-smoke-flow';
 const PACKAGE_VERSION = '2.1.6';
@@ -109,6 +115,72 @@ describe('release classification contract', () => {
       refName: 'v9.9.9',
       packageVersion: '2.1.6'
     })).toThrow(/got v9\.9\.9/);
+  });
+});
+
+describe('SemVer alias comparator contract', () => {
+  function cliAlias(current: string, candidate: string): number {
+    try {
+      execFileSync(process.execPath, [CLASSIFIER, 'alias-can-advance', current, candidate], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+      return 0;
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      if (typeof status === 'number') return status;
+      throw error;
+    }
+  }
+
+  it('orders stable above prerelease and compares prerelease identifiers per SemVer 2.0', () => {
+    expect(compareSemver('2.1.6', '2.1.6-beta')).toBe(1);
+    expect(compareSemver('2.1.6-beta', '2.1.6')).toBe(-1);
+    expect(aliasCanAdvance('2.1.6', '2.1.6-beta')).toBe(false);
+    expect(aliasCanAdvance('2.1.6-beta', '2.1.6')).toBe(true);
+
+    expect(compareSemver('1.0.0-beta.2', '1.0.0-beta.11')).toBe(-1);
+    expect(compareSemver('1.0.0-1', '1.0.0-alpha')).toBe(-1);
+    expect(compareSemver('1.0.0-alpha', '1.0.0-alpha.1')).toBe(-1);
+    expect(compareSemver('1.0.0-alpha.1', '1.0.0-alpha.beta')).toBe(-1);
+    expect(compareSemver('1.0.0+build.1', '1.0.0+build.2')).toBe(0);
+    expect(compareSemver('2.1.5', '2.1.6')).toBe(-1);
+    expect(compareSemver('2.1.6', '2.1.5')).toBe(1);
+    expect(compareSemver('2.1.6', '2.1.6')).toBe(0);
+    expect(aliasCanAdvance('2.1.5', '2.1.6')).toBe(true);
+    expect(aliasCanAdvance('2.1.6', '2.1.6')).toBe(true);
+    expect(aliasCanAdvance('2.1.6', '2.1.5')).toBe(false);
+  });
+
+  it('rejects invalid versions and leading-zero numeric identifiers', () => {
+    expect(() => parseSemver('1.2')).toThrow(/invalid semantic version/);
+    expect(() => parseSemver('01.2.3')).toThrow(/invalid semantic version/);
+    expect(() => parseSemver('1.02.3')).toThrow(/invalid semantic version/);
+    expect(() => parseSemver('1.2.03')).toThrow(/invalid semantic version/);
+    expect(() => parseSemver('1.2.3-01')).toThrow(/invalid semantic version/);
+    expect(() => parseSemver('')).toThrow(/invalid semantic version/);
+    expect(() => compareSemver('1.2.3', 'not-a-version')).toThrow(/invalid semantic version/);
+  });
+
+  it('exposes alias-can-advance CLI exits 0/3/1', () => {
+    expect(cliAlias('2.1.5', '2.1.6')).toBe(0);
+    expect(cliAlias('2.1.6-beta', '2.1.6')).toBe(0);
+    expect(cliAlias('2.1.6', '2.1.6')).toBe(0);
+    expect(cliAlias('2.1.6', '2.1.6-beta')).toBe(3);
+    expect(cliAlias('2.1.6', '2.1.5')).toBe(3);
+    expect(cliAlias('2.1.6', 'not-semver')).toBe(1);
+    expect(cliAlias('01.0.0', '1.0.0')).toBe(1);
+  });
+
+  it('advances from full package SemVer 2.1.0 under zero-patch immutable tag v2.1', () => {
+    expect(classifyRelease({
+      ref: 'refs/tags/v2.1',
+      refName: 'v2.1',
+      packageVersion: '2.1.0'
+    })).toEqual({ release_kind: 'immutable', npm_publish: 'true' });
+    expect(aliasCanAdvance('2.0.9', '2.1.0')).toBe(true);
+    expect(cliAlias('2.0.9', '2.1.0')).toBe(0);
+    expect(cliAlias('2.0.9', '2.1')).toBe(1);
   });
 });
 

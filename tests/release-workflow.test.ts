@@ -36,6 +36,11 @@ describe('release workflow publishing contract', () => {
     expect(job('verify-package')).not.toContain('id-token: write');
     expect(releaseWorkflow).not.toContain('actions/setup-go');
     expect(releaseWorkflow).not.toContain('go install github.com/rhysd/actionlint');
+    expect(releaseWorkflow).toContain(
+      'https://raw.githubusercontent.com/rhysd/actionlint/393031adb9afb225ee52ae2ccd7a5af5525e03e8/scripts/download-actionlint.bash'
+    );
+    expect(releaseWorkflow.match(/393031adb9afb225ee52ae2ccd7a5af5525e03e8/)?.[0]).toHaveLength(40);
+    expect(releaseWorkflow).not.toContain('/main/scripts/download-actionlint.bash');
     expect(releaseWorkflow).toContain('download-actionlint.bash) 1.7.11 "$RUNNER_TEMP"');
     expect(releaseWorkflow).toContain('ACTIONLINT_BIN=$RUNNER_TEMP/actionlint');
   });
@@ -144,14 +149,23 @@ describe('release workflow publishing contract', () => {
   it('advances the rolling major alias fail-closed with bot identity and shallow targeted fetch', () => {
     const alias = namedStep('Advance rolling major alias monotonically');
     expect(job('advance-major-alias')).toContain('advance-major-alias:');
+    expect(alias).toContain("CANDIDATE=$(node -p \"require('./package.json').version\")");
+    expect(alias).toContain('MAJOR="v${CANDIDATE%%.*}"');
+    expect(alias).not.toContain('${GITHUB_REF_NAME#v}');
     expect(alias).toContain('git ls-remote --exit-code --tags origin "refs/tags/$MAJOR"');
     expect(alias).toContain('git fetch --depth=1 --no-tags origin "refs/tags/$MAJOR:refs/tags/$MAJOR"');
     expect(alias).not.toContain('|| true');
     expect(alias).toContain('failed to probe rolling alias');
+    expect(alias).toContain('node scripts/classify-release.mjs alias-can-advance "$CURRENT" "$CANDIDATE"');
+    expect(alias).toContain('cmp_status=$?');
+    expect(alias).toContain('[ "$cmp_status" -eq 3 ]');
     expect(alias).toContain('candidate is older than current alias; not moving alias');
+    expect(alias).toContain('failed to compare alias versions');
+    expect(alias).not.toContain('sort -V');
     expect(alias).toContain('git config user.name "github-actions[bot]"');
     expect(alias).toContain('git config user.email "41898282+github-actions[bot]@users.noreply.github.com"');
     expect(alias).toContain('git tag -fa "$MAJOR"');
+    expect(alias).toContain('Rolling $MAJOR alias -> $GITHUB_REF_NAME');
     expect(alias).toContain('git push origin "refs/tags/$MAJOR" --force');
     expect(alias).not.toMatch(/git tag -fa "\$GITHUB_REF_NAME"/);
     expect(job('advance-major-alias')).toMatch(/needs: \[classify, publish\]/);
