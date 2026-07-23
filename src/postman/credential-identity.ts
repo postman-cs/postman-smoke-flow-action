@@ -1,4 +1,5 @@
 import type { SecretMasker } from '../lib/secrets.js';
+import { inspectPmakIdentity } from '../lib/postman/pmak-diagnostics.js';
 
 export interface CredentialIdentity {
   source: 'pmak/me' | 'iapub/sessions';
@@ -235,15 +236,8 @@ async function probePmakIdentity(
   fetchImpl: typeof fetch
 ): Promise<CredentialIdentity | undefined> {
   try {
-    const response = await fetchImpl(`${baseUrl}/me`, {
-      method: 'GET',
-      headers: { 'X-Api-Key': apiKey }
-    });
-    if (!response.ok) {
-      return undefined;
-    }
-    const payload = asRecord(await response.json());
-    const user = asRecord(payload?.user);
+    const result = await inspectPmakIdentity({ apiBaseUrl: baseUrl, apiKey, fetchImpl });
+    const user = asRecord(result.payload?.user);
     if (!user) {
       return undefined;
     }

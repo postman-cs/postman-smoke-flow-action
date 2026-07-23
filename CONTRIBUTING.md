@@ -23,11 +23,12 @@ npm run build
 npm run verify:dist
 ```
 
-Then lint workflows with [`actionlint`](https://github.com/rhysd/actionlint):
+Then lint workflows with [`actionlint`](https://github.com/rhysd/actionlint) `1.7.11` via the official downloader (no Go toolchain):
 
 ```bash
-go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.11
-$(go env GOPATH)/bin/actionlint
+tmp="$(mktemp -d)"
+bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/393031adb9afb225ee52ae2ccd7a5af5525e03e8/scripts/download-actionlint.bash) 1.7.11 "$tmp"
+"$tmp/actionlint"
 ```
 
 `actionlint` runs the embedded shell scripts through `shellcheck` automatically when `shellcheck` is on `PATH`.
@@ -43,22 +44,26 @@ $(go env GOPATH)/bin/actionlint
 
 ## Live E2E Tier
 
-Ordinary PRs use the deterministic offline gate. Live sandbox coverage runs on
-immutable releases and nightly in `postman-cs/postman-actions-e2e`.
+Ordinary PRs use the deterministic offline gate. Live sandbox coverage is an
+asynchronous exact-tag smoke monitor after immutable publication, plus the
+nightly full monitor in `postman-cs/postman-actions-e2e`.
 
 ## Release Gate
 
-Immutable release tags for this repo are blocked by the central live e2e suite in
-`postman-cs/postman-actions-e2e` before any GitHub release, npm package, or
-release tarball is published. The release workflow validates locally, dispatches
-the e2e workflow with this exact tag pinned for `postman-smoke-flow-action`,
-waits for the correlated run to succeed, and only then publishes.
+Immutable release tags for this repo publish after local validate succeeds
+(deterministic tests, typecheck, dist verify, actionlint, and tag/version
+checks). After immutable publication, the release workflow dispatches an
+asynchronous smoke E2E monitor in `postman-cs/postman-actions-e2e` with this
+exact tag pinned for `postman-smoke-flow-action`. That dispatch is
+`continue-on-error`; missing/denied dispatch or a later monitor failure does not
+roll back or block published artifacts.
 
-The rolling `v1` alias validates locally but skips npm publish
-and the live e2e gate. `E2E_DISPATCH_TOKEN` is release-critical for immutable
-publishing tags; if it is missing, invalid, or the e2e fails/times out, the
-release must stop before public artifacts are created. Record the e2e run URL
-and conclusion from the release logs as release evidence.
+The rolling `v1` alias validates locally but skips npm publish and the live e2e
+monitor dispatch. `E2E_DISPATCH_TOKEN` powers the post-publish smoke monitor for
+immutable publishing tags; record the dispatch notice from the release logs as
+monitor evidence. The nightly full monitor remains in
+`postman-cs/postman-actions-e2e`.
+
 
 ## Commit Messages
 
@@ -80,7 +85,7 @@ This project uses [Conventional Commits](https://www.conventionalcommits.org/en/
 feat: support additional smoke flow assertions
 fix: preserve request auth when applying flow.yaml
 docs: clarify smoke collection inputs
-ci: block release on live e2e gate
+ci: dispatch post-release smoke monitor asynchronously
 ```
 
 ## Reporting Issues
