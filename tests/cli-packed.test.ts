@@ -21,8 +21,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+/** Node's script runner (`node --run`) does not set npm_execpath; use the npm CLI next to the active node. */
+const bundledNpmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+
+function resolveWindowsNpmCli(npmExecPath: string | undefined): string {
+  return npmExecPath || bundledNpmCli;
+}
+
 const npmCommand = process.platform === 'win32' ? process.execPath : 'npm';
-const npmCliArgs = process.platform === 'win32' ? [process.env.npm_execpath || ''] : [];
+const npmCliArgs = process.platform === 'win32' ? [resolveWindowsNpmCli(process.env.npm_execpath)] : [];
 const distCli = path.join(repoRoot, 'dist', 'cli.cjs');
 const packagingSource = readFileSync(fileURLToPath(import.meta.url), 'utf8');
 const tempDirs: string[] = [];
@@ -498,6 +505,27 @@ describe('packed CLI executable', () => {
     expect(resolvePackStrategy('darwin')).toBe('posix-install');
     expect(resolvePackStrategy('win32')).toBe('win32-native-shim');
     expect(resolvePackStrategy()).toBe(process.platform === 'win32' ? 'win32-native-shim' : 'posix-install');
+  });
+
+  it('never plans an empty Windows npm CLI path under node --run', () => {
+    // node --run leaves npm_execpath unset; empty string must also fall back.
+    const absent = resolveWindowsNpmCli(undefined);
+    const empty = resolveWindowsNpmCli('');
+    expect(absent).toBe(bundledNpmCli);
+    expect(empty).toBe(bundledNpmCli);
+    expect(absent.length).toBeGreaterThan(0);
+    expect(resolveWindowsNpmCli('/custom/npm/bin/npm-cli.js')).toBe('/custom/npm/bin/npm-cli.js');
+
+    // Live packaging argv used by execFile/spawn planning must never carry ''.
+    expect(npmCliArgs).not.toContain('');
+    expect(npmCliArgs.every((arg) => arg.length > 0)).toBe(true);
+    if (process.platform === 'win32') {
+      expect(npmCliArgs).toEqual([resolveWindowsNpmCli(process.env.npm_execpath)]);
+      expect(npmCliArgs[0]).toBe(process.env.npm_execpath || bundledNpmCli);
+    } else {
+      expect(npmCliArgs).toEqual([]);
+      expect(npmCommand).toBe('npm');
+    }
   });
 
   it(
