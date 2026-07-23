@@ -4492,7 +4492,7 @@ var require_webidl = __commonJS({
   "node_modules/undici/lib/web/webidl/index.js"(exports2, module2) {
     "use strict";
     var assert = require("node:assert");
-    var { types, inspect } = require("node:util");
+    var { types, inspect: inspect2 } = require("node:util");
     var { markAsUncloneable } = require("node:worker_threads");
     var UNDEFINED = 1;
     var BOOLEAN = 2;
@@ -4683,7 +4683,7 @@ var require_webidl = __commonJS({
         case SYMBOL:
           return `Symbol(${V.description})`;
         case OBJECT:
-          return inspect(V);
+          return inspect2(V);
         case STRING:
           return `"${V}"`;
         case BIGINT:
@@ -37395,16 +37395,124 @@ var POSTMAN_ENDPOINT_PROFILES = {
   }
 };
 
+// src/lib/retry.ts
+function sleep(delayMs) {
+  return new Promise((resolve2) => {
+    setTimeout(resolve2, delayMs);
+  });
+}
+function fullJitterDelayMs(attempt, baseDelayMs = 400, maxDelayMs = 5e3, random = Math.random) {
+  const ceiling = Math.min(maxDelayMs, baseDelayMs * 2 ** Math.max(0, attempt));
+  return Math.round(random() * ceiling);
+}
+function parseRetryAfterMs(value, now = Date.now()) {
+  const trimmed = value?.trim();
+  if (!trimmed) return void 0;
+  if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1e3;
+  const date = Date.parse(trimmed);
+  return Number.isNaN(date) ? void 0 : Math.max(0, date - now);
+}
+function normalizeRetryOptions(options) {
+  return {
+    maxAttempts: Math.max(1, options.maxAttempts ?? 3),
+    delayMs: Math.max(0, options.delayMs ?? 2e3),
+    backoffMultiplier: Math.max(1, options.backoffMultiplier ?? 1),
+    maxDelayMs: options.maxDelayMs === void 0 ? Number.POSITIVE_INFINITY : Math.max(0, options.maxDelayMs),
+    onRetry: options.onRetry ?? (async () => void 0),
+    shouldRetry: options.shouldRetry ?? (() => true),
+    sleep: options.sleep ?? sleep
+  };
+}
+async function retry(operation, options = {}) {
+  const normalized = normalizeRetryOptions(options);
+  let nextDelayMs = normalized.delayMs;
+  for (let attempt = 1; attempt <= normalized.maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error2) {
+      const shouldRetry = attempt < normalized.maxAttempts && normalized.shouldRetry(error2, {
+        attempt,
+        maxAttempts: normalized.maxAttempts
+      });
+      if (!shouldRetry) {
+        throw error2;
+      }
+      await normalized.onRetry({
+        attempt,
+        maxAttempts: normalized.maxAttempts,
+        delayMs: nextDelayMs,
+        error: error2
+      });
+      await normalized.sleep(nextDelayMs);
+      nextDelayMs = Math.min(
+        normalized.maxDelayMs,
+        Math.round(nextDelayMs * normalized.backoffMultiplier)
+      );
+    }
+  }
+  throw new Error("Retry exhausted without returning or throwing");
+}
+
+// src/lib/postman/app-version.ts
+var UPDATE_URL = "https://dl.pstmn.io/update/status?currentVersion=12.0.0&platform=osx_arm64";
+var FLOOR_VERSION = "12.0.0";
+var VERSION_RE = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+var PostmanAppVersionProvider = class {
+  fetchImpl;
+  requestTimeoutMs;
+  memo;
+  constructor(options = {}) {
+    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.requestTimeoutMs = Math.max(1, options.requestTimeoutMs ?? 2e3);
+  }
+  resolve() {
+    if (process.env.POSTMAN_GATEWAY_APP_VERSION === "off") return Promise.resolve(void 0);
+    this.memo ??= this.lookup();
+    return this.memo;
+  }
+  async lookup() {
+    try {
+      const response = await this.fetchImpl(UPDATE_URL, { signal: AbortSignal.timeout(this.requestTimeoutMs) });
+      if (!response.ok) return FLOOR_VERSION;
+      const body = await response.json();
+      const version = typeof body?.version === "string" ? body.version : "";
+      return VERSION_RE.test(version) && !/[\u0000-\u001f\u007f-\u009f]/.test(version) ? version : FLOOR_VERSION;
+    } catch {
+      return FLOOR_VERSION;
+    }
+  }
+};
+var defaultProvider = new PostmanAppVersionProvider();
+function getPostmanAppVersionProvider() {
+  return defaultProvider;
+}
+
 // src/lib/postman/gateway-client.ts
 function isExpiredAuthError(status, body) {
   return status === 401 || body.includes("UNAUTHENTICATED") || body.includes("authenticationError");
 }
 function isTransientGatewayError(status, body) {
-  void body;
-  return status === 408 || status === 429 || status >= 500;
+  return status === 429 || status === 502 || status === 503 || status === 504 || status >= 500 && /ESOCKETTIMEDOUT|ETIMEDOUT|ECONNRESET|serverError|downstream/i.test(body);
 }
 function defaultSleep(ms) {
   return new Promise((resolve2) => setTimeout(resolve2, ms));
+}
+function extractInnerStatus(body) {
+  try {
+    const payload = JSON.parse(body);
+    const error2 = payload.error;
+    const source = error2 && typeof error2 === "object" ? error2 : payload;
+    const raw = source.status ?? source.statusCode ?? payload.status ?? payload.statusCode;
+    const status = typeof raw === "number" ? raw : Number(raw);
+    if (source.success === false || payload.success === false) return Number.isFinite(status) ? status : 500;
+    if (Number.isFinite(status) && status >= 400) return status;
+    if (error2 !== void 0) {
+      return /UNAUTHENTICATED|authenticationError/i.test(body) ? 401 : 500;
+    }
+    return void 0;
+  } catch {
+    return void 0;
+  }
 }
 var AccessTokenGatewayClient = class {
   tokenProvider;
@@ -37416,6 +37524,8 @@ var AccessTokenGatewayClient = class {
   maxRetries;
   retryBaseDelayMs;
   sleepImpl;
+  randomImpl;
+  appVersionProvider;
   constructor(options) {
     this.tokenProvider = options.tokenProvider;
     this.bifrostBaseUrl = String(
@@ -37428,17 +37538,21 @@ var AccessTokenGatewayClient = class {
     this.maxRetries = options.maxRetries ?? 3;
     this.retryBaseDelayMs = options.retryBaseDelayMs ?? 400;
     this.sleepImpl = options.sleepImpl ?? defaultSleep;
+    this.randomImpl = options.randomImpl ?? Math.random;
+    this.appVersionProvider = options.appVersionProvider ?? getPostmanAppVersionProvider();
   }
   configureTeamContext(teamId, orgMode) {
     this.teamId = String(teamId || "").trim();
     this.orgMode = orgMode;
   }
-  buildHeaders(extra) {
+  async buildHeaders(extra) {
     const headers = {
       "Content-Type": "application/json",
-      "x-access-token": this.tokenProvider.current(),
       ...extra || {}
     };
+    headers["x-access-token"] = this.tokenProvider.current();
+    const appVersion = await this.appVersionProvider.resolve();
+    if (appVersion) headers["x-app-version"] = appVersion;
     if (this.teamId && this.orgMode) {
       headers["x-entity-team-id"] = this.teamId;
     }
@@ -37446,17 +37560,24 @@ var AccessTokenGatewayClient = class {
   }
   async send(request) {
     const url = `${this.bifrostBaseUrl}/ws/proxy`;
-    return this.fetchImpl(url, {
-      method: "POST",
-      headers: this.buildHeaders(request.headers),
-      body: JSON.stringify({
-        service: request.service,
-        method: request.method,
-        path: request.path,
-        ...request.query !== void 0 ? { query: request.query } : {},
-        ...request.body !== void 0 ? { body: request.body } : {}
-      })
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3e4);
+    try {
+      return await this.fetchImpl(url, {
+        method: "POST",
+        headers: await this.buildHeaders(request.headers),
+        signal: controller.signal,
+        body: JSON.stringify({
+          service: request.service,
+          method: request.method,
+          path: request.path,
+          ...request.query !== void 0 ? { query: request.query } : {},
+          ...request.body !== void 0 ? { body: request.body } : {}
+        })
+      });
+    } finally {
+      clearTimeout(timer);
+    }
   }
   /**
    * Send a gateway request, refreshing the token once after a definitive auth
@@ -37473,31 +37594,31 @@ var AccessTokenGatewayClient = class {
         response = await this.send(request);
       } catch (error2) {
         if (attempt >= maxRetries) throw error2;
-        const delay = this.retryBaseDelayMs * 2 ** attempt;
+        const delay = fullJitterDelayMs(attempt, this.retryBaseDelayMs, 5e3, this.randomImpl);
         attempt += 1;
         await this.sleepImpl(delay);
         continue;
       }
-      if (response.ok) {
-        return response;
-      }
-      const body = await response.text().catch(() => "");
-      if (isExpiredAuthError(response.status, body) && this.tokenProvider.canRefresh()) {
+      const body = await response.clone().text().catch(() => "");
+      const innerStatus = response.ok ? extractInnerStatus(body) : void 0;
+      const status = innerStatus ?? response.status;
+      if (response.ok && innerStatus === void 0) return response;
+      if (isExpiredAuthError(status, body) && this.tokenProvider.canRefresh()) {
         await this.tokenProvider.refresh();
         response = await this.send(request);
-        if (response.ok) {
-          return response;
-        }
-        const retryBody = await response.text().catch(() => "");
-        throw this.toHttpError(request, response, retryBody);
+        const retryBody = await response.clone().text().catch(() => "");
+        const retryInnerStatus = response.ok ? extractInnerStatus(retryBody) : void 0;
+        if (response.ok && retryInnerStatus === void 0) return response;
+        throw this.toHttpError(request, response, retryBody, retryInnerStatus);
       }
-      if (isTransientGatewayError(response.status, body) && attempt < maxRetries) {
-        const delay = this.retryBaseDelayMs * 2 ** attempt;
+      if (isTransientGatewayError(status, body) && attempt < maxRetries) {
+        const retryAfter = parseRetryAfterMs(response.headers.get("retry-after"));
+        const delay = retryAfter === void 0 ? fullJitterDelayMs(attempt, this.retryBaseDelayMs, 5e3, this.randomImpl) : Math.min(5e3, retryAfter);
         attempt += 1;
         await this.sleepImpl(delay);
         continue;
       }
-      throw this.toHttpError(request, response, body);
+      throw this.toHttpError(request, response, body, innerStatus);
     }
   }
   /** Send a gateway request and parse the JSON body, or null when empty. */
@@ -37513,13 +37634,13 @@ var AccessTokenGatewayClient = class {
       return null;
     }
   }
-  toHttpError(request, response, body) {
+  toHttpError(request, response, body, effectiveStatus) {
     return new HttpError({
       method: request.method.toUpperCase(),
       url: `${this.bifrostBaseUrl}/ws/proxy (${request.service}: ${request.method} ${request.path})`,
-      status: response.status,
+      status: effectiveStatus ?? response.status,
       statusText: response.statusText,
-      requestHeaders: this.buildHeaders(request.headers),
+      requestHeaders: { "Content-Type": "application/json", "x-access-token": this.tokenProvider.current() },
       responseBody: this.secretMasker(body),
       secretValues: [this.tokenProvider.current()]
     });
@@ -37542,7 +37663,7 @@ function bareModelId(uid) {
 function collectionItemsId(uid) {
   return String(uid ?? "").trim();
 }
-function sleep(ms) {
+function sleep2(ms) {
   return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
 function isAmbiguousCreateError(error2) {
@@ -37684,8 +37805,10 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
   static GENERATION_LOCKED_MAX_RETRIES = 5;
   static GENERATION_POLL_ATTEMPTS = 90;
   static GENERATION_POLL_DELAY_MS = 2e3;
+  static GENERATION_POLL_TIMEOUT_MS = 18e4;
   gateway;
   sleepImpl;
+  now;
   workspaceId;
   runIdentity;
   warning;
@@ -37701,9 +37824,11 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
       ...options.orgMode !== void 0 ? { orgMode: options.orgMode } : {},
       ...options.fetchImpl ? { fetchImpl: options.fetchImpl } : {},
       ...options.sleepImpl ? { sleepImpl: options.sleepImpl } : {},
+      ...options.appVersionProvider ? { appVersionProvider: options.appVersionProvider } : {},
       secretMasker: this.secretMasker
     });
-    this.sleepImpl = options.sleepImpl ?? sleep;
+    this.sleepImpl = options.sleepImpl ?? sleep2;
+    this.now = options.now ?? Date.now;
     const workspaceId = String(options.workspaceId ?? "").trim();
     this.workspaceId = workspaceId || void 0;
     const runIdentity = String(options.runIdentity ?? "").trim();
@@ -37728,8 +37853,15 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
       return reconciled;
     }
     if (taskId) {
+      const startedAt = this.now();
       for (let attempt = 0; attempt < _PostmanGatewaySmokeClient.GENERATION_POLL_ATTEMPTS; attempt += 1) {
-        await this.sleepImpl(_PostmanGatewaySmokeClient.GENERATION_POLL_DELAY_MS);
+        const fixed = process.env.POSTMAN_GENERATION_POLL_MODE === "fixed";
+        const delay = fixed ? _PostmanGatewaySmokeClient.GENERATION_POLL_DELAY_MS : Math.min(16e3, 2e3 * 2 ** attempt);
+        const remaining = _PostmanGatewaySmokeClient.GENERATION_POLL_TIMEOUT_MS - (this.now() - startedAt);
+        if (remaining <= 0) {
+          throw new Error(`COLLECTION_GENERATION_TIMEOUT: Collection generation timed out for spec ${specId} task ${taskId}.`);
+        }
+        await this.sleepImpl(Math.min(delay, remaining));
         const task = await this.gateway.requestJson({
           service: "specification",
           method: "get",
@@ -37739,15 +37871,15 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         const status = String(asRecord3(task?.data)?.[taskId] ?? "").toLowerCase();
         if (status === "failed" || status === "error") {
           throw new Error(
-            `Collection generation task failed for spec ${specId} task ${taskId} (status=${status}). Inspect the spec generation/task state and permissions, then rerun.`
+            `COLLECTION_GENERATION_TASK_FAILED: Collection generation task failed for spec ${specId} task ${taskId} (status=${status}). Inspect the spec generation/task state and permissions, then rerun.`
           );
         }
         if (status && status !== "in-progress" && status !== "pending" && status !== "queued") {
           break;
         }
-        if (attempt === _PostmanGatewaySmokeClient.GENERATION_POLL_ATTEMPTS - 1) {
+        if (this.now() - startedAt >= _PostmanGatewaySmokeClient.GENERATION_POLL_TIMEOUT_MS || attempt === _PostmanGatewaySmokeClient.GENERATION_POLL_ATTEMPTS - 1) {
           throw new Error(
-            `Collection generation timed out for spec ${specId} task ${taskId}. Inspect the spec generation/task state and permissions, then rerun.`
+            `COLLECTION_GENERATION_TIMEOUT: Collection generation timed out for spec ${specId} task ${taskId}. Inspect the spec generation/task state and permissions, then rerun.`
           );
         }
       }
@@ -38311,60 +38443,85 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
   }
 };
 
-// src/lib/retry.ts
-function sleep2(delayMs) {
-  return new Promise((resolve2) => {
-    setTimeout(resolve2, delayMs);
-  });
+// src/lib/postman/pmak-diagnostics.ts
+var memo = /* @__PURE__ */ new Map();
+function normalizedBase(apiBaseUrl) {
+  return new URL(apiBaseUrl.trim()).toString().replace(/\/+$/, "");
 }
-function normalizeRetryOptions(options) {
-  return {
-    maxAttempts: Math.max(1, options.maxAttempts ?? 3),
-    delayMs: Math.max(0, options.delayMs ?? 2e3),
-    backoffMultiplier: Math.max(1, options.backoffMultiplier ?? 1),
-    maxDelayMs: options.maxDelayMs === void 0 ? Number.POSITIVE_INFINITY : Math.max(0, options.maxDelayMs),
-    onRetry: options.onRetry ?? (async () => void 0),
-    shouldRetry: options.shouldRetry ?? (() => true),
-    sleep: options.sleep ?? sleep2
-  };
+function asRecord4(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
 }
-async function retry(operation, options = {}) {
-  const normalized = normalizeRetryOptions(options);
-  let nextDelayMs = normalized.delayMs;
-  for (let attempt = 1; attempt <= normalized.maxAttempts; attempt += 1) {
-    try {
-      return await operation();
-    } catch (error2) {
-      const shouldRetry = attempt < normalized.maxAttempts && normalized.shouldRetry(error2, {
-        attempt,
-        maxAttempts: normalized.maxAttempts
+function maskPmakDiagnostic(message, secrets) {
+  let masked = String(message);
+  for (const secret of secrets) {
+    if (secret) masked = masked.split(secret).join("***");
+  }
+  return masked.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
+}
+async function inspectPmakIdentity(options) {
+  const base = normalizedBase(options.apiBaseUrl);
+  const key = `${base}\0${options.apiKey}`;
+  let pending = memo.get(key);
+  if (!pending) {
+    pending = inspect(base, options);
+    memo.set(key, pending);
+    if (options.mode === "preflight") {
+      void pending.then((result) => {
+        if (result.kind === "inconclusive") memo.delete(key);
       });
-      if (!shouldRetry) {
-        throw error2;
-      }
-      await normalized.onRetry({
-        attempt,
-        maxAttempts: normalized.maxAttempts,
-        delayMs: nextDelayMs,
-        error: error2
-      });
-      await normalized.sleep(nextDelayMs);
-      nextDelayMs = Math.min(
-        normalized.maxDelayMs,
-        Math.round(nextDelayMs * normalized.backoffMultiplier)
-      );
     }
   }
-  throw new Error("Retry exhausted without returning or throwing");
+  return pending;
+}
+async function inspect(base, options) {
+  const timeout = AbortSignal.timeout(Math.max(1, options.timeoutMs ?? 2e3));
+  const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+  try {
+    const response = await (options.fetchImpl ?? fetch)(`${base}/me`, {
+      method: "GET",
+      headers: { "x-api-key": options.apiKey },
+      signal
+    });
+    if (response.status === 401 || response.status === 403) return { kind: "invalid", status: response.status };
+    if (!response.ok) return { kind: "inconclusive", status: response.status };
+    const payload = asRecord4(await response.json().catch(() => void 0));
+    const user = asRecord4(payload?.user);
+    if (!user) return { kind: "inconclusive", status: response.status };
+    const username = user.username;
+    const email = user.email;
+    if (typeof username === "string" && username.trim() || typeof email === "string" && email.trim()) {
+      return { kind: "personal", status: response.status, payload };
+    }
+    if ((username === null || username === "") && (email === null || email === "")) {
+      return { kind: "service-account", status: response.status, payload };
+    }
+    return { kind: "inconclusive", status: response.status };
+  } catch {
+    return { kind: "inconclusive" };
+  }
+}
+function formatRejectedMint(originalMintError, result) {
+  switch (result.kind) {
+    case "personal":
+      return "Personal API key detected, cannot mint a service-account access token. Create a service-account PMAK or pass a pre-minted postman-access-token.";
+    case "service-account":
+      return "The postman-api-key authenticates (GET /me OK) but was rejected by POST /service-account-tokens and lacks permission to mint access tokens. Check the service account role or pass a pre-minted postman-access-token.";
+    case "invalid":
+      return "The postman-api-key is invalid, disabled, or expired. Generate a fresh service-account PMAK in Team Settings and update the secret.";
+    default:
+      return originalMintError;
+  }
 }
 
 // src/lib/postman/token-provider.ts
 var MintError = class extends Error {
   permanent;
-  constructor(message, permanent) {
+  status;
+  constructor(message, permanent, status) {
     super(message);
     this.name = "MintError";
     this.permanent = permanent;
+    this.status = status;
   }
 };
 function extractAccessToken(payload) {
@@ -38418,13 +38575,30 @@ var AccessTokenProvider = class {
         "postman: the access token expired and cannot be refreshed because no postman-api-key is present. Service-account access tokens expire after about 1 to 1.5 hours. Re-mint a fresh token (postman-resolve-service-token-action) and re-run."
       );
     }
-    const token = await retry(() => this.mintOnce(), {
-      maxAttempts: this.maxAttempts,
-      delayMs: 1e3,
-      backoffMultiplier: 2,
-      ...this.sleep ? { sleep: this.sleep } : {},
-      shouldRetry: (error2) => !(error2 instanceof MintError && error2.permanent)
-    });
+    let token;
+    try {
+      token = await retry(() => this.mintOnce(), {
+        maxAttempts: this.maxAttempts,
+        delayMs: 1e3,
+        backoffMultiplier: 2,
+        ...this.sleep ? { sleep: this.sleep } : {},
+        shouldRetry: (error2) => !(error2 instanceof MintError && error2.permanent)
+      });
+    } catch (error2) {
+      if (error2 instanceof MintError && (error2.status === 401 || error2.status === 403)) {
+        const raw = maskPmakDiagnostic(error2.message, [this.apiKey, this.token]);
+        const result = await inspectPmakIdentity({
+          apiBaseUrl: this.apiBaseUrl,
+          apiKey: this.apiKey,
+          fetchImpl: this.fetchImpl
+        });
+        throw new MintError(formatRejectedMint(raw, result), error2.permanent, error2.status);
+      }
+      throw new Error(
+        maskPmakDiagnostic(error2 instanceof Error ? error2.message : String(error2), [this.apiKey, this.token]),
+        { cause: error2 }
+      );
+    }
     this.token = token;
     this.onToken?.(token);
     return token;
@@ -38444,7 +38618,8 @@ var AccessTokenProvider = class {
       if (status === 401 || status === 403) {
         throw new MintError(
           `postman: re-mint failed because the postman-api-key was rejected (PMAK rejected, HTTP ${status}); confirm it is a valid, enabled service-account PMAK for the intended team.`,
-          true
+          true,
+          status
         );
       }
       if (status === 400 && body.toLowerCase().includes("service accounts not enabled")) {
@@ -38453,7 +38628,7 @@ var AccessTokenProvider = class {
           true
         );
       }
-      throw new MintError(`postman: re-mint failed (service-account-tokens HTTP ${status}).`, false);
+      throw new MintError(`postman: re-mint failed (service-account-tokens HTTP ${status}).`, false, status);
     }
     let parsed;
     try {
@@ -38469,26 +38644,10 @@ var AccessTokenProvider = class {
   }
 };
 async function describeMintFailure(mintError, apiKey, apiBaseUrl, fetchImpl) {
-  const raw = mintError instanceof Error ? mintError.message : String(mintError);
-  const rejected = /HTTP 40[13]|PMAK rejected/.test(raw);
-  if (!rejected) {
-    return raw;
-  }
-  try {
-    const me = await fetchImpl(`${apiBaseUrl}/me`, { headers: { "x-api-key": apiKey } });
-    if (me.ok) {
-      const body = await me.json().catch(() => void 0);
-      const user = body?.user;
-      const looksPersonal = Boolean(user && (user.username || user.email));
-      if (looksPersonal) {
-        return "Personal API key detected, cannot mint a service-account access token. POST /service-account-tokens only accepts a SERVICE-ACCOUNT API key; this postman-api-key belongs to a user account" + (user?.teamId ? ` (team ${user.teamId})` : "") + ". Create a service account in Team Settings and use its PMAK, or mint the token elsewhere and pass postman-access-token.";
-      }
-      return "The postman-api-key authenticates (GET /me OK) but was rejected by POST /service-account-tokens" + (user?.teamId ? ` (team ${user.teamId})` : "") + ". The service account likely lacks permission to mint access tokens, or service accounts are restricted for this team. Check the service account role in Team Settings, or pass a pre-minted postman-access-token.";
-    }
-    return "The postman-api-key is invalid, disabled, or expired (rejected by both POST /service-account-tokens and GET /me). Generate a fresh service-account PMAK in Team Settings and update the secret.";
-  } catch {
-    return raw;
-  }
+  const raw = maskPmakDiagnostic(mintError instanceof Error ? mintError.message : String(mintError), [apiKey]);
+  if (!(mintError instanceof MintError) || mintError.status !== 401 && mintError.status !== 403) return raw;
+  const result = await inspectPmakIdentity({ apiBaseUrl, apiKey, fetchImpl });
+  return formatRejectedMint(raw, result);
 }
 async function mintAccessTokenIfNeeded(inputs, log, setSecret2, fetchImpl = fetch) {
   if (inputs.postmanAccessToken || !inputs.postmanApiKey) {
@@ -38531,7 +38690,7 @@ function defaultSessionSleep(ms) {
 function defaultRandom() {
   return Math.random();
 }
-function parseRetryAfterMs(value) {
+function parseRetryAfterMs2(value) {
   const trimmed = value?.trim();
   if (!trimmed) {
     return void 0;
@@ -38559,7 +38718,7 @@ function parseRateLimitResetMs(value) {
 }
 function computeSessionRetryDelayMs(response, attempt, random) {
   const headers = response?.headers;
-  const signal = parseRetryAfterMs(headers?.get("retry-after") ?? null) ?? parseRateLimitResetMs(
+  const signal = parseRetryAfterMs2(headers?.get("retry-after") ?? null) ?? parseRateLimitResetMs(
     headers?.get("ratelimit-reset") ?? headers?.get("x-ratelimit-reset") ?? null
   );
   if (signal !== void 0) {
@@ -38574,7 +38733,7 @@ function getMemoizedSessionIdentity() {
 function getSessionResolutionFailure() {
   return memoizedSessionFailure;
 }
-function asRecord4(value) {
+function asRecord5(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return void 0;
   }
@@ -38609,15 +38768,8 @@ async function resolvePmakIdentity(opts) {
 }
 async function probePmakIdentity(baseUrl, apiKey, fetchImpl) {
   try {
-    const response = await fetchImpl(`${baseUrl}/me`, {
-      method: "GET",
-      headers: { "X-Api-Key": apiKey }
-    });
-    if (!response.ok) {
-      return void 0;
-    }
-    const payload = asRecord4(await response.json());
-    const user = asRecord4(payload?.user);
+    const result = await inspectPmakIdentity({ apiBaseUrl: baseUrl, apiKey, fetchImpl });
+    const user = asRecord5(result.payload?.user);
     if (!user) {
       return void 0;
     }
@@ -38657,17 +38809,17 @@ async function resolveSessionIdentity(opts) {
 async function parseSessionResponse(response) {
   let payload;
   try {
-    payload = asRecord4(await response.json());
+    payload = asRecord5(await response.json());
   } catch {
     return void 0;
   }
   if (!payload) {
     return void 0;
   }
-  const root = asRecord4(payload.session) ?? payload;
-  const identity = asRecord4(root.identity);
-  const data = asRecord4(root.data);
-  const user = asRecord4(data?.user);
+  const root = asRecord5(payload.session) ?? payload;
+  const identity = asRecord5(root.identity);
+  const data = asRecord5(root.data);
+  const user = asRecord5(data?.user);
   const roleEntries = Array.isArray(user?.roles) ? user.roles.map((entry) => coerceText(entry) ?? coerceId(entry)).filter((entry) => Boolean(entry)) : [];
   const singleRole = coerceText(user?.role);
   const roles = roleEntries.length > 0 ? roleEntries : singleRole ? [singleRole] : void 0;

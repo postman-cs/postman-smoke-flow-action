@@ -24,6 +24,19 @@ export function sleep(delayMs: number): Promise<void> {
   });
 }
 
+export function fullJitterDelayMs(attempt: number, baseDelayMs = 400, maxDelayMs = 5000, random = Math.random): number {
+  const ceiling = Math.min(maxDelayMs, baseDelayMs * 2 ** Math.max(0, attempt));
+  return Math.round(random() * ceiling);
+}
+
+export function parseRetryAfterMs(value: string | null, now = Date.now()): number | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1000;
+  const date = Date.parse(trimmed);
+  return Number.isNaN(date) ? undefined : Math.max(0, date - now);
+}
+
 function normalizeRetryOptions(options: RetryOptions): Required<RetryOptions> {
   return {
     maxAttempts: Math.max(1, options.maxAttempts ?? 3),

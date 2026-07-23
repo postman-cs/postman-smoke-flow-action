@@ -99,7 +99,8 @@ describe('mintAccessTokenIfNeeded (PMAK-only eager mint)', () => {
     expect(inputs.postmanAccessToken).toBe('');
     const warned = String(log.warning.mock.calls[0]?.[0] ?? '');
     expect(warned).toContain('Personal API key detected, cannot mint a service-account access token');
-    expect(warned).toContain('team 13347347');
+    expect(warned).not.toContain('jane-doe');
+    expect(warned).not.toContain('jane@example.com');
     expect(warned).not.toContain('PMAK-personal');
   });
 
@@ -122,7 +123,7 @@ describe('mintAccessTokenIfNeeded (PMAK-only eager mint)', () => {
 
     const warned = String(log.warning.mock.calls[0]?.[0] ?? '');
     expect(warned).toContain('lacks permission to mint access tokens');
-    expect(warned).toContain('team 10490519');
+    expect(warned).not.toContain('PMAK-svc-limited');
   });
 
   it('names an invalid key when both the mint and /me reject it', async () => {

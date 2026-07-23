@@ -2,6 +2,7 @@ import { HttpError } from '../lib/http-error.js';
 import { summarizeError } from '../lib/logging.js';
 import { AccessTokenGatewayClient } from '../lib/postman/gateway-client.js';
 import type { AccessTokenProvider } from '../lib/postman/token-provider.js';
+import type { PostmanAppVersionProvider } from '../lib/postman/app-version.js';
 import { createSecretMasker, type SecretMasker } from '../lib/secrets.js';
 
 type JsonRecord = Record<string, unknown>;
@@ -262,6 +263,8 @@ export interface PostmanGatewaySmokeClientOptions {
   orgMode?: boolean;
   fetchImpl?: typeof fetch;
   sleepImpl?: (ms: number) => Promise<void>;
+  now?: () => number;
+  appVersionProvider?: PostmanAppVersionProvider;
   /** Workspace that must own the canonical collection before any mutate. */
   workspaceId?: string;
   /**
@@ -299,9 +302,11 @@ export class PostmanGatewaySmokeClient {
   private static readonly GENERATION_LOCKED_MAX_RETRIES = 5;
   private static readonly GENERATION_POLL_ATTEMPTS = 90;
   private static readonly GENERATION_POLL_DELAY_MS = 2000;
+  private static readonly GENERATION_POLL_TIMEOUT_MS = 180000;
 
   private readonly gateway: AccessTokenGatewayClient;
   private readonly sleepImpl: (ms: number) => Promise<void>;
+  private readonly now: () => number;
   private readonly workspaceId?: string;
   private readonly runIdentity?: string;
   private readonly warning?: (message: string) => void;
@@ -318,10 +323,12 @@ export class PostmanGatewaySmokeClient {
       ...(options.teamId ? { teamId: options.teamId } : {}),
       ...(options.orgMode !== undefined ? { orgMode: options.orgMode } : {}),
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-      ...(options.sleepImpl ? { sleepImpl: options.sleepImpl } : {}),
+       ...(options.sleepImpl ? { sleepImpl: options.sleepImpl } : {}),
+       ...(options.appVersionProvider ? { appVersionProvider: options.appVersionProvider } : {}),
       secretMasker: this.secretMasker
     });
     this.sleepImpl = options.sleepImpl ?? sleep;
+    this.now = options.now ?? Date.now;
     const workspaceId = String(options.workspaceId ?? '').trim();
     this.workspaceId = workspaceId || undefined;
     const runIdentity = String(options.runIdentity ?? '').trim();
@@ -349,8 +356,17 @@ export class PostmanGatewaySmokeClient {
     }
 
     if (taskId) {
+      const startedAt = this.now();
       for (let attempt = 0; attempt < PostmanGatewaySmokeClient.GENERATION_POLL_ATTEMPTS; attempt += 1) {
-        await this.sleepImpl(PostmanGatewaySmokeClient.GENERATION_POLL_DELAY_MS);
+        const fixed = process.env.POSTMAN_GENERATION_POLL_MODE === 'fixed';
+        const delay = fixed
+          ? PostmanGatewaySmokeClient.GENERATION_POLL_DELAY_MS
+          : Math.min(16000, 2000 * 2 ** attempt);
+        const remaining = PostmanGatewaySmokeClient.GENERATION_POLL_TIMEOUT_MS - (this.now() - startedAt);
+        if (remaining <= 0) {
+          throw new Error(`COLLECTION_GENERATION_TIMEOUT: Collection generation timed out for spec ${specId} task ${taskId}.`);
+        }
+        await this.sleepImpl(Math.min(delay, remaining));
         const task = await this.gateway.requestJson<JsonRecord>({
           service: 'specification',
           method: 'get',
@@ -360,15 +376,15 @@ export class PostmanGatewaySmokeClient {
         const status = String(asRecord(task?.data)?.[taskId] ?? '').toLowerCase();
         if (status === 'failed' || status === 'error') {
           throw new Error(
-            `Collection generation task failed for spec ${specId} task ${taskId} (status=${status}). Inspect the spec generation/task state and permissions, then rerun.`
+            `COLLECTION_GENERATION_TASK_FAILED: Collection generation task failed for spec ${specId} task ${taskId} (status=${status}). Inspect the spec generation/task state and permissions, then rerun.`
           );
         }
         if (status && status !== 'in-progress' && status !== 'pending' && status !== 'queued') {
           break;
         }
-        if (attempt === PostmanGatewaySmokeClient.GENERATION_POLL_ATTEMPTS - 1) {
+        if (this.now() - startedAt >= PostmanGatewaySmokeClient.GENERATION_POLL_TIMEOUT_MS || attempt === PostmanGatewaySmokeClient.GENERATION_POLL_ATTEMPTS - 1) {
           throw new Error(
-            `Collection generation timed out for spec ${specId} task ${taskId}. Inspect the spec generation/task state and permissions, then rerun.`
+            `COLLECTION_GENERATION_TIMEOUT: Collection generation timed out for spec ${specId} task ${taskId}. Inspect the spec generation/task state and permissions, then rerun.`
           );
         }
       }

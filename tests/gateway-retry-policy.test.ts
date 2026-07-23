@@ -44,4 +44,15 @@ describe('gateway retry policy', () => {
     expect(attempts).toBe(1);
     expect(sleep).not.toHaveBeenCalled();
   });
+
+  it('classifies a 200 inner error envelope as a failure instead of returning it as success', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      error: { message: 'downstream unavailable' }
+    }), { status: 200 })) as unknown as typeof fetch;
+    const { client, sleep } = makeGateway(fetchImpl);
+
+    await expect(client.request({ service: 'collection', method: 'get', path: '/safe' })).rejects.toThrow('500');
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(sleep).toHaveBeenCalledTimes(3);
+  });
 });
