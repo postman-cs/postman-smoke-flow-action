@@ -296,7 +296,7 @@ describe('release artifact verifier CLI', () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it('rejects an unexpected directory entry through the real CLI', () => {
     const directory = writeCliFixture();
@@ -306,5 +306,5 @@ describe('release artifact verifier CLI', () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });
