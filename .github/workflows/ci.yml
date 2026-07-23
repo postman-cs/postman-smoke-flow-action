@@ -99,41 +99,12 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
-          cache: npm
           registry-url: 'https://registry.npmjs.org'
-      - run: npm ci
-      - run: npm run bundle
-      - name: Run Windows gates
-        shell: pwsh
-        run: |
-          $commands = @(
-            @{ name = 'lint' },
-            @{ name = 'test' },
-            @{ name = 'typecheck' },
-            @{ name = 'dist' }
-          )
-          $MAX_PARALLEL_GATES = 2
-          $running = @()
-          $results = @{}
-          foreach ($gate in $commands) {
-            while ($running.Count -ge $MAX_PARALLEL_GATES) {
-              $done = Wait-Job -Job $running -Any
-              Receive-Job $done -ErrorAction Continue *>&1 | Out-File "$($done.Name).log"
-              $results[$done.Name] = $done.State -eq 'Completed'
-              Remove-Job $done; $running = @($running | Where-Object Id -ne $done.Id)
-            }
-            $running += Start-Job -Name $gate.name -ArgumentList $gate.name -ScriptBlock {
-              param($name)
-              switch ($name) {
-                'lint' { npm run lint }
-                'test' { npm test }
-                'typecheck' { npm run typecheck }
-                'dist' { npm run verify:dist:assert }
-              }
-              if ($LASTEXITCODE -ne 0) { throw "gate $name failed with exit code $LASTEXITCODE" }
-            }
-          }
-          foreach ($job in $running) { Wait-Job $job | Out-Null; Receive-Job $job -ErrorAction Continue *>&1 | Out-File "$($job.Name).log"; $results[$job.Name] = $job.State -eq 'Completed'; Remove-Job $job }
-          $failed = $false
-          foreach ($gate in $commands) { if ($results[$gate.name]) { "gate:$($gate.name)=pass" } else { "gate:$($gate.name)=fail"; $failed = $true }; Get-Content "$($gate.name).log" }
-          if ($failed) { exit 1 }
+      - id: windows-node-modules
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: node_modules
+          key: Windows/node-24/exact-${{ hashFiles('package-lock.json') }}
+      - if: steps.windows-node-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
+      - run: npm test

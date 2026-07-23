@@ -51,17 +51,10 @@ describe('CI and SEA PR workflow contracts', () => {
     expect(windows).not.toContain('fetch-depth: 0');
   });
 
-  it('bundles exactly once on Linux and Windows before each read-only queue', () => {
+  it('bundles exactly once on Linux before the read-only queue', () => {
     expect(linux.match(/^\s*- run: npm run bundle\s*$/gm) ?? []).toHaveLength(1);
-    expect(windows.match(/^\s*- run: npm run bundle\s*$/gm) ?? []).toHaveLength(1);
-
     expect(linux.indexOf('- run: npm run bundle')).toBeLessThan(linux.indexOf('- name: Run gates'));
-    expect(windows.indexOf('- run: npm run bundle')).toBeLessThan(
-      windows.indexOf('- name: Run Windows gates'),
-    );
-
-    expect(windows).toContain('name: Windows gate');
-    expect(windows).toContain('runs-on: windows-latest');
+    expect(windows).not.toContain('npm run bundle');
   });
 
   it('queues the exact Linux read-only gates with actionlint and PR-only commitlint', () => {
@@ -119,55 +112,56 @@ describe('CI and SEA PR workflow contracts', () => {
     expect(seaWorkflow).not.toMatch(/\bgo install\b/);
   });
 
-  it('queues exactly four Windows gates at max-two with terminating throw failure propagation', () => {
-    const runGates = namedStep(windows, 'Run Windows gates');
-    expect(runGates.length).toBeGreaterThan(0);
-    expect(runGates).toContain('shell: pwsh');
-    expect(runGates).toContain('$MAX_PARALLEL_GATES = 2');
-    expect(runGates).toContain('while ($running.Count -ge $MAX_PARALLEL_GATES)');
-    expect(runGates).toContain('Start-Job');
+  it('caches Windows node_modules with exact key and guarded prefer-offline npm ci', () => {
+    expect(windows).toContain('name: Windows gate');
+    expect(windows).toContain('runs-on: windows-latest');
 
-    expect(runGates).toContain("@{ name = 'lint' }");
-    expect(runGates).toContain("@{ name = 'test' }");
-    expect(runGates).toContain("@{ name = 'typecheck' }");
-    expect(runGates).toContain("@{ name = 'dist' }");
-    expect(runGates.match(/@\{ name = '[^']+' \}/g) ?? []).toHaveLength(4);
+    expect(windows).toContain("node-version: '24'");
+    expect(windows).not.toMatch(/^\s*cache:\s*npm\s*$/m);
 
-    expect(runGates).toContain("'lint' { npm run lint }");
-    expect(runGates).toContain("'test' { npm test }");
-    expect(runGates).toContain("'typecheck' { npm run typecheck }");
-    expect(runGates).toContain("'dist' { npm run verify:dist:assert }");
-
-    expect(runGates).toContain(
-      'if ($LASTEXITCODE -ne 0) { throw "gate $name failed with exit code $LASTEXITCODE" }',
+    expect(windows).toContain('id: windows-node-modules');
+    expect(windows).toContain(
+      'uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0',
     );
-    expect(runGates).not.toMatch(/if \(\$LASTEXITCODE -ne 0\) \{ exit /);
-    expect(runGates).toContain("$results[$done.Name] = $done.State -eq 'Completed'");
-    expect(runGates).toContain("$results[$job.Name] = $job.State -eq 'Completed'");
-
-    // Under GitHub's $ErrorActionPreference='Stop', Receive-Job on a Failed child
-    // would terminate the parent before aggregate status printing unless both drain
-    // sites capture all streams with -ErrorAction Continue.
-    expect(runGates).toContain(
-      'Receive-Job $done -ErrorAction Continue *>&1 | Out-File "$($done.Name).log"',
+    expect(windows).toContain('path: node_modules');
+    expect(windows).toContain(
+      "key: Windows/node-24/exact-${{ hashFiles('package-lock.json') }}",
     );
-    expect(runGates).toContain(
-      'Receive-Job $job -ErrorAction Continue *>&1 | Out-File "$($job.Name).log"',
-    );
-    expect(runGates.match(/Receive-Job \$\w+ -ErrorAction Continue \*>&1 \| Out-File/g) ?? []).toHaveLength(
-      2,
-    );
-    expect(runGates).not.toMatch(/Receive-Job \$\w+\s*\|/);
+    expect(windows).not.toContain('restore-keys');
+    expect(windows).not.toContain('restore-key');
 
-    expect(runGates).not.toContain('npm run build');
-    expect(runGates).not.toContain('npm run bundle');
-    expect(runGates).not.toMatch(/npm run verify:dist(?:\s|$|"|')/);
-    expect(runGates).not.toContain('actionlint');
-    expect(runGates).not.toContain('commitlint');
+    expect(windows).toContain("if: steps.windows-node-modules.outputs.cache-hit != 'true'");
+    expect(windows).toContain('run: npm ci --prefer-offline --no-audit --no-fund');
+    expect(windows.match(/npm ci --prefer-offline --no-audit --no-fund/g) ?? []).toHaveLength(1);
+    expect(windows.match(/^\s*- run: npm ci\s*$/gm) ?? []).toHaveLength(0);
+  });
 
-    expect(runGates).toContain('gate:$($gate.name)=pass');
-    expect(runGates).toContain('gate:$($gate.name)=fail');
-    expect(runGates).toContain('if ($failed) { exit 1 }');
+  it('runs sole direct unconditional npm test on Windows with no queue or build gates', () => {
+    expect(windows.match(/^\s*- run: npm test\s*$/gm) ?? []).toHaveLength(1);
+    expect(windows).not.toMatch(/npm test --/);
+    expect(windows).not.toMatch(/npm test -/);
+
+    expect(windows).not.toContain('Run Windows gates');
+    expect(windows).not.toContain('shell: pwsh');
+    expect(windows).not.toContain('$MAX_PARALLEL_GATES');
+    expect(windows).not.toContain('Start-Job');
+    expect(windows).not.toContain('Wait-Job');
+    expect(windows).not.toContain('Receive-Job');
+    expect(windows).not.toMatch(/@\{ name = '/);
+
+    expect(windows).not.toContain('npm run bundle');
+    expect(windows).not.toContain('npm run build');
+    expect(windows).not.toContain('npm run lint');
+    expect(windows).not.toContain('npm run typecheck');
+    expect(windows).not.toContain('npm run verify:dist');
+    expect(windows).not.toContain('actionlint');
+    expect(windows).not.toContain('commitlint');
+  });
+
+  it('keeps Linux and Windows jobs independent with no needs edges', () => {
+    expect(linux).not.toMatch(/^\s*needs:/m);
+    expect(windows).not.toMatch(/^\s*needs:/m);
+    expect(ciWorkflow).not.toMatch(/^\s*needs:/m);
   });
 
   it('keeps upload-on-dist-failure on the Linux gate job', () => {
@@ -189,7 +183,7 @@ describe('CI and SEA PR workflow contracts', () => {
     expect(seaWorkflow).not.toContain('NPM_TOKEN');
 
     expect(linux.match(/^\s*- run: npm ci\s*$/gm) ?? []).toHaveLength(1);
-    expect(windows.match(/^\s*- run: npm ci\s*$/gm) ?? []).toHaveLength(1);
+    expect(windows).toContain('npm ci --prefer-offline --no-audit --no-fund');
     expect(sea.match(/^\s*- run: npm ci\s*$/gm) ?? []).toHaveLength(1);
   });
 });
