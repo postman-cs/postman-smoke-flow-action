@@ -6,28 +6,44 @@ Git tags and GitHub releases are the public release identifiers for this action.
 
 ## Tag policy
 
-- Immutable releases use `v1.x.y` tags.
-- The rolling `v1` alias moves to the latest compatible `v1.x.y` release.
+- Immutable releases use `v2.x.y` tags for the current major.
+- The rolling `v2` alias moves to the latest compatible `v2.x.y` release.
 - Existing release tags are never force-pushed or rewritten.
 - `v0` tags stay frozen at the last `v0` release.
 - Every immutable release tag has a GitHub release with generated notes.
 
 ## Release checks
 
-Run the package validators from this directory before pushing an immutable tag:
+Releases are cut automatically. Merging to `main` runs `.github/workflows/auto-release.yml`,
+which derives the next version from the conventional-commit history, then runs
+`scripts/release-cut.mjs`: bump, rebuild `dist/`, run the gate set, commit, and tag.
 
-1. Confirm the working tree is clean.
-2. `npm test`
-3. `npm run typecheck`
-4. `npm run lint`
-5. `npm run build`
-6. `npm run verify:dist`
-7. `npm run docs:tables` when `action.yml` changes, then confirm the `README.md` tables still match.
-8. Confirm `SECURITY.md`, `SUPPORT.md`, and this file still describe the release surface.
+The tag is created only after the exact bytes of the release commit pass every
+gate, so a failed cut leaves no tag and burns no version number. The next merge
+retries on a fresh version, skipping any already-tagged one.
+
+Do not push `vX.Y.Z` tags by hand. The pre-push hook refuses them, because a
+hand-pushed tag becomes a public identifier before any gate has run against it.
+
+To see what the next merge would cut:
+
+```sh
+node scripts/release-cut.mjs --plan
+```
+
+The same gates run locally before any push:
+
+1. `npm test`
+2. `npm run typecheck`
+3. `npm run lint`
+4. `npm run build`
+5. `npm run verify:dist`
+6. `npm run docs:tables` when `action.yml` changes, then confirm the `README.md` tables still match.
+7. Confirm `SECURITY.md`, `SUPPORT.md`, and this file still describe the release surface.
 
 ## npm package
 
-The CLI publishes as `@postman-cse/onboarding-smoke-flow` with versions that match the GitHub release tag. The rolling `v1` alias updates the action channel and skips npm publishing.
+The CLI publishes as `@postman-cse/onboarding-smoke-flow` with versions that match the GitHub release tag. The rolling `v2` alias updates the action channel and skips npm publishing.
 
 ## Compatibility
 
@@ -35,4 +51,4 @@ Patch releases preserve the public action contract. The action applies a curated
 
 ## Security fixes
 
-Security fixes ship on the latest `v1.x.y` tag and move onto the rolling `v1` alias. Older immutable tags stay published for reproducibility. See [Security Policy](SECURITY.md).
+Security fixes ship on the latest `v2.x.y` tag and move onto the rolling `v2` alias. Older immutable tags stay published for reproducibility. See [Security Policy](SECURITY.md).
