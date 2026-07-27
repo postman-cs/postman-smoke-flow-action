@@ -39687,6 +39687,186 @@ function createTelemetryContext(options) {
   };
 }
 
+// node_modules/@postman-cse/automation-core/dist/logger.js
+var LEVEL_ORDER = {
+  debug: 10,
+  info: 20,
+  warning: 30,
+  error: 40
+};
+function defaultCorrelationId() {
+  return Math.random().toString(36).slice(2, 10);
+}
+function resolveLogLevel(env = process.env) {
+  const explicit = String(env.POSTMAN_ACTIONS_LOG_LEVEL ?? "").trim().toLowerCase();
+  if (explicit === "debug" || explicit === "trace" || explicit === "verbose")
+    return "debug";
+  if (explicit === "info")
+    return "info";
+  if (explicit === "warn" || explicit === "warning")
+    return "warning";
+  if (explicit === "error" || explicit === "quiet")
+    return "error";
+  if (isTruthyFlag(env.RUNNER_DEBUG) || isTruthyFlag(env.ACTIONS_STEP_DEBUG))
+    return "debug";
+  if (isTruthyFlag(env.POSTMAN_ACTIONS_DEBUG))
+    return "debug";
+  return "info";
+}
+function isTruthyFlag(value) {
+  if (!value)
+    return false;
+  const flag = value.trim().toLowerCase();
+  return flag === "1" || flag === "true" || flag === "yes" || flag === "on";
+}
+function actionSink(core) {
+  return {
+    debug: (message) => core.debug?.(message),
+    info: (message) => core.info(message),
+    warning: (message) => (core.warning ?? core.info)(message),
+    error: (message) => (core.error ?? core.warning ?? core.info)(message),
+    startGroup: core.startGroup ? (name) => core.startGroup?.(name) : void 0,
+    endGroup: core.endGroup ? () => core.endGroup?.() : void 0,
+    isDebug: core.isDebug ? () => core.isDebug?.() ?? false : void 0
+  };
+}
+var MIN_SECRET_LENGTH = 4;
+function renderValue(value, maxLength = 512) {
+  if (value === void 0)
+    return "undefined";
+  if (value === null)
+    return "null";
+  if (typeof value === "string")
+    return truncate2(value, maxLength);
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (value instanceof Error)
+    return truncate2(describeError(value), maxLength);
+  if (Array.isArray(value)) {
+    return truncate2(`[${value.map((entry) => renderValue(entry, 120)).join(", ")}]`, maxLength);
+  }
+  try {
+    return truncate2(JSON.stringify(value) ?? String(value), maxLength);
+  } catch {
+    return "<unserializable>";
+  }
+}
+function truncate2(text, maxLength) {
+  if (text.length <= maxLength)
+    return text;
+  return `${text.slice(0, maxLength)}\u2026 (+${text.length - maxLength} chars)`;
+}
+function describeError(error2, maxDepth = 5) {
+  const parts = [];
+  let current = error2;
+  let depth = 0;
+  while (current !== void 0 && current !== null && depth < maxDepth) {
+    if (current instanceof Error) {
+      const code = current.code;
+      parts.push(code ? `${current.name}[${code}]: ${current.message}` : `${current.name}: ${current.message}`);
+      current = current.cause;
+    } else if (typeof current === "object") {
+      try {
+        parts.push(JSON.stringify(current) ?? String(current));
+      } catch {
+        parts.push(String(current));
+      }
+      current = void 0;
+    } else {
+      parts.push(String(current));
+      current = void 0;
+    }
+    depth += 1;
+  }
+  if (parts.length === 0)
+    return "unknown error";
+  return parts.join(" <- caused by ");
+}
+function createLogger(options) {
+  const env = options.env ?? process.env;
+  const level = options.level ?? resolveLogLevel(env);
+  const secrets = options.secrets ?? /* @__PURE__ */ new Set();
+  const correlationId = options.correlationId ?? defaultCorrelationId();
+  const now = options.now ?? (() => Date.now());
+  const threshold = LEVEL_ORDER[level];
+  function addSecret(value) {
+    if (typeof value !== "string")
+      return;
+    const trimmed = value.trim();
+    if (trimmed.length < MIN_SECRET_LENGTH)
+      return;
+    secrets.add(trimmed);
+  }
+  function redact(text) {
+    let output = typeof text === "string" ? text : renderValue(text, 4096);
+    for (const secret of secrets) {
+      if (!secret)
+        continue;
+      output = output.split(secret).join("***");
+      const encoded = encodeURIComponent(secret);
+      if (encoded !== secret)
+        output = output.split(encoded).join("***");
+    }
+    return output;
+  }
+  function build(baseFields) {
+    function emit(target, message, fields) {
+      if (LEVEL_ORDER[target] < threshold)
+        return;
+      const merged = { ...baseFields, ...fields ?? {} };
+      const rendered = Object.entries(merged).filter(([, value]) => value !== void 0).map(([key, value]) => `${key}=${redact(renderValue(value))}`).join(" ");
+      const line = rendered ? `${redact(message)} | ${rendered}` : redact(message);
+      switch (target) {
+        case "debug":
+          options.sink.debug(line);
+          break;
+        case "info":
+          options.sink.info(line);
+          break;
+        case "warning":
+          options.sink.warning(line);
+          break;
+        case "error":
+          options.sink.error(line);
+          break;
+      }
+    }
+    const logger = {
+      level,
+      correlationId,
+      addSecret,
+      redact,
+      isDebug: () => threshold <= LEVEL_ORDER.debug,
+      debug: (message, fields) => emit("debug", message, fields),
+      info: (message, fields) => emit("info", message, fields),
+      warning: (message, fields) => emit("warning", message, fields),
+      error: (message, fields) => emit("error", message, fields),
+      failure: (message, error2, fields) => emit("error", message, { ...fields ?? {}, error: describeError(error2) }),
+      child: (fields) => build({ ...baseFields, ...fields }),
+      async phase(name, fn, fields) {
+        const scoped = build({ ...baseFields, ...fields ?? {}, phase: name });
+        const started = now();
+        scoped.debug("phase start");
+        options.sink.startGroup?.(name);
+        try {
+          const result = await fn();
+          scoped.debug("phase ok", { duration_ms: Math.round(now() - started) });
+          return result;
+        } catch (error2) {
+          scoped.failure("phase failed", error2, { duration_ms: Math.round(now() - started) });
+          throw error2;
+        } finally {
+          options.sink.endGroup?.();
+        }
+      }
+    };
+    return logger;
+  }
+  const root = build({ run: correlationId, ...options.fields ?? {} });
+  return root;
+}
+
 // src/action-version.ts
 var import_node_fs4 = require("node:fs");
 var import_node_path2 = require("node:path");
@@ -40242,8 +40422,20 @@ async function runGatedSkip(inputs, decision, actionCore) {
   process.env[BRANCH_DECISION_ENV] = serializeBranchDecision(decision);
   return outputs;
 }
-async function runAction(actionCore = core_exports, env = process.env) {
+async function runAction(actionCore = core_exports, env = process.env, injectedLogger) {
+  const logger = injectedLogger ?? createLogger({
+    sink: actionSink(actionCore),
+    env,
+    fields: { action: "postman-smoke-flow-action", action_version: resolveActionVersion2() }
+  });
   const inputs = readActionInputs(env);
+  logger.addSecret(inputs.postmanApiKey);
+  logger.addSecret(inputs.postmanAccessToken);
+  logger.debug("resolved inputs", {
+    team_id: inputs.teamId || void 0,
+    smoke_collection_id: inputs.smokeCollectionId || void 0,
+    api_base: inputs.postmanApiBaseUrl
+  });
   const branchDecision = decideBranchTier(inputs, env);
   if (branchDecision.tier === "gated") {
     return runGatedSkip(inputs, branchDecision, actionCore);
@@ -40258,10 +40450,16 @@ async function runAction(actionCore = core_exports, env = process.env) {
     postmanApiKey: inputs.postmanApiKey,
     postmanApiBase: inputs.postmanApiBaseUrl
   };
-  await mintAccessTokenIfNeeded(
-    mintHolder,
-    { info: (m) => actionCore.info(m), warning: (m) => actionCore.warning?.(m ?? "") },
-    (secret) => actionCore.setSecret?.(secret)
+  await logger.phase(
+    "mint-access-token",
+    async () => mintAccessTokenIfNeeded(
+      mintHolder,
+      { info: (m) => actionCore.info(m), warning: (m) => actionCore.warning?.(m ?? "") },
+      (secret) => {
+        logger.addSecret(secret);
+        actionCore.setSecret?.(secret);
+      }
+    )
   );
   inputs.postmanAccessToken = mintHolder.postmanAccessToken;
   const telemetry = createTelemetryContext({ action: "postman-smoke-flow-action", actionVersion: resolveActionVersion2(), logger: actionCore });
@@ -40283,10 +40481,12 @@ async function runAction(actionCore = core_exports, env = process.env) {
     log: actionCore
   });
   try {
-    const postman = createSmokeClient(inputs, actionCore, env);
-    const outputs = await runSmokeFlow(inputs, {
-      core: actionCore,
-      postman
+    const outputs = await logger.phase("smoke-flow", async () => {
+      const postman = createSmokeClient(inputs, actionCore, env);
+      return runSmokeFlow(inputs, {
+        core: actionCore,
+        postman
+      });
     });
     for (const [name, value] of Object.entries(outputs)) {
       actionCore.setOutput(name, value);

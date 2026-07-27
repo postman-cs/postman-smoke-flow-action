@@ -33,7 +33,7 @@ import {
   type BranchDecision,
   type BranchStrategy
 } from './lib/repo-branch-decision.js';
-import { createTelemetryContext } from '@postman-cse/automation-core';
+import { actionSink, createLogger, createTelemetryContext, type Logger } from '@postman-cse/automation-core';
 import { resolveActionVersion } from './action-version.js';
 
 type JsonRecord = Record<string, unknown>;
@@ -717,9 +717,29 @@ async function runGatedSkip(
   return outputs;
 }
 
-export async function runAction(actionCore: CoreLike = core, env: NodeJS.ProcessEnv = process.env): Promise<ActionOutputs> {
+export async function runAction(
+  actionCore: CoreLike = core,
+  env: NodeJS.ProcessEnv = process.env,
+  injectedLogger?: Logger
+): Promise<ActionOutputs> {
+  const logger =
+    injectedLogger ??
+    createLogger({
+      sink: actionSink(actionCore),
+      env,
+      fields: { action: 'postman-smoke-flow-action', action_version: resolveActionVersion() }
+    });
   // Branch-aware sync: decide BEFORE any credential validation or mint.
   const inputs = readActionInputs(env);
+  // Register before anything can print: a credential that reaches the logger
+  // after the first line is a credential that already leaked once.
+  logger.addSecret(inputs.postmanApiKey);
+  logger.addSecret(inputs.postmanAccessToken);
+  logger.debug('resolved inputs', {
+    team_id: inputs.teamId || undefined,
+    smoke_collection_id: inputs.smokeCollectionId || undefined,
+    api_base: inputs.postmanApiBaseUrl
+  });
   const branchDecision = decideBranchTier(inputs, env);
   if (branchDecision.tier === 'gated') {
     return runGatedSkip(inputs, branchDecision, actionCore);
@@ -740,10 +760,15 @@ export async function runAction(actionCore: CoreLike = core, env: NodeJS.Process
     postmanApiKey: inputs.postmanApiKey,
     postmanApiBase: inputs.postmanApiBaseUrl
   };
-  await mintAccessTokenIfNeeded(
-    mintHolder,
-    { info: (m) => actionCore.info(m), warning: (m) => actionCore.warning?.(m ?? '') },
-    (secret) => actionCore.setSecret?.(secret)
+  await logger.phase('mint-access-token', async () =>
+    mintAccessTokenIfNeeded(
+      mintHolder,
+      { info: (m) => actionCore.info(m), warning: (m) => actionCore.warning?.(m ?? '') },
+      (secret) => {
+        logger.addSecret(secret);
+        actionCore.setSecret?.(secret);
+      }
+    )
   );
   inputs.postmanAccessToken = mintHolder.postmanAccessToken;
 
@@ -766,10 +791,15 @@ export async function runAction(actionCore: CoreLike = core, env: NodeJS.Process
     log: actionCore
   });
   try {
-    const postman = createSmokeClient(inputs, actionCore, env);
-    const outputs = await runSmokeFlow(inputs, {
-      core: actionCore,
-      postman
+    // Client construction is inside the phase because its credential guard is
+    // one of the likeliest failures here; leaving it outside would report the
+    // most common failure with no phase at all.
+    const outputs = await logger.phase('smoke-flow', async () => {
+      const postman = createSmokeClient(inputs, actionCore, env);
+      return runSmokeFlow(inputs, {
+        core: actionCore,
+        postman
+      });
     });
     for (const [name, value] of Object.entries(outputs)) {
       actionCore.setOutput(name, value);

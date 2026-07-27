@@ -141,6 +141,10 @@ export type CoreLike = {
   setOutput: (name: string, value: string) => void;
   setSecret?: (secret: string) => void;
   info: (message: string) => void;
+  // Optional so every existing caller keeps compiling; the shared log sink
+  // degrades each level to the next channel the host actually implements.
+  debug?: (message: string) => void;
   warning: (message: string) => void;
+  error?: (message: string) => void;
   setFailed: (message: string) => void;
 };

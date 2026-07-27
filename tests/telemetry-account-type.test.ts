@@ -8,7 +8,10 @@ const telemetrySpy = {
   emitCompletion: vi.fn()
 };
 
-vi.mock('@postman-cse/automation-core', () => ({
+// Spy on telemetry only. The logger stays real so these tests keep exercising
+// the same log path production runs on.
+vi.mock('@postman-cse/automation-core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@postman-cse/automation-core')>()),
   createTelemetryContext: () => telemetrySpy
 }));
 
