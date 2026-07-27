@@ -628,6 +628,7 @@ function deriveAutoFlow(inputs: ActionInputs, dependencies: SmokeFlowDependencie
         extractCount: 0,
         bindingCount: 0,
         excludedDeleteCount: 0,
+        excludedUnresolvedPathParamCount: 0,
         unresolvedParameterCount: 0
       }
     };

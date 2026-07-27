@@ -57,6 +57,8 @@ export type DerivationTrace = {
   extractCount: number;
   bindingCount: number;
   excludedDeleteCount: number;
+  /** Steps dropped because a required path parameter had no producer in the spec. */
+  excludedUnresolvedPathParamCount: number;
   unresolvedParameterCount: number;
 };
 
@@ -168,7 +170,14 @@ function collectResponseProps(document: JsonRecord, schema: JsonRecord | null): 
       for (const key of Object.keys(props).sort()) {
         const child = derefSchema(document, asRecord(props[key]));
         const jsonPath = `${prefix}.${key}`;
-        const childType = typeof child?.type === 'string' ? child.type : '';
+        const rawType = child?.type;
+        const childTypes = Array.isArray(rawType)
+          ? rawType.filter((entry): entry is string => typeof entry === 'string')
+          : typeof rawType === 'string'
+            ? [rawType]
+            : [];
+        // OpenAPI 3.1 nullable unions (['array','null']) resolve to the non-null member so the array guard fires.
+        const childType = childTypes.find((entry) => entry !== 'null') ?? '';
         if (
           childType === 'object' ||
           (child && asRecord(child.properties)) ||
@@ -414,6 +423,7 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
         extractCount: 0,
         bindingCount: 0,
         excludedDeleteCount: 0,
+        excludedUnresolvedPathParamCount: 0,
         unresolvedParameterCount: 0
       }
     };
@@ -515,6 +525,22 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
   let bindingTotal = 0;
   let unresolvedParameterCount = 0;
   let excludedDeleteCount = 0;
+  let excludedUnresolvedPathParamCount = 0;
+
+  // Rule 3: an extract exists only to feed a prior_output binding, so a
+  // response property is published only when some path parameter in the
+  // document can consume it.
+  const consumableProps = new Set<string>();
+  for (const op of operations) {
+    for (const param of op.pathParams) {
+      for (const candidate of parameterCandidates(param.name, param.ownerSegment)) {
+        consumableProps.add(candidate);
+      }
+    }
+    for (const queryParam of op.requiredQueryParams) {
+      consumableProps.add(queryParam);
+    }
+  }
 
   let ordinal = 0;
   for (const op of ordered) {
@@ -522,6 +548,7 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
     const stepKey = stepKeyFor(op, ordinal);
     const bindings: FlowBinding[] = [];
     const extract: FlowExtract[] = [];
+    const unresolvedPathParams: string[] = [];
 
     // Resolve every path parameter against known producers. Each parameter is
     // scoped to the resource that OWNS it (the collection path formed by the
@@ -555,6 +582,7 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
       } else {
         sameRunCreateProvenance = false;
         unresolvedParameterCount += 1;
+        unresolvedPathParams.push(param.name);
         bindings.push({ fieldKey: param.name, source: 'example' });
       }
     }
@@ -595,10 +623,25 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
       }
     }
 
+    // Required path parameters must carry a real value. The collection transform
+    // substitutes only prior_output bindings, so a path parameter that no producer
+    // satisfies ships the literal `:param` segment and the request can only 404.
+    // Exclude the step instead of deriving a request that cannot pass.
+    if (unresolvedPathParams.length > 0) {
+      excludedOperationIds.push(op.operationId);
+      excludedUnresolvedPathParamCount += 1;
+      const many = unresolvedPathParams.length > 1;
+      const names = unresolvedPathParams.map((name) => `{${name}}`).join(', ');
+      warnings.push({
+        message: `Derived flow excluded ${op.method} ${op.path} (${op.operationId}): path ${many ? 'parameters' : 'parameter'} ${names} ${many ? 'have' : 'has'} no producer in this spec, so the request would be sent with an unsubstituted path segment.`
+      });
+      continue;
+    }
     // Extracts: create (POST on collection path) publishes its response ids.
     if (op.method === 'POST' && !op.isItemPath) {
       for (const [prop, jsonPath] of op.responseProps) {
         if (!/id$/i.test(prop) && prop !== 'id') continue;
+        if (!consumableProps.has(prop)) continue;
         const variable = `${op.operationId}.${prop}`;
         extract.push({ variable, jsonPath });
         // Register resource-scoped first (wins for same resource), global second.
@@ -624,7 +667,7 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
   if (steps.length === 0) {
     warnings.push({
       message:
-        'Flow derivation excluded every operation because each was a DELETE operation that did not meet the allow-and-provenance requirements; a smoke flow cannot be derived.'
+        'Flow derivation excluded every operation, so a smoke flow cannot be derived. Operations are excluded when they are DELETEs that do not meet the allow-and-provenance requirements, or when a required path parameter has no producer in this spec.'
     });
     return {
       flow: null,
@@ -637,6 +680,7 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
         extractCount: 0,
         bindingCount: 0,
         excludedDeleteCount,
+        excludedUnresolvedPathParamCount,
         unresolvedParameterCount
       }
     };
@@ -661,6 +705,7 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
       extractCount: extractTotal,
       bindingCount: bindingTotal,
       excludedDeleteCount,
+      excludedUnresolvedPathParamCount,
       unresolvedParameterCount
     }
   };

@@ -133,6 +133,7 @@ export type FlowApplySummary = {
     extractCount: number;
     bindingCount: number;
     excludedDeleteCount: number;
+    excludedUnresolvedPathParamCount: number;
     unresolvedParameterCount: number;
     excludedOperationIds: string[];
   };

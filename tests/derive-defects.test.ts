@@ -120,6 +120,9 @@ describe('derivation defect regressions', () => {
             operationId: 'createNode',
             responses: jsonResponse({ $ref: '#/components/schemas/Node' }, '201')
           }
+        },
+        '/nodes/{nodeId}': {
+          get: { operationId: 'getNode', responses: jsonResponse({ $ref: '#/components/schemas/Node' }) }
         }
       },
       components: {

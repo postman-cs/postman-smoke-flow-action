@@ -553,7 +553,7 @@ describe('round-2 integration pins', () => {
       ].join('\n'),
       causes: [
         'excluded DELETE /records/{recordId} (deleteRecord)',
-        'excluded every operation because each was a DELETE operation that did not meet the allow-and-provenance requirements'
+        'excluded every operation'
       ]
     }
   ])('hard-errors before Postman mutation when $name', async ({ spec, causes }) => {

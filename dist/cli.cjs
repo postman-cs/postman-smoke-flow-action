@@ -36383,7 +36383,9 @@ function collectResponseProps(document, schema) {
       for (const key of Object.keys(props).sort()) {
         const child2 = derefSchema(document, asRecord(props[key]));
         const jsonPath = `${prefix}.${key}`;
-        const childType = typeof child2?.type === "string" ? child2.type : "";
+        const rawType = child2?.type;
+        const childTypes = Array.isArray(rawType) ? rawType.filter((entry) => typeof entry === "string") : typeof rawType === "string" ? [rawType] : [];
+        const childType = childTypes.find((entry) => entry !== "null") ?? "";
         if (childType === "object" || child2 && asRecord(child2.properties) || child2 && Array.isArray(child2.allOf)) {
           visit(child2, jsonPath, depth + 1);
           continue;
@@ -36564,6 +36566,7 @@ function deriveFlowFromSpec(document, options = {}) {
         extractCount: 0,
         bindingCount: 0,
         excludedDeleteCount: 0,
+        excludedUnresolvedPathParamCount: 0,
         unresolvedParameterCount: 0
       }
     };
@@ -36644,12 +36647,25 @@ function deriveFlowFromSpec(document, options = {}) {
   let bindingTotal = 0;
   let unresolvedParameterCount = 0;
   let excludedDeleteCount = 0;
+  let excludedUnresolvedPathParamCount = 0;
+  const consumableProps = /* @__PURE__ */ new Set();
+  for (const op of operations) {
+    for (const param of op.pathParams) {
+      for (const candidate of parameterCandidates(param.name, param.ownerSegment)) {
+        consumableProps.add(candidate);
+      }
+    }
+    for (const queryParam of op.requiredQueryParams) {
+      consumableProps.add(queryParam);
+    }
+  }
   let ordinal = 0;
   for (const op of ordered) {
     ordinal += 1;
     const stepKey = stepKeyFor(op, ordinal);
     const bindings = [];
     const extract = [];
+    const unresolvedPathParams = [];
     let sameRunCreateProvenance = op.pathParams.length > 0;
     for (const param of op.pathParams) {
       const candidates = parameterCandidates(param.name, param.ownerSegment);
@@ -36674,6 +36690,7 @@ function deriveFlowFromSpec(document, options = {}) {
       } else {
         sameRunCreateProvenance = false;
         unresolvedParameterCount += 1;
+        unresolvedPathParams.push(param.name);
         bindings.push({ fieldKey: param.name, source: "example" });
       }
     }
@@ -36702,9 +36719,20 @@ function deriveFlowFromSpec(document, options = {}) {
         continue;
       }
     }
+    if (unresolvedPathParams.length > 0) {
+      excludedOperationIds.push(op.operationId);
+      excludedUnresolvedPathParamCount += 1;
+      const many = unresolvedPathParams.length > 1;
+      const names = unresolvedPathParams.map((name) => `{${name}}`).join(", ");
+      warnings.push({
+        message: `Derived flow excluded ${op.method} ${op.path} (${op.operationId}): path ${many ? "parameters" : "parameter"} ${names} ${many ? "have" : "has"} no producer in this spec, so the request would be sent with an unsubstituted path segment.`
+      });
+      continue;
+    }
     if (op.method === "POST" && !op.isItemPath) {
       for (const [prop, jsonPath] of op.responseProps) {
         if (!/id$/i.test(prop) && prop !== "id") continue;
+        if (!consumableProps.has(prop)) continue;
         const variable = `${op.operationId}.${prop}`;
         extract.push({ variable, jsonPath });
         if (!producers.has(`${op.collectionPath}::${prop}`)) {
@@ -36726,7 +36754,7 @@ function deriveFlowFromSpec(document, options = {}) {
   }
   if (steps.length === 0) {
     warnings.push({
-      message: "Flow derivation excluded every operation because each was a DELETE operation that did not meet the allow-and-provenance requirements; a smoke flow cannot be derived."
+      message: "Flow derivation excluded every operation, so a smoke flow cannot be derived. Operations are excluded when they are DELETEs that do not meet the allow-and-provenance requirements, or when a required path parameter has no producer in this spec."
     });
     return {
       flow: null,
@@ -36739,6 +36767,7 @@ function deriveFlowFromSpec(document, options = {}) {
         extractCount: 0,
         bindingCount: 0,
         excludedDeleteCount,
+        excludedUnresolvedPathParamCount,
         unresolvedParameterCount
       }
     };
@@ -36761,6 +36790,7 @@ function deriveFlowFromSpec(document, options = {}) {
       extractCount: extractTotal,
       bindingCount: bindingTotal,
       excludedDeleteCount,
+      excludedUnresolvedPathParamCount,
       unresolvedParameterCount
     }
   };
@@ -41047,6 +41077,7 @@ function deriveAutoFlow(inputs, dependencies) {
         extractCount: 0,
         bindingCount: 0,
         excludedDeleteCount: 0,
+        excludedUnresolvedPathParamCount: 0,
         unresolvedParameterCount: 0
       }
     };

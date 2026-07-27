@@ -119,7 +119,11 @@ describe('deriveFlowFromSpec', () => {
         '/accounts/{accountId}/orders': { get: { operationId: 'listAccountOrders', responses: jsonResponse({ type: 'array' }) } }
       })
     );
-    expect(opIds(result.flow!.steps)).toEqual(['listAccounts', 'listZoos', 'listAccountOrders']);
+    // {accountId} has no producer, so listAccountOrders is excluded rather than
+    // shipped with an unsubstituted path segment; ordering of the rest is unchanged.
+    expect(opIds(result.flow!.steps)).toEqual(['listAccounts', 'listZoos']);
+    expect(result.excludedOperationIds).toEqual(['listAccountOrders']);
+    expect(result.trace.excludedUnresolvedPathParamCount).toBe(1);
   });
 
   // 6. Nested sub-resource chaining across resources
@@ -245,9 +249,13 @@ describe('deriveFlowFromSpec', () => {
         '/reports/{reportId}': { get: { operationId: 'getReport', responses: jsonResponse({ type: 'object' }) } }
       })
     );
-    expect(opIds(result.flow!.steps)).toEqual(['listReports', 'getReport']);
-    expect(result.flow!.steps[1]!.bindings).toEqual([{ fieldKey: 'reportId', source: 'example' }]);
+    // A read-only API publishes no ids, so {reportId} has no producer. The read is
+    // excluded instead of deriving GET /reports/:reportId, which could only 404.
+    expect(opIds(result.flow!.steps)).toEqual(['listReports']);
+    expect(result.excludedOperationIds).toEqual(['getReport']);
     expect(result.trace.unresolvedParameterCount).toBe(1);
+    expect(result.trace.excludedUnresolvedPathParamCount).toBe(1);
+    expect(result.warnings.some((warning) => warning.message.includes('{reportId}'))).toBe(true);
   });
 
   // 13. RPC-style API (POST actions, no CRUD shape)
@@ -259,7 +267,10 @@ describe('deriveFlowFromSpec', () => {
         '/jobs/{jobId}/cancel': { post: { operationId: 'cancelJob', responses: jsonResponse({ type: 'object' }) } }
       })
     );
-    expect(opIds(result.flow!.steps)).toEqual(['runExport', 'runSearch', 'cancelJob']);
+    // {jobId} has no producer, so the RPC action on the item path is excluded;
+    // the collection-path RPC POSTs keep their deterministic order.
+    expect(opIds(result.flow!.steps)).toEqual(['runExport', 'runSearch']);
+    expect(result.excludedOperationIds).toEqual(['cancelJob']);
   });
 
   // 14. Conventional {petId} ~ id matching
