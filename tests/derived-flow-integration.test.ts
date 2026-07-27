@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 
 import { runSmokeFlow } from '../src/index.js';
 import type { ActionInputs, CoreLike } from '../src/types.js';
@@ -110,6 +111,7 @@ function derivedInputs(tempDir: string, overrides: Partial<ActionInputs> = {}): 
     failOnFlowWarning: false,
     keepTempCollectionOnFailure: false,
     tempCollectionPrefix: '[Smoke][Temp]',
+    persistDerivedFlow: true,
     ...overrides
   };
 }
@@ -159,8 +161,14 @@ describe('derived flow end-to-end through runSmokeFlow', () => {
       expect(summary.derivation.excludedDeleteCount).toBe(1);
       expect(summary.derivation.excludedOperationIds).toEqual(['deletePayment']);
 
-      // The derived flow is exported as a structural curation seed.
-      const derivedFlow = JSON.parse(outputs['derived-flow-json']) as {
+      // The derived flow persists as the curated manifest at the effective
+      // default path, and the output points at it.
+      expect(outputs['derived-flow-path']).toBe('postman/flow.yaml');
+      const persisted = readFileSync(path.join(tempDir, 'postman/flow.yaml'), 'utf8');
+      const manifest = parseYaml(persisted) as { flows: Array<Record<string, unknown>> };
+      expect(Array.isArray(manifest.flows)).toBe(true);
+      expect(manifest.flows).toHaveLength(1);
+      const derivedFlow = manifest.flows[0]! as unknown as {
         type: string;
         steps: Array<Record<string, unknown>>;
       };
@@ -187,7 +195,7 @@ describe('derived flow end-to-end through runSmokeFlow', () => {
           expect(Object.keys(extract).sort()).toEqual(['jsonPath', 'variable']);
         }
       }
-      const serialized = outputs['derived-flow-json'];
+      const serialized = persisted;
       expect(serialized).not.toContain('SECRET_LITERAL_42');
       expect(serialized).not.toContain('https://api.example.com');
       expect(serialized).not.toContain('PMAK-');
@@ -366,7 +374,7 @@ describe('derived flow end-to-end through runSmokeFlow', () => {
       const summary = JSON.parse(outputs['flow-apply-summary-json']) as { flowName: string; flowSource: string };
       expect(summary.flowName).toBe('Curated payments journey');
       expect(summary.flowSource).toBe('curated');
-      expect(outputs['derived-flow-json']).toBe('');
+      expect(outputs['derived-flow-path']).toBe('');
     } finally {
       process.chdir(previousCwd);
       rmSync(tempDir, { recursive: true, force: true });

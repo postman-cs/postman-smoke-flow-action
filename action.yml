@@ -18,10 +18,10 @@ inputs:
     description: Canonical Smoke collection ID to refresh in place.
     required: true
   flow-path:
-    description: Optional repo-root-relative path to the curated flow.yaml manifest. When omitted under flow-mode auto, the action derives a smoke flow from spec-path; without spec-path (or under flow-mode off) the canonical Smoke collection is refreshed from the generated spec collection without flow curation.
+    description: Optional repo-root-relative path to the flow.yaml manifest. Defaults to postman/flow.yaml. Under flow-mode auto the action runs curated when a manifest exists at the effective path, otherwise derives a smoke flow from spec-path and persists it there; without spec-path (or under flow-mode off) the canonical Smoke collection is refreshed from the generated spec collection without flow curation.
     required: false
   flow-mode:
-    description: Flow selection policy. auto (default) uses the curated flow.yaml when flow-path is set and otherwise derives a deterministic smoke flow from spec-path; curated requires flow-path; off disables curation entirely and refreshes the canonical Smoke collection from the generated spec collection.
+    description: Flow selection policy. auto (default) runs curated when a flow.yaml exists at the effective path (flow-path or postman/flow.yaml) and otherwise derives a deterministic smoke flow from spec-path, persisting it to that path; curated requires flow-path; off disables curation entirely and refreshes the canonical Smoke collection from the generated spec collection.
     required: false
     default: auto
   flow-allow-delete:
@@ -67,6 +67,10 @@ inputs:
     description: Prefix used when generating the temporary smoke collection from the spec.
     required: false
     default: "[Smoke][Temp]"
+  persist-derived-flow:
+    description: Whether a freshly derived flow is written to the effective flow path (flow-path or postman/flow.yaml) after a successful apply, so the next run is curated. Create-only; an existing manifest is never overwritten. Set false to derive without persisting.
+    required: false
+    default: "true"
   team-id:
     description: Optional Postman team ID, used only to attribute non-identifying usage telemetry to your team. The action runs identically with or without it.
     required: false
@@ -99,8 +103,8 @@ outputs:
     description: Number of extracts applied as test logic.
   assertion-count:
     description: Number of generated assertions applied across flow steps.
-  derived-flow-json:
-    description: JSON FlowDefinition of the derived flow when flow-mode auto derived one from spec-path (empty for curated manifests and uncurated refreshes). Structural curation seed only -- operationIds, bindings, extracts; no request values or auth material. Persist it as a flow.yaml starting point for curation.
+  derived-flow-path:
+    description: Repo-relative path where this run persisted a derived flow.yaml (empty when a curated manifest was used, curation was off, persistence was disabled, or the run was gated). Commit it to make the next run curated.
   sync-status:
     description: 'Branch-aware sync status: synced, skipped-branch-gate, or empty under branch-strategy legacy.'
   branch-decision:

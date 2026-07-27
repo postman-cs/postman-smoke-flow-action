@@ -82,7 +82,8 @@ function createInputs(tempDir: string): ActionInputs {
     collectionSyncMode: 'refresh',
     failOnFlowWarning: false,
     keepTempCollectionOnFailure: false,
-    tempCollectionPrefix: '[Smoke][Temp]'
+    tempCollectionPrefix: '[Smoke][Temp]',
+    persistDerivedFlow: true
   };
 }
 

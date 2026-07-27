@@ -75,7 +75,7 @@ describe('postman-smoke-flow-action contract', () => {
         'applied-binding-count',
         'applied-extract-count',
       'assertion-count',
-      'derived-flow-json',
+      'derived-flow-path',
       'sync-status',
         'branch-decision'
     ]);

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -54,6 +54,39 @@ function silentCore(): CoreLike {
     setOutput: vi.fn(),
     setFailed: vi.fn(),
     setSecret: vi.fn()
+  };
+}
+
+const DERIVABLE_SPEC = [
+  'openapi: 3.0.0',
+  'info:',
+  '  title: Payments API',
+  '  version: 1.0.0',
+  'paths:',
+  '  /payments:',
+  '    post:',
+  '      operationId: createPayment',
+  '      responses:',
+  "        '201':",
+  '          description: created'
+].join('\n');
+
+function createInjectedPostman() {
+  let canonicalCollection: Record<string, unknown> = { info: { name: '[Smoke] payments' }, item: [] };
+  return {
+    generateCollection: vi.fn().mockResolvedValue('temp-123'),
+    getCollection: vi.fn(async (collectionId: string) =>
+      collectionId === 'temp-123'
+        ? {
+            info: { name: '[Smoke][Temp] payments' },
+            item: [{ name: 'createPayment', request: { method: 'POST', url: 'https://api.example.com/payments' } }]
+          }
+        : structuredClone(canonicalCollection)
+    ),
+    updateCollection: vi.fn(async (_collectionId: string, collection: Record<string, unknown>) => {
+      canonicalCollection = structuredClone(collection);
+    }),
+    deleteCollection: vi.fn().mockResolvedValue(undefined)
   };
 }
 
@@ -215,10 +248,57 @@ describe('CLI no-flow refresh safety', () => {
 });
 
 describe('input validation before side effects', () => {
-  it('rejects an unreadable flow manifest before side effects', async () => {
+  it('runAction derives and persists an absent custom flow-path, then converges to curated', async () => {
+    const previousCwd = process.cwd();
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-convergence-'));
     mintSpy.mockClear();
     preflightSpy.mockClear();
     telemetrySpy.emitCompletion.mockClear();
+    const actionCore = silentCore();
+    const postman = createInjectedPostman();
+    const customFlowPath = 'ci/generated-smoke-flow.yaml';
+
+    try {
+      writeFileSync(path.join(tempDir, 'openapi.yaml'), DERIVABLE_SPEC);
+      process.chdir(tempDir);
+      const env = {
+        INPUT_PROJECT_NAME: 'payments',
+        INPUT_WORKSPACE_ID: 'ws-1',
+        INPUT_SPEC_ID: 'spec-1',
+        INPUT_SMOKE_COLLECTION_ID: 'col-1',
+        INPUT_FLOW_PATH: customFlowPath,
+        INPUT_SPEC_PATH: 'openapi.yaml',
+        INPUT_POSTMAN_ACCESS_TOKEN: 'pma_at'
+      } as NodeJS.ProcessEnv;
+      const dependencies = { postman, sleep: vi.fn().mockResolvedValue(undefined) };
+
+      const run1 = await runAction(actionCore, env, undefined, dependencies);
+      expect(run1['flow-apply-status']).toBe('success');
+      expect(run1['derived-flow-path']).toBe(customFlowPath);
+      expect(existsSync(path.join(tempDir, customFlowPath))).toBe(true);
+      expect(JSON.parse(run1['flow-apply-summary-json'])).toMatchObject({ flowSource: 'derived' });
+      expect(actionCore.setOutput).toHaveBeenCalledWith('derived-flow-path', customFlowPath);
+      expect(postman.generateCollection).toHaveBeenCalledTimes(1);
+      expect(postman.updateCollection).toHaveBeenCalledTimes(1);
+
+      const run2 = await runAction(actionCore, env, undefined, dependencies);
+      expect(run2['flow-apply-status']).toBe('success');
+      expect(run2['derived-flow-path']).toBe('');
+      expect(JSON.parse(run2['flow-apply-summary-json'])).toMatchObject({ flowSource: 'curated' });
+      expect(actionCore.setOutput).toHaveBeenCalledWith('derived-flow-path', '');
+      expect(postman.generateCollection).toHaveBeenCalledTimes(2);
+      expect(postman.updateCollection).toHaveBeenCalledTimes(2);
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an outside flow-path before mint, preflight, or Postman mutation', async () => {
+    mintSpy.mockClear();
+    preflightSpy.mockClear();
+    telemetrySpy.emitCompletion.mockClear();
+    const postman = createInjectedPostman();
 
     await expect(
       runAction(silentCore(), {
@@ -226,14 +306,16 @@ describe('input validation before side effects', () => {
         INPUT_WORKSPACE_ID: 'ws-1',
         INPUT_SPEC_ID: 'spec-1',
         INPUT_SMOKE_COLLECTION_ID: 'col-1',
-        INPUT_FLOW_PATH: 'definitely-missing-wave1-flow.yaml',
+        INPUT_FLOW_PATH: '../outside-flow.yaml',
         INPUT_POSTMAN_ACCESS_TOKEN: 'pma_at'
-      } as NodeJS.ProcessEnv)
-    ).rejects.toThrow();
+      } as NodeJS.ProcessEnv, undefined, { postman, sleep: vi.fn().mockResolvedValue(undefined) })
+    ).rejects.toThrow(/repository root|traversal/i);
 
     expect(mintSpy).not.toHaveBeenCalled();
     expect(preflightSpy).not.toHaveBeenCalled();
     expect(telemetrySpy.emitCompletion).not.toHaveBeenCalled();
+    expect(postman.generateCollection).not.toHaveBeenCalled();
+    expect(postman.updateCollection).not.toHaveBeenCalled();
   });
 
   it('rejects invalid syntax before token mint, credential preflight, or telemetry', async () => {

@@ -1,10 +1,13 @@
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+
 import {
   ACKNOWLEDGE_NO_FLOW_REFRESH_FLAG,
   parseCliArgs
 } from './lib/cli-args.js';
 import { summarizeError } from './lib/logging.js';
 import { resolveActionVersion } from './action-version.js';
-import { readActionInputs, runAction } from './index.js';
+import { DEFAULT_FLOW_PATH, readActionInputs, runAction } from './index.js';
 import type { CoreLike } from './types.js';
 
 const outputs: Record<string, string> = {};
@@ -56,10 +59,10 @@ export function assertCliNoFlowRefreshAllowed(options: {
   if (flowPath) {
     return;
   }
-  // flow-mode=auto with spec-path derives a curated-equivalent flow; that is
-  // not the destructive uncurated refresh, so no acknowledgment is required.
-  // (If derivation later falls back, fail-on-flow-warning is the guard.)
-  if (options.flowMode === 'auto' && options.specPath?.trim()) {
+  // flow-mode=auto derives (spec-path present) or runs curated from a
+  // manifest already at the conventional default path; neither is the
+  // destructive uncurated refresh, so no acknowledgment is required.
+  if (options.flowMode === 'auto' && (options.specPath?.trim() || defaultFlowManifestExists())) {
     return;
   }
   if (options.acknowledgeNoFlowRefresh) {
@@ -69,6 +72,14 @@ export function assertCliNoFlowRefreshAllowed(options: {
     `Omitting --flow-path without spec-path derivation selects a destructive full canonical Smoke refresh. ` +
       `Re-run with --flow-path <path>, provide --spec-path under flow-mode auto, or pass --${ACKNOWLEDGE_NO_FLOW_REFRESH_FLAG} to acknowledge.`
   );
+}
+
+function defaultFlowManifestExists(): boolean {
+  try {
+    return existsSync(path.resolve('.', DEFAULT_FLOW_PATH));
+  } catch {
+    return false;
+  }
 }
 
 export async function runCli(

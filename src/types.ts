@@ -57,6 +57,7 @@ export type ActionInputs = {
   failOnFlowWarning: boolean;
   keepTempCollectionOnFailure: boolean;
   tempCollectionPrefix: string;
+  persistDerivedFlow: boolean;
   teamId?: string;
   branchStrategy?: string;
   canonicalBranch?: string;
@@ -148,8 +149,8 @@ export type ActionOutputs = {
   'applied-binding-count': string;
   'applied-extract-count': string;
   'assertion-count': string;
-  /** JSON FlowDefinition of the derived flow ('' for curated/none) so callers can persist a curation seed. */
-  'derived-flow-json': string;
+  /** Repo-relative path where this run persisted a derived flow.yaml ('' when nothing was written). */
+  'derived-flow-path': string;
   'sync-status': string;
   'branch-decision': string;
 };

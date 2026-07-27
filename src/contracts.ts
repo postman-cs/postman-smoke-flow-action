@@ -18,6 +18,7 @@ export const smokeFlowActionContract = {
     'fail-on-flow-warning': { required: false, default: 'false' },
     'keep-temp-collection-on-failure': { required: false, default: 'false' },
     'temp-collection-prefix': { required: false, default: '[Smoke][Temp]' },
+    'persist-derived-flow': { required: false, default: 'true' },
     'team-id': { required: false },
     'branch-strategy': { required: false, default: 'legacy' },
     'canonical-branch': { required: false },
@@ -33,7 +34,7 @@ export const smokeFlowActionContract = {
     'applied-binding-count': {},
     'applied-extract-count': {},
     'assertion-count': {},
-    'derived-flow-json': {},
+    'derived-flow-path': {},
     'sync-status': {},
     'branch-decision': {}
   }

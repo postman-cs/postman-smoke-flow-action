@@ -7,9 +7,11 @@ import { smokeFlowActionContract } from './contracts.js';
 import { loadFlowManifest } from './flow/parser.js';
 import { resolveFlowRequests } from './flow/resolver.js';
 import { validateFlowManifest } from './flow/validator.js';
+import { stringifyFlowManifest } from './flow/serializer.js';
 import { deriveFlowFromSpecPath, type DerivedFlowResult } from './flow/derive.js';
 import { summarizeError } from './lib/logging.js';
 import { createMutableSecretMasker, createSecretMasker, type SecretMasker } from './lib/secrets.js';
+import { workspaceFileExists, writeWorkspaceFileExclusive } from './lib/paths.js';
 import type { ActionInputs, ActionOutputs, CoreLike, FlowApplySummary, FlowDefinition, SmokeAuthConfig } from './types.js';
 import {
   buildCuratedSmokeCollection,
@@ -220,6 +222,11 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
       false
     ),
     tempCollectionPrefix: getInput('temp-collection-prefix', env) || '[Smoke][Temp]',
+    persistDerivedFlow: parseBooleanInput(
+      'persist-derived-flow',
+      getInput('persist-derived-flow', env),
+      true
+    ),
     teamId: getInput('team-id', env) || env.POSTMAN_TEAM_ID || undefined,
     branchStrategy: getInput('branch-strategy', env) || 'legacy',
     canonicalBranch: getInput('canonical-branch', env) || undefined,
@@ -336,7 +343,7 @@ function ensureRequiredInputs(inputs: ActionInputs): void {
   }
 }
 
-function validateInputsBeforeSideEffects(inputs: ActionInputs): void {
+export function validateInputsBeforeSideEffects(inputs: ActionInputs): void {
   ensureRequiredInputs(inputs);
   if (inputs.collectionSyncMode !== 'refresh') {
     throw new Error(
@@ -345,16 +352,31 @@ function validateInputsBeforeSideEffects(inputs: ActionInputs): void {
   }
 
   const flowPath = inputs.flowPath?.trim();
-  if (!flowPath) {
+  if (inputs.flowMode === 'off') {
+    if (flowPath) {
+      throw new Error('flow-mode=off cannot be combined with flow-path; remove one of them.');
+    }
     return;
   }
-  const { warnings } = validateFlowManifest(loadFlowManifest(flowPath));
+  if (inputs.flowMode === 'curated' && !flowPath) {
+    throw new Error('flow-mode=curated requires flow-path to point at a flow.yaml manifest.');
+  }
+
+  const effectiveFlowPath = flowPath || DEFAULT_FLOW_PATH;
+  const manifestExists = workspaceFileExists(effectiveFlowPath, 'flow-path');
+  if (!manifestExists) {
+    if (inputs.flowMode === 'curated') {
+      throw new Error(`flow-mode=curated requires flow-path to reference an existing flow.yaml manifest; received ${effectiveFlowPath}.`);
+    }
+    return;
+  }
+  const { warnings } = validateFlowManifest(loadFlowManifest(effectiveFlowPath));
   if (warnings.length > 0 && inputs.failOnFlowWarning) {
     throw new Error(`Flow validation produced ${warnings.length} warning(s) and fail-on-flow-warning=true.`);
   }
 }
 
-function createOutputs(summary: FlowApplySummary, derivedFlow?: FlowDefinition): ActionOutputs {
+function createOutputs(summary: FlowApplySummary, derivedFlowPath?: string): ActionOutputs {
   const envDecision = process.env[BRANCH_DECISION_ENV];
   return {
     'smoke-collection-id': summary.canonicalSmokeCollectionId,
@@ -366,9 +388,7 @@ function createOutputs(summary: FlowApplySummary, derivedFlow?: FlowDefinition):
     'applied-binding-count': String(summary.appliedBindingCount),
     'applied-extract-count': String(summary.appliedExtractCount),
     'assertion-count': String(summary.assertionCount),
-    // Structural curation seed only: operationIds, bindings, extracts. No
-    // request values, auth material, or collection bytes.
-    'derived-flow-json': derivedFlow ? JSON.stringify(derivedFlow) : '',
+    'derived-flow-path': derivedFlowPath ?? '',
     'sync-status': summary.status === 'skipped' ? 'skipped-branch-gate' : 'synced',
     'branch-decision': envDecision ?? ''
   };
@@ -531,43 +551,54 @@ export async function runSmokeFlow(
     throw new Error('flow-mode=curated requires flow-path to point at a flow.yaml manifest.');
   }
 
-  if (!flowPath) {
-    // flow-mode=auto without a curated manifest: derive the flow from the spec.
-    const derived = deriveAutoFlow(inputs, dependencies);
-    if (!derived.flow) {
-      const specPath = inputs.specPath?.trim();
-      if (specPath) {
-        const causes = derived.warnings.map((warning) => warning.message).join(' ');
-        throw new Error(
-          `Flow derivation from spec-path "${specPath}" produced no flow: ${causes} ` +
-            'Fix the spec/exclusions, pass flow-path, or explicitly choose flow-mode=off.'
-        );
-      }
-      return runWithoutFlowManifest(inputs, dependencies, derived.warnings.map((warning) => warning.message));
-    }
+  // One name, one seam: flow-path when set, else the conventional default.
+  // Mode selection keys on FILE EXISTENCE at the effective path, not input
+  // presence, so a derived flow persisted by run 1 makes run 2 curated.
+  const effectiveFlowPath = flowPath || DEFAULT_FLOW_PATH;
+  const manifestExists = workspaceFileExists(effectiveFlowPath, 'flow-path');
+
+  if (inputs.flowMode === 'curated' || manifestExists) {
+    const manifest = loadFlowManifest(effectiveFlowPath);
+    const { flow, warnings } = validateFlowManifest(manifest);
     return runWithFlowDefinition(
       inputs,
       dependencies,
-      derived.flow,
-      derived.warnings.map((warning) => warning.message),
-      'derived',
-      {
-        ...derived.trace,
-        excludedOperationIds: derived.excludedOperationIds
-      }
+      flow,
+      warnings.map((warning) => warning.message),
+      'curated'
     );
   }
 
-  const manifest = loadFlowManifest(flowPath);
-  const { flow, warnings } = validateFlowManifest(manifest);
+  // flow-mode=auto without a manifest at the effective path: derive from the
+  // spec, then persist the result AS that manifest (unless opted out).
+  const derived = deriveAutoFlow(inputs, dependencies);
+  if (!derived.flow) {
+    const specPath = inputs.specPath?.trim();
+    if (specPath) {
+      const causes = derived.warnings.map((warning) => warning.message).join(' ');
+      throw new Error(
+        `Flow derivation from spec-path "${specPath}" produced no flow: ${causes} ` +
+          'Fix the spec/exclusions, pass flow-path, or explicitly choose flow-mode=off.'
+      );
+    }
+    return runWithoutFlowManifest(inputs, dependencies, derived.warnings.map((warning) => warning.message));
+  }
   return runWithFlowDefinition(
     inputs,
     dependencies,
-    flow,
-    warnings.map((warning) => warning.message),
-    'curated'
+    derived.flow,
+    derived.warnings.map((warning) => warning.message),
+    'derived',
+    {
+      ...derived.trace,
+      excludedOperationIds: derived.excludedOperationIds
+    },
+    inputs.persistDerivedFlow ? effectiveFlowPath : undefined
   );
 }
+
+/** Conventional manifest location when flow-path is not supplied. */
+export const DEFAULT_FLOW_PATH = 'postman/flow.yaml';
 
 export function parseFlowMode(raw: string | undefined): 'auto' | 'curated' | 'off' {
   const normalized = String(raw ?? '').trim().toLowerCase();
@@ -618,7 +649,8 @@ async function runWithFlowDefinition(
   flow: FlowDefinition,
   warningMessages: string[],
   flowSource: 'curated' | 'derived',
-  derivation?: NonNullable<FlowApplySummary['derivation']>
+  derivation?: NonNullable<FlowApplySummary['derivation']>,
+  persistTo?: string
 ): Promise<ActionOutputs> {
   const flowName = flow.name;
   const secretMasker = createInputSecretMasker(inputs);
@@ -712,7 +744,19 @@ async function runWithFlowDefinition(
       warnings: warningMessages
     };
 
-    return createOutputs(summary, flowSource === 'derived' ? flow : undefined);
+    // Persist the derived flow as the curated manifest AFTER the apply
+    // succeeded: run 2 finds flow.yaml at the same effective path and takes
+    // the curated branch with zero caller plumbing. Create-only: a manifest
+    // that appeared mid-run (human curation, concurrent job) is never
+    // overwritten - the write fails loudly instead.
+    let derivedFlowPath = '';
+    if (flowSource === 'derived' && persistTo) {
+      writeWorkspaceFileExclusive(persistTo, stringifyFlowManifest(flow), 'flow-path');
+      derivedFlowPath = persistTo;
+      dependencies.core.info(`Persisted the derived flow as ${persistTo}; the next run uses it as the curated manifest.`);
+    }
+
+    return createOutputs(summary, derivedFlowPath);
   } catch (error) {
     runFailed = true;
     const summary: FlowApplySummary = {
@@ -866,7 +910,7 @@ async function runGatedSkip(
     'applied-binding-count': '0',
     'applied-extract-count': '0',
     'assertion-count': '0',
-    'derived-flow-json': '',
+    'derived-flow-path': '',
     'sync-status': 'skipped-branch-gate',
     'branch-decision': serializeBranchDecision(decision)
   };
@@ -880,7 +924,8 @@ async function runGatedSkip(
 export async function runAction(
   actionCore: CoreLike = core,
   env: NodeJS.ProcessEnv = process.env,
-  injectedLogger?: Logger
+  injectedLogger?: Logger,
+  injectedDependencies?: Omit<SmokeFlowDependencies, 'core'>
 ): Promise<ActionOutputs> {
   const logger =
     injectedLogger ??
@@ -955,10 +1000,11 @@ export async function runAction(
     // one of the likeliest failures here; leaving it outside would report the
     // most common failure with no phase at all.
     const outputs = await logger.phase('smoke-flow', async () => {
-      const postman = createSmokeClient(inputs, actionCore, env);
+      const postman = injectedDependencies?.postman ?? createSmokeClient(inputs, actionCore, env);
       return runSmokeFlow(inputs, {
         core: actionCore,
-        postman
+        postman,
+        sleep: injectedDependencies?.sleep
       });
     });
     for (const [name, value] of Object.entries(outputs)) {

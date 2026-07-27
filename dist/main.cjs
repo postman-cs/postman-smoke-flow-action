@@ -1275,7 +1275,7 @@ var require_util = __commonJS({
     var { IncomingMessage } = require("node:http");
     var stream = require("node:stream");
     var net = require("node:net");
-    var { stringify } = require("node:querystring");
+    var { stringify: stringify2 } = require("node:querystring");
     var { EventEmitter: EE, addAbortListener: addAbortListenerNative } = require("node:events");
     var timers = require_timers();
     var { InvalidArgumentError, ConnectTimeoutError } = require_errors();
@@ -1331,7 +1331,7 @@ var require_util = __commonJS({
       if (pathHasQueryOrFragment(url)) {
         throw new Error('Query params cannot be passed when url already contains "?" or "#".');
       }
-      const stringified = stringify(queryParams);
+      const stringified = stringify2(queryParams);
       if (stringified) {
         url += "?" + stringified;
       }
@@ -23016,7 +23016,7 @@ var require_util4 = __commonJS({
         throw new Error("Invalid cookie max-age");
       }
     }
-    function stringify(cookie) {
+    function stringify2(cookie) {
       if (cookie.name.length === 0) {
         return null;
       }
@@ -23070,7 +23070,7 @@ var require_util4 = __commonJS({
       validateCookiePath,
       validateCookieValue,
       toIMFDate,
-      stringify
+      stringify: stringify2
     };
   }
 });
@@ -23218,7 +23218,7 @@ var require_cookies = __commonJS({
   "node_modules/undici/lib/web/cookies/index.js"(exports2, module2) {
     "use strict";
     var { parseSetCookie } = require_parse();
-    var { stringify } = require_util4();
+    var { stringify: stringify2 } = require_util4();
     var { webidl } = require_webidl();
     var { Headers: Headers3 } = require_headers();
     var brandChecks = webidl.brandCheckMultiple([Headers3, globalThis.Headers].filter(Boolean));
@@ -23266,7 +23266,7 @@ var require_cookies = __commonJS({
       webidl.argumentLengthCheck(arguments, 2, "setCookie");
       brandChecks(headers);
       cookie = webidl.converters.Cookie(cookie);
-      const str = stringify(cookie);
+      const str = stringify2(cookie);
       if (str) {
         headers.append("set-cookie", str, true);
       }
@@ -27867,7 +27867,7 @@ var require_stringify = __commonJS({
         props.push(doc.directives.tagString(tag));
       return props.join(" ");
     }
-    function stringify(item, ctx, onComment, onChompKeep) {
+    function stringify2(item, ctx, onComment, onChompKeep) {
       if (identity.isPair(item))
         return item.toString(ctx, onComment, onChompKeep);
       if (identity.isAlias(item)) {
@@ -27896,7 +27896,7 @@ var require_stringify = __commonJS({
 ${ctx.indent}${str}`;
     }
     exports2.createStringifyContext = createStringifyContext;
-    exports2.stringify = stringify;
+    exports2.stringify = stringify2;
   }
 });
 
@@ -27906,7 +27906,7 @@ var require_stringifyPair = __commonJS({
     "use strict";
     var identity = require_identity();
     var Scalar = require_Scalar();
-    var stringify = require_stringify();
+    var stringify2 = require_stringify();
     var stringifyComment = require_stringifyComment();
     function stringifyPair({ key, value }, ctx, onComment, onChompKeep) {
       const { allNullValues, doc, indent, indentStep, options: { commentString, indentSeq, simpleKeys } } = ctx;
@@ -27928,7 +27928,7 @@ var require_stringifyPair = __commonJS({
       });
       let keyCommentDone = false;
       let chompKeep = false;
-      let str = stringify.stringify(key, ctx, () => keyCommentDone = true, () => chompKeep = true);
+      let str = stringify2.stringify(key, ctx, () => keyCommentDone = true, () => chompKeep = true);
       if (!explicitKey && !ctx.inFlow && str.length > 1024) {
         if (simpleKeys)
           throw new Error("With simple keys, single line scalar must not span more than 1024 characters");
@@ -27980,7 +27980,7 @@ ${indent}:`;
         ctx.indent = ctx.indent.substring(2);
       }
       let valueCommentDone = false;
-      const valueStr = stringify.stringify(value, ctx, () => valueCommentDone = true, () => chompKeep = true);
+      const valueStr = stringify2.stringify(value, ctx, () => valueCommentDone = true, () => chompKeep = true);
       let ws = " ";
       if (keyComment || vsb || vcb) {
         ws = vsb ? "\n" : "";
@@ -28121,7 +28121,7 @@ var require_addPairToJSMap = __commonJS({
     "use strict";
     var log = require_log();
     var merge = require_merge();
-    var stringify = require_stringify();
+    var stringify2 = require_stringify();
     var identity = require_identity();
     var toJS = require_toJS();
     function addPairToJSMap(ctx, map, { key, value }) {
@@ -28157,7 +28157,7 @@ var require_addPairToJSMap = __commonJS({
       if (typeof jsKey !== "object")
         return String(jsKey);
       if (identity.isNode(key) && ctx?.doc) {
-        const strCtx = stringify.createStringifyContext(ctx.doc, {});
+        const strCtx = stringify2.createStringifyContext(ctx.doc, {});
         strCtx.anchors = /* @__PURE__ */ new Set();
         for (const node of ctx.anchors.keys())
           strCtx.anchors.add(node.anchor);
@@ -28224,12 +28224,12 @@ var require_stringifyCollection = __commonJS({
   "node_modules/yaml/dist/stringify/stringifyCollection.js"(exports2) {
     "use strict";
     var identity = require_identity();
-    var stringify = require_stringify();
+    var stringify2 = require_stringify();
     var stringifyComment = require_stringifyComment();
     function stringifyCollection(collection, ctx, options) {
       const flow = ctx.inFlow ?? collection.flow;
-      const stringify2 = flow ? stringifyFlowCollection : stringifyBlockCollection;
-      return stringify2(collection, ctx, options);
+      const stringify3 = flow ? stringifyFlowCollection : stringifyBlockCollection;
+      return stringify3(collection, ctx, options);
     }
     function stringifyBlockCollection({ comment, items }, ctx, { blockItemPrefix, flowChars, itemIndent, onChompKeep, onComment }) {
       const { indent, options: { commentString } } = ctx;
@@ -28254,7 +28254,7 @@ var require_stringifyCollection = __commonJS({
           }
         }
         chompKeep = false;
-        let str2 = stringify.stringify(item, itemCtx, () => comment2 = null, () => chompKeep = true);
+        let str2 = stringify2.stringify(item, itemCtx, () => comment2 = null, () => chompKeep = true);
         if (comment2)
           str2 += stringifyComment.lineComment(str2, itemIndent, commentString(comment2));
         if (chompKeep && comment2)
@@ -28321,7 +28321,7 @@ ${indent}${line}` : "\n";
         }
         if (comment)
           reqNewline = true;
-        let str = stringify.stringify(item, itemCtx, () => comment = null);
+        let str = stringify2.stringify(item, itemCtx, () => comment = null);
         reqNewline || (reqNewline = lines.length > linesAtValue || str.includes("\n"));
         if (i < items.length - 1) {
           str += ",";
@@ -29682,7 +29682,7 @@ var require_stringifyDocument = __commonJS({
   "node_modules/yaml/dist/stringify/stringifyDocument.js"(exports2) {
     "use strict";
     var identity = require_identity();
-    var stringify = require_stringify();
+    var stringify2 = require_stringify();
     var stringifyComment = require_stringifyComment();
     function stringifyDocument(doc, options) {
       const lines = [];
@@ -29697,7 +29697,7 @@ var require_stringifyDocument = __commonJS({
       }
       if (hasDirectives)
         lines.push("---");
-      const ctx = stringify.createStringifyContext(doc, options);
+      const ctx = stringify2.createStringifyContext(doc, options);
       const { commentString } = ctx.options;
       if (doc.commentBefore) {
         if (lines.length !== 1)
@@ -29719,7 +29719,7 @@ var require_stringifyDocument = __commonJS({
           contentComment = doc.contents.comment;
         }
         const onChompKeep = contentComment ? void 0 : () => chompKeep = true;
-        let body = stringify.stringify(doc.contents, ctx, () => contentComment = null, onChompKeep);
+        let body = stringify2.stringify(doc.contents, ctx, () => contentComment = null, onChompKeep);
         if (contentComment)
           body += stringifyComment.lineComment(body, "", commentString(contentComment));
         if ((body[0] === "|" || body[0] === ">") && lines[lines.length - 1] === "---") {
@@ -29727,7 +29727,7 @@ var require_stringifyDocument = __commonJS({
         } else
           lines.push(body);
       } else {
-        lines.push(stringify.stringify(doc.contents, ctx));
+        lines.push(stringify2.stringify(doc.contents, ctx));
       }
       if (doc.directives?.docEnd) {
         if (doc.comment) {
@@ -31862,7 +31862,7 @@ var require_cst_scalar = __commonJS({
 var require_cst_stringify = __commonJS({
   "node_modules/yaml/dist/parse/cst-stringify.js"(exports2) {
     "use strict";
-    var stringify = (cst) => "type" in cst ? stringifyToken(cst) : stringifyItem(cst);
+    var stringify2 = (cst) => "type" in cst ? stringifyToken(cst) : stringifyItem(cst);
     function stringifyToken(token) {
       switch (token.type) {
         case "block-scalar": {
@@ -31915,7 +31915,7 @@ var require_cst_stringify = __commonJS({
         res += stringifyToken(value);
       return res;
     }
-    exports2.stringify = stringify;
+    exports2.stringify = stringify2;
   }
 });
 
@@ -33645,7 +33645,7 @@ var require_public_api = __commonJS({
       }
       return doc.toJS(Object.assign({ reviver: _reviver }, options));
     }
-    function stringify(value, replacer, options) {
+    function stringify2(value, replacer, options) {
       let _replacer = null;
       if (typeof replacer === "function" || Array.isArray(replacer)) {
         _replacer = replacer;
@@ -33670,7 +33670,7 @@ var require_public_api = __commonJS({
     exports2.parse = parse4;
     exports2.parseAllDocuments = parseAllDocuments;
     exports2.parseDocument = parseDocument;
-    exports2.stringify = stringify;
+    exports2.stringify = stringify2;
   }
 });
 
@@ -36001,7 +36001,7 @@ function getIDToken(aud) {
 
 // src/index.ts
 var import_node_crypto2 = require("node:crypto");
-var import_node_fs6 = require("node:fs");
+var import_node_fs7 = require("node:fs");
 var import_node_path3 = __toESM(require("node:path"), 1);
 
 // src/contracts.ts
@@ -36025,6 +36025,7 @@ var smokeFlowActionContract = {
     "fail-on-flow-warning": { required: false, default: "false" },
     "keep-temp-collection-on-failure": { required: false, default: "false" },
     "temp-collection-prefix": { required: false, default: "[Smoke][Temp]" },
+    "persist-derived-flow": { required: false, default: "true" },
     "team-id": { required: false },
     "branch-strategy": { required: false, default: "legacy" },
     "canonical-branch": { required: false },
@@ -36040,17 +36041,18 @@ var smokeFlowActionContract = {
     "applied-binding-count": {},
     "applied-extract-count": {},
     "assertion-count": {},
-    "derived-flow-json": {},
+    "derived-flow-path": {},
     "sync-status": {},
     "branch-decision": {}
   }
 };
 
 // src/flow/parser.ts
-var import_node_fs = require("node:fs");
+var import_node_fs2 = require("node:fs");
 var import_yaml = __toESM(require_dist(), 1);
 
 // src/lib/paths.ts
+var import_node_fs = require("node:fs");
 var import_node_path = __toESM(require("node:path"), 1);
 
 // src/lib/errors.ts
@@ -36059,6 +36061,14 @@ var ValidationError = class extends Error {
 
 // src/lib/paths.ts
 function assertPathWithinCwd(targetPath, fieldName) {
+  if (import_node_path.default.isAbsolute(targetPath)) {
+    throw new ValidationError(`${fieldName} must be relative to the repository root; received ${targetPath}`);
+  }
+  if (targetPath.split(/[\\/]+/).includes("..")) {
+    throw new ValidationError(
+      `${fieldName} must stay within the repository root and must not contain lexical traversal; received ${targetPath}`
+    );
+  }
   const base = import_node_path.default.resolve(".");
   const resolved = import_node_path.default.resolve(base, targetPath);
   const relative2 = import_node_path.default.relative(base, resolved);
@@ -36067,11 +36077,109 @@ function assertPathWithinCwd(targetPath, fieldName) {
   }
   return resolved;
 }
+function assertRealPathWithinWorkspace(realPath, workspaceRoot, fieldName, targetPath) {
+  const relative2 = import_node_path.default.relative(workspaceRoot, realPath);
+  if (relative2 === ".." || relative2.startsWith(`..${import_node_path.default.sep}`) || import_node_path.default.isAbsolute(relative2)) {
+    throw new ValidationError(
+      `${fieldName} must stay within the repository root after resolving symlinks; received ${targetPath}`
+    );
+  }
+}
+function assertWorkspaceContainment(targetPath, fieldName) {
+  const resolved = assertPathWithinCwd(targetPath, fieldName);
+  const base = (0, import_node_fs.realpathSync)(import_node_path.default.resolve("."));
+  let probe = import_node_path.default.dirname(resolved);
+  const existingDirs = [];
+  while (true) {
+    try {
+      const stat2 = (0, import_node_fs.lstatSync)(probe);
+      if (stat2.isSymbolicLink()) {
+        throw new ValidationError(`${fieldName} must not traverse symlinks; ${probe} is a symbolic link.`);
+      }
+      existingDirs.push(probe);
+    } catch (error2) {
+      if (error2.code !== "ENOENT") {
+        throw error2;
+      }
+    }
+    const parent = import_node_path.default.dirname(probe);
+    if (parent === probe) break;
+    probe = parent;
+  }
+  const nearestExisting = existingDirs.length > 0 ? existingDirs[0] : base;
+  const realParent = (0, import_node_fs.realpathSync)(nearestExisting);
+  assertRealPathWithinWorkspace(realParent, base, fieldName, targetPath);
+  try {
+    const targetStat = (0, import_node_fs.lstatSync)(resolved);
+    if (targetStat.isSymbolicLink()) {
+      throw new ValidationError(`${fieldName} must not be a symbolic link; received ${targetPath}`);
+    }
+  } catch (error2) {
+    if (error2.code !== "ENOENT") {
+      throw error2;
+    }
+  }
+  return resolved;
+}
+function workspaceFileExists(targetPath, fieldName) {
+  const resolved = assertWorkspaceContainment(targetPath, fieldName);
+  try {
+    (0, import_node_fs.lstatSync)(resolved);
+    return true;
+  } catch (error2) {
+    if (error2.code === "ENOENT") {
+      return false;
+    }
+    throw error2;
+  }
+}
+function resolveWorkspaceRegularFile(targetPath, fieldName) {
+  const resolved = assertWorkspaceContainment(targetPath, fieldName);
+  let targetStat;
+  try {
+    targetStat = (0, import_node_fs.lstatSync)(resolved);
+  } catch (error2) {
+    if (error2.code === "ENOENT") {
+      throw new ValidationError(`${fieldName} must reference an existing regular file; received ${targetPath}`);
+    }
+    throw error2;
+  }
+  if (!targetStat.isFile()) {
+    throw new ValidationError(`${fieldName} must reference a regular file; received ${targetPath}`);
+  }
+  const realTarget = (0, import_node_fs.realpathSync)(resolved);
+  assertRealPathWithinWorkspace(realTarget, (0, import_node_fs.realpathSync)(import_node_path.default.resolve(".")), fieldName, targetPath);
+  return realTarget;
+}
+function writeWorkspaceFileExclusive(targetPath, content, fieldName) {
+  const resolved = assertWorkspaceContainment(targetPath, fieldName);
+  const base = (0, import_node_fs.realpathSync)(import_node_path.default.resolve("."));
+  (0, import_node_fs.mkdirSync)(import_node_path.default.dirname(resolved), { recursive: true });
+  const lexicalParent = import_node_path.default.dirname(resolved);
+  const realDir = (0, import_node_fs.realpathSync)(lexicalParent);
+  assertRealPathWithinWorkspace(realDir, base, fieldName, targetPath);
+  const target = import_node_path.default.join(realDir, import_node_path.default.basename(resolved));
+  try {
+    const targetStat = (0, import_node_fs.lstatSync)(target);
+    if (targetStat.isSymbolicLink()) {
+      throw new ValidationError(`${fieldName} must not be a symbolic link; received ${targetPath}`);
+    }
+    if (!targetStat.isFile()) {
+      throw new ValidationError(`${fieldName} must not collide with a non-regular file; received ${targetPath}`);
+    }
+  } catch (error2) {
+    if (error2.code !== "ENOENT") {
+      throw error2;
+    }
+  }
+  (0, import_node_fs.writeFileSync)(target, content, { encoding: "utf8", flag: "wx" });
+  return resolved;
+}
 
 // src/flow/parser.ts
 function loadFlowManifest(flowPath) {
-  const resolved = assertPathWithinCwd(flowPath, "flow-path");
-  const raw = (0, import_node_fs.readFileSync)(resolved, "utf8");
+  const resolved = resolveWorkspaceRegularFile(flowPath, "flow-path");
+  const raw = (0, import_node_fs2.readFileSync)(resolved, "utf8");
   const parsed = (0, import_yaml.parse)(raw);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new ValidationError("flow.yaml must parse to an object.");
@@ -36080,11 +36188,11 @@ function loadFlowManifest(flowPath) {
 }
 
 // src/flow/resolver.ts
-var import_node_fs3 = require("node:fs");
+var import_node_fs4 = require("node:fs");
 var import_yaml3 = __toESM(require_dist(), 1);
 
 // src/flow/derive.ts
-var import_node_fs2 = require("node:fs");
+var import_node_fs3 = require("node:fs");
 var import_yaml2 = __toESM(require_dist(), 1);
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
@@ -36236,7 +36344,7 @@ function fallbackOperationId(method, pathKey) {
 }
 function loadSpecDocument(specPath) {
   const resolved = assertPathWithinCwd(specPath, "spec-path");
-  const raw = (0, import_node_fs2.readFileSync)(resolved, "utf8");
+  const raw = (0, import_node_fs3.readFileSync)(resolved, "utf8");
   const document = (0, import_yaml2.parse)(raw);
   if (!document || typeof document !== "object" || Array.isArray(document)) {
     throw new ValidationError("spec-path must parse to an OpenAPI document object.");
@@ -36594,7 +36702,7 @@ function loadOperationMatches(specPath) {
   if (!specPath) {
     return /* @__PURE__ */ new Map();
   }
-  const document = (0, import_yaml3.parse)((0, import_node_fs3.readFileSync)(specPath, "utf8"));
+  const document = (0, import_yaml3.parse)((0, import_node_fs4.readFileSync)(specPath, "utf8"));
   const paths = asRecord2(document?.paths);
   if (!paths) {
     return /* @__PURE__ */ new Map();
@@ -36706,6 +36814,13 @@ function validateFlowManifest(manifest) {
     }
   }
   return { flow, warnings };
+}
+
+// src/flow/serializer.ts
+var import_yaml4 = __toESM(require_dist(), 1);
+function stringifyFlowManifest(flow, spec) {
+  const manifest = spec ? { spec, flows: [flow] } : { flows: [flow] };
+  return (0, import_yaml4.stringify)(manifest);
 }
 
 // src/lib/logging.ts
@@ -39493,7 +39608,7 @@ async function runCredentialPreflight(args) {
 }
 
 // src/lib/repo-branch-decision.ts
-var import_node_fs4 = require("node:fs");
+var import_node_fs5 = require("node:fs");
 var ContractError = class extends Error {
   code;
   constructor(code, message) {
@@ -39533,7 +39648,7 @@ function readGithubEvent(env) {
   const path8 = clean(env.GITHUB_EVENT_PATH);
   if (!path8) return void 0;
   try {
-    return JSON.parse((0, import_node_fs4.readFileSync)(path8, "utf8"));
+    return JSON.parse((0, import_node_fs5.readFileSync)(path8, "utf8"));
   } catch {
     return void 0;
   }
@@ -40334,14 +40449,14 @@ function createLogger(options) {
 }
 
 // src/action-version.ts
-var import_node_fs5 = require("node:fs");
+var import_node_fs6 = require("node:fs");
 var import_node_path2 = require("node:path");
 function resolveActionVersion2() {
   if (false) {
     return void 0;
   }
   try {
-    const raw = (0, import_node_fs5.readFileSync)((0, import_node_path2.join)(__dirname, "..", "package.json"), "utf8");
+    const raw = (0, import_node_fs6.readFileSync)((0, import_node_path2.join)(__dirname, "..", "package.json"), "utf8");
     return JSON.parse(raw).version ?? "unknown";
   } catch {
     return "unknown";
@@ -40487,6 +40602,11 @@ function readActionInputs(env = process.env) {
       false
     ),
     tempCollectionPrefix: getInput2("temp-collection-prefix", env) || "[Smoke][Temp]",
+    persistDerivedFlow: parseBooleanInput(
+      "persist-derived-flow",
+      getInput2("persist-derived-flow", env),
+      true
+    ),
     teamId: getInput2("team-id", env) || env.POSTMAN_TEAM_ID || void 0,
     branchStrategy: getInput2("branch-strategy", env) || "legacy",
     canonicalBranch: getInput2("canonical-branch", env) || void 0,
@@ -40498,8 +40618,8 @@ function writeDebugDump(debugDumpPath, collection, actionCore) {
     return;
   }
   const resolvedPath = import_node_path3.default.isAbsolute(debugDumpPath) ? debugDumpPath : import_node_path3.default.resolve(process.cwd(), debugDumpPath);
-  (0, import_node_fs6.mkdirSync)(import_node_path3.default.dirname(resolvedPath), { recursive: true });
-  (0, import_node_fs6.writeFileSync)(resolvedPath, `${JSON.stringify(collection, null, 2)}
+  (0, import_node_fs7.mkdirSync)(import_node_path3.default.dirname(resolvedPath), { recursive: true });
+  (0, import_node_fs7.writeFileSync)(resolvedPath, `${JSON.stringify(collection, null, 2)}
 `, "utf8");
   actionCore.info(`Wrote transformed collection debug dump to ${resolvedPath}`);
 }
@@ -40586,15 +40706,29 @@ function validateInputsBeforeSideEffects(inputs) {
     );
   }
   const flowPath = inputs.flowPath?.trim();
-  if (!flowPath) {
+  if (inputs.flowMode === "off") {
+    if (flowPath) {
+      throw new Error("flow-mode=off cannot be combined with flow-path; remove one of them.");
+    }
     return;
   }
-  const { warnings } = validateFlowManifest(loadFlowManifest(flowPath));
+  if (inputs.flowMode === "curated" && !flowPath) {
+    throw new Error("flow-mode=curated requires flow-path to point at a flow.yaml manifest.");
+  }
+  const effectiveFlowPath = flowPath || DEFAULT_FLOW_PATH;
+  const manifestExists = workspaceFileExists(effectiveFlowPath, "flow-path");
+  if (!manifestExists) {
+    if (inputs.flowMode === "curated") {
+      throw new Error(`flow-mode=curated requires flow-path to reference an existing flow.yaml manifest; received ${effectiveFlowPath}.`);
+    }
+    return;
+  }
+  const { warnings } = validateFlowManifest(loadFlowManifest(effectiveFlowPath));
   if (warnings.length > 0 && inputs.failOnFlowWarning) {
     throw new Error(`Flow validation produced ${warnings.length} warning(s) and fail-on-flow-warning=true.`);
   }
 }
-function createOutputs(summary2, derivedFlow) {
+function createOutputs(summary2, derivedFlowPath) {
   const envDecision = process.env[BRANCH_DECISION_ENV];
   return {
     "smoke-collection-id": summary2.canonicalSmokeCollectionId,
@@ -40606,9 +40740,7 @@ function createOutputs(summary2, derivedFlow) {
     "applied-binding-count": String(summary2.appliedBindingCount),
     "applied-extract-count": String(summary2.appliedExtractCount),
     "assertion-count": String(summary2.assertionCount),
-    // Structural curation seed only: operationIds, bindings, extracts. No
-    // request values, auth material, or collection bytes.
-    "derived-flow-json": derivedFlow ? JSON.stringify(derivedFlow) : "",
+    "derived-flow-path": derivedFlowPath ?? "",
     "sync-status": summary2.status === "skipped" ? "skipped-branch-gate" : "synced",
     "branch-decision": envDecision ?? ""
   };
@@ -40743,40 +40875,44 @@ async function runSmokeFlow(inputs, dependencies) {
   if (inputs.flowMode === "curated" && !flowPath) {
     throw new Error("flow-mode=curated requires flow-path to point at a flow.yaml manifest.");
   }
-  if (!flowPath) {
-    const derived = deriveAutoFlow(inputs, dependencies);
-    if (!derived.flow) {
-      const specPath = inputs.specPath?.trim();
-      if (specPath) {
-        const causes = derived.warnings.map((warning2) => warning2.message).join(" ");
-        throw new Error(
-          `Flow derivation from spec-path "${specPath}" produced no flow: ${causes} Fix the spec/exclusions, pass flow-path, or explicitly choose flow-mode=off.`
-        );
-      }
-      return runWithoutFlowManifest(inputs, dependencies, derived.warnings.map((warning2) => warning2.message));
-    }
+  const effectiveFlowPath = flowPath || DEFAULT_FLOW_PATH;
+  const manifestExists = workspaceFileExists(effectiveFlowPath, "flow-path");
+  if (inputs.flowMode === "curated" || manifestExists) {
+    const manifest = loadFlowManifest(effectiveFlowPath);
+    const { flow, warnings } = validateFlowManifest(manifest);
     return runWithFlowDefinition(
       inputs,
       dependencies,
-      derived.flow,
-      derived.warnings.map((warning2) => warning2.message),
-      "derived",
-      {
-        ...derived.trace,
-        excludedOperationIds: derived.excludedOperationIds
-      }
+      flow,
+      warnings.map((warning2) => warning2.message),
+      "curated"
     );
   }
-  const manifest = loadFlowManifest(flowPath);
-  const { flow, warnings } = validateFlowManifest(manifest);
+  const derived = deriveAutoFlow(inputs, dependencies);
+  if (!derived.flow) {
+    const specPath = inputs.specPath?.trim();
+    if (specPath) {
+      const causes = derived.warnings.map((warning2) => warning2.message).join(" ");
+      throw new Error(
+        `Flow derivation from spec-path "${specPath}" produced no flow: ${causes} Fix the spec/exclusions, pass flow-path, or explicitly choose flow-mode=off.`
+      );
+    }
+    return runWithoutFlowManifest(inputs, dependencies, derived.warnings.map((warning2) => warning2.message));
+  }
   return runWithFlowDefinition(
     inputs,
     dependencies,
-    flow,
-    warnings.map((warning2) => warning2.message),
-    "curated"
+    derived.flow,
+    derived.warnings.map((warning2) => warning2.message),
+    "derived",
+    {
+      ...derived.trace,
+      excludedOperationIds: derived.excludedOperationIds
+    },
+    inputs.persistDerivedFlow ? effectiveFlowPath : void 0
   );
 }
+var DEFAULT_FLOW_PATH = "postman/flow.yaml";
 function parseFlowMode(raw) {
   const normalized = String(raw ?? "").trim().toLowerCase();
   if (!normalized || normalized === "auto") return "auto";
@@ -40814,7 +40950,7 @@ function deriveAutoFlow(inputs, dependencies) {
   }
   return derived;
 }
-async function runWithFlowDefinition(inputs, dependencies, flow, warningMessages, flowSource, derivation) {
+async function runWithFlowDefinition(inputs, dependencies, flow, warningMessages, flowSource, derivation, persistTo) {
   const flowName = flow.name;
   const secretMasker = createInputSecretMasker(inputs);
   warningMessages.forEach((message) => dependencies.core.warning(message));
@@ -40888,7 +41024,13 @@ async function runWithFlowDefinition(inputs, dependencies, flow, warningMessages
       assertionCount: transformed.assertionCount,
       warnings: warningMessages
     };
-    return createOutputs(summary2, flowSource === "derived" ? flow : void 0);
+    let derivedFlowPath = "";
+    if (flowSource === "derived" && persistTo) {
+      writeWorkspaceFileExclusive(persistTo, stringifyFlowManifest(flow), "flow-path");
+      derivedFlowPath = persistTo;
+      dependencies.core.info(`Persisted the derived flow as ${persistTo}; the next run uses it as the curated manifest.`);
+    }
+    return createOutputs(summary2, derivedFlowPath);
   } catch (error2) {
     runFailed = true;
     const summary2 = {
@@ -41002,7 +41144,7 @@ async function runGatedSkip(inputs, decision, actionCore) {
     "applied-binding-count": "0",
     "applied-extract-count": "0",
     "assertion-count": "0",
-    "derived-flow-json": "",
+    "derived-flow-path": "",
     "sync-status": "skipped-branch-gate",
     "branch-decision": serializeBranchDecision(decision)
   };
@@ -41012,7 +41154,7 @@ async function runGatedSkip(inputs, decision, actionCore) {
   process.env[BRANCH_DECISION_ENV] = serializeBranchDecision(decision);
   return outputs;
 }
-async function runAction(actionCore = core_exports, env = process.env, injectedLogger) {
+async function runAction(actionCore = core_exports, env = process.env, injectedLogger, injectedDependencies) {
   const logger = injectedLogger ?? createLogger({
     sink: actionSink(actionCore),
     env,
@@ -41072,10 +41214,11 @@ async function runAction(actionCore = core_exports, env = process.env, injectedL
   });
   try {
     const outputs = await logger.phase("smoke-flow", async () => {
-      const postman = createSmokeClient(inputs, actionCore, env);
+      const postman = injectedDependencies?.postman ?? createSmokeClient(inputs, actionCore, env);
       return runSmokeFlow(inputs, {
         core: actionCore,
-        postman
+        postman,
+        sleep: injectedDependencies?.sleep
       });
     });
     for (const [name, value] of Object.entries(outputs)) {

@@ -1,15 +1,16 @@
 # Derived Smoke Flows
 
-Under `flow-mode: auto` (the default), when no curated `flow.yaml` is provided via `flow-path`, the action derives a smoke flow deterministically from the OpenAPI document at `spec-path`. The derived flow uses the exact same `FlowDefinition` shape as a curated manifest, so resolution, script injection, verification, and outputs are identical to the curated path.
+Under `flow-mode: auto` (the default), the action resolves one effective flow path — `flow-path` when set, else `postman/flow.yaml` — and keys mode selection on **file existence at that path**, not input presence. A manifest there runs curated; no manifest means the flow is derived deterministically from the OpenAPI document at `spec-path` and then persisted to that same path. The derived flow uses the exact same `FlowDefinition` shape as a curated manifest, so resolution, script injection, verification, and outputs are identical to the curated path.
 
 ## Mode selection
 
-| `flow-mode` | `flow-path` | Behavior |
+| `flow-mode` | manifest at effective path | Behavior |
 | --- | --- | --- |
-| `auto` (default) | set | Curated `flow.yaml` is applied (derivation never runs). |
-| `auto` | unset, `spec-path` set | Flow is derived from the spec. Zero-step derivation (no operations, or every operation excluded) is a hard error — no fallback to the uncurated refresh. |
-| `auto` | unset, `spec-path` unset | Warning + uncurated refresh (legacy behavior). |
-| `curated` | set | Curated `flow.yaml` is applied. |
+| `auto` (default) | exists, valid | Curated `flow.yaml` is applied (derivation never runs). |
+| `auto` | exists, invalid | Hard error — a broken manifest is never silently derived over. |
+| `auto` | absent, `spec-path` set | Flow is derived from the spec, applied, then persisted to the effective path (create-only; `persist-derived-flow: false` opts out). Zero-step derivation (no operations, or every operation excluded) is a hard error — no fallback to the uncurated refresh. |
+| `auto` | absent, `spec-path` unset | Warning + uncurated refresh (legacy behavior). |
+| `curated` | exists (`flow-path` required) | Curated `flow.yaml` is applied. |
 | `curated` | unset | Error. |
 | `off` | unset | Uncurated refresh, no warning. |
 | `off` | set | Error. |
@@ -47,7 +48,7 @@ Flow steps resolve to generated requests through tiers, strongest first:
 
 ## Curation seed export
 
-Derived runs emit the applied `FlowDefinition` on the `derived-flow-json` output — structural data only (operationIds, bindings, extracts; no request values or auth material). Persist it as `flow.yaml` to promote a derived flow into curated mode.
+Derived runs persist the applied flow as a curated `flow.yaml` manifest at the effective flow path (`flow-path`, or `postman/flow.yaml` when omitted) and report that path on the `derived-flow-path` output. The write happens only after the apply succeeds, is create-only (an existing manifest is never overwritten), and can be disabled with `persist-derived-flow: false`. Commit the file to promote the derived flow into curated mode; the next run finds it at the same path and takes the curated branch automatically.
 
 ## What derivation does not do (v1)
 
