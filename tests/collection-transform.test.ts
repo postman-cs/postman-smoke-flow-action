@@ -518,7 +518,10 @@ describe('collection transform', () => {
       collectionName: '[Smoke] Widgets API',
       scriptSourceCollection: existingCollection
     });
-    const folder = (result.collection.item as Array<Record<string, unknown>>)[0] as Record<string, unknown>;
+    const topItems = result.collection.item as Array<Record<string, unknown>>;
+    // The secrets resolver item leads the generated collection by default.
+    expect(JSON.stringify(topItems[0])).toContain('SecretString');
+    const folder = topItems[1] as Record<string, unknown>;
     const item = (folder.item as Array<Record<string, unknown>>)[0] as Record<string, unknown>;
     const request = item.request as Record<string, unknown>;
     const headers = request.header as Array<Record<string, unknown>>;
@@ -620,7 +623,9 @@ describe('collection transform', () => {
     const result = buildGeneratedSmokeCollection(generatedCollection, undefined, {
       scriptSourceCollection: existingCollection
     });
-    const items = result.collection.item as Array<Record<string, unknown>>;
+    const items = (result.collection.item as Array<Record<string, unknown>>).filter(
+      (item) => !JSON.stringify(item).includes('SecretString')
+    );
 
     expect(JSON.stringify(items[0]?.event)).toContain('canonical list widgets');
     expect(items[1]?.event).toBeUndefined();

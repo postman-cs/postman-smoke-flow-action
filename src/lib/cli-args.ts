@@ -8,6 +8,7 @@ const BOOLEAN_FALSE = new Set(['0', 'false', 'no', 'off']);
 const BOOLEAN_INPUT_OPTIONS = new Set([
   'secrets-resolver-enabled',
   'fail-on-flow-warning',
+  'flow-allow-delete',
   'keep-temp-collection-on-failure'
 ]);
 

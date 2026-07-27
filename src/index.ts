@@ -7,9 +7,10 @@ import { smokeFlowActionContract } from './contracts.js';
 import { loadFlowManifest } from './flow/parser.js';
 import { resolveFlowRequests } from './flow/resolver.js';
 import { validateFlowManifest } from './flow/validator.js';
+import { deriveFlowFromSpecPath, type DerivedFlowResult } from './flow/derive.js';
 import { summarizeError } from './lib/logging.js';
 import { createMutableSecretMasker, createSecretMasker, type SecretMasker } from './lib/secrets.js';
-import type { ActionInputs, ActionOutputs, CoreLike, FlowApplySummary, SmokeAuthConfig } from './types.js';
+import type { ActionInputs, ActionOutputs, CoreLike, FlowApplySummary, FlowDefinition, SmokeAuthConfig } from './types.js';
 import {
   buildCuratedSmokeCollection,
   buildGeneratedSmokeCollection,
@@ -189,6 +190,12 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
     specId: getInput('spec-id', env),
     smokeCollectionId: getInput('smoke-collection-id', env),
     flowPath: getInput('flow-path', env) || undefined,
+    flowMode: parseFlowMode(getInput('flow-mode', env)),
+    flowAllowDelete: parseBooleanInput(
+      'flow-allow-delete',
+      getInput('flow-allow-delete', env),
+      false
+    ),
     postmanApiKey: getInput('postman-api-key', env) || env.POSTMAN_API_KEY || '',
     postmanApiBaseUrl: resolvePostmanApiBaseUrl(getInput('postman-region', env)),
     postmanIapubBaseUrl: resolvePostmanIapubBaseUrl(getInput('postman-region', env)),
@@ -376,14 +383,24 @@ function getCollectionName(collection: JsonRecord): string | undefined {
 
 async function runWithoutFlowManifest(
   inputs: ActionInputs,
-  dependencies: SmokeFlowDependencies
+  dependencies: SmokeFlowDependencies,
+  extraWarnings: string[] = []
 ): Promise<ActionOutputs> {
+  extraWarnings.forEach((message) => dependencies.core.warning(message));
+  // fail-on-flow-warning gates BEFORE any Postman mutation: a derivation
+  // fallback warning must never be followed by a destructive uncurated refresh.
+  if (extraWarnings.length > 0 && inputs.failOnFlowWarning) {
+    throw new Error(
+      `Flow derivation produced ${extraWarnings.length} warning(s) and fail-on-flow-warning=true; refusing the uncurated canonical Smoke refresh.`
+    );
+  }
   const authApplied = Boolean(inputs.authConfig?.enabled);
   const secretMasker = createInputSecretMasker(inputs);
   let tempCollectionId = '';
   let tempCollectionDeleted = false;
   let runFailed = false;
   const warnings = [
+    ...extraWarnings,
     authApplied
       ? `flow-path was not provided; refreshed canonical Smoke collection from the generated spec collection and applied ${describeAuthConfig(inputs.authConfig!)} auth without flow curation.`
       : 'flow-path was not provided; refreshed canonical Smoke collection from the generated spec collection without flow curation.'
@@ -497,17 +514,99 @@ export async function runSmokeFlow(
   }
 
   const flowPath = inputs.flowPath?.trim();
-  if (!flowPath) {
+
+  if (inputs.flowMode === 'off') {
+    if (flowPath) {
+      throw new Error('flow-mode=off cannot be combined with flow-path; remove one of them.');
+    }
     return runWithoutFlowManifest(inputs, dependencies);
+  }
+
+  if (inputs.flowMode === 'curated' && !flowPath) {
+    throw new Error('flow-mode=curated requires flow-path to point at a flow.yaml manifest.');
+  }
+
+  if (!flowPath) {
+    // flow-mode=auto without a curated manifest: derive the flow from the spec.
+    const derived = deriveAutoFlow(inputs, dependencies);
+    if (!derived.flow) {
+      return runWithoutFlowManifest(inputs, dependencies, derived.warnings.map((warning) => warning.message));
+    }
+    return runWithFlowDefinition(
+      inputs,
+      dependencies,
+      derived.flow,
+      derived.warnings.map((warning) => warning.message),
+      'derived'
+    );
   }
 
   const manifest = loadFlowManifest(flowPath);
   const { flow, warnings } = validateFlowManifest(manifest);
+  return runWithFlowDefinition(
+    inputs,
+    dependencies,
+    flow,
+    warnings.map((warning) => warning.message),
+    'curated'
+  );
+}
+
+export function parseFlowMode(raw: string | undefined): 'auto' | 'curated' | 'off' {
+  const normalized = String(raw ?? '').trim().toLowerCase();
+  if (!normalized || normalized === 'auto') return 'auto';
+  if (normalized === 'curated') return 'curated';
+  if (normalized === 'off') return 'off';
+  throw new Error(`Invalid flow-mode: ${raw}. Expected auto, curated, or off.`);
+}
+
+function deriveAutoFlow(inputs: ActionInputs, dependencies: SmokeFlowDependencies): DerivedFlowResult {
+  const specPath = inputs.specPath?.trim();
+  if (!specPath) {
+    return {
+      flow: null,
+      warnings: [
+        {
+          message:
+            'flow-mode=auto without flow-path requires spec-path to derive a flow; falling back to uncurated refresh. ' +
+            'Provide spec-path to enable derived flows or set flow-mode=off to silence this warning.'
+        }
+      ],
+      excludedOperationIds: [],
+      trace: {
+        resourceCount: 0,
+        operationCount: 0,
+        derivedStepCount: 0,
+        extractCount: 0,
+        bindingCount: 0,
+        excludedDeleteCount: 0,
+        unresolvedParameterCount: 0
+      }
+    };
+  }
+  const derived = deriveFlowFromSpecPath(specPath, { allowDelete: inputs.flowAllowDelete });
+  if (derived.flow) {
+    dependencies.core.info(
+      `Derived smoke flow "${derived.flow.name}" from ${specPath}: ${derived.trace.derivedStepCount} step(s), ` +
+        `${derived.trace.bindingCount} binding(s), ${derived.trace.extractCount} extract(s), ` +
+        `${derived.trace.excludedDeleteCount} DELETE operation(s) excluded.`
+    );
+  }
+  return derived;
+}
+
+async function runWithFlowDefinition(
+  inputs: ActionInputs,
+  dependencies: SmokeFlowDependencies,
+  flow: FlowDefinition,
+  warningMessages: string[],
+  flowSource: 'curated' | 'derived'
+): Promise<ActionOutputs> {
   const flowName = flow.name;
   const secretMasker = createInputSecretMasker(inputs);
-  warnings.forEach((warning) => dependencies.core.warning(warning.message));
-  if (warnings.length > 0 && inputs.failOnFlowWarning) {
-    throw new Error(`Flow validation produced ${warnings.length} warning(s) and fail-on-flow-warning=true.`);
+  warningMessages.forEach((message) => dependencies.core.warning(message));
+  if (warningMessages.length > 0 && inputs.failOnFlowWarning) {
+    throw new Error(`Flow validation produced ${warningMessages.length} warning(s) and fail-on-flow-warning=true.`);
   }
 
   let tempCollectionId = '';
@@ -537,7 +636,7 @@ export async function runSmokeFlow(
           secretsResolverEnabled: inputs.secretsResolverEnabled
         })
     });
-    dependencies.core.info(`Updated canonical Smoke collection ${inputs.smokeCollectionId} from curated flow.`);
+    dependencies.core.info(`Updated canonical Smoke collection ${inputs.smokeCollectionId} from ${flowSource} flow.`);
 
     const resolvedRequests = resolveFlowRequests(flow, generatedCollection, inputs.specPath);
 
@@ -552,7 +651,7 @@ export async function runSmokeFlow(
       appliedBindingCount: transformed.bindingCount,
       appliedExtractCount: transformed.extractCount,
       assertionCount: transformed.assertionCount,
-      warnings: warnings.map((warning) => warning.message)
+      warnings: warningMessages
     };
 
     return createOutputs(summary);
@@ -569,7 +668,7 @@ export async function runSmokeFlow(
       appliedBindingCount: 0,
       appliedExtractCount: 0,
       assertionCount: 0,
-      warnings: [...warnings.map((warning) => warning.message), secretMasker(summarizeError(error))]
+      warnings: [...warningMessages, secretMasker(summarizeError(error))]
     };
     if (tempCollectionId && !inputs.keepTempCollectionOnFailure) {
       try {

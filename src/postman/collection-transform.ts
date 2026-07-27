@@ -440,8 +440,10 @@ function applyAuthToCollectionItems(items: unknown, authConfig: SmokeAuthConfig)
 
     let nextCount = count;
     const request = asRecord(item.request);
-    const itemName = typeof item.name === 'string' ? item.name : '';
-    if (request && itemName !== LEGACY_SECRETS_RESOLVER_ITEM_NAME && applyAuthToRequest(request, authConfig)) {
+    // The resolver item keeps its AWSv4 auth: matching by isSecretsResolverItem
+    // covers name aliases and the awsv4/secretsmanager heuristic, so target-API
+    // credentials are never applied to (or leak toward) the AWS endpoint.
+    if (request && !isSecretsResolverItem(item) && applyAuthToRequest(request, authConfig)) {
       nextCount += 1;
     }
 
@@ -839,6 +841,9 @@ export function verifyGeneratedSmokeCollection(
   if (!authConfig?.enabled && options.secretsResolverEnabled === false && containsSecretsResolverItem(collection.item)) {
     failures.push('secrets resolver request is still present');
   }
+  if (options.secretsResolverEnabled !== false && !containsSecretsResolverItem(collection.item)) {
+    failures.push('secrets resolver request is missing (secrets-resolver-enabled defaults to true)');
+  }
 
   if (authConfig?.enabled) {
     const authVerification = verifySmokeCollectionAuth(collection, authConfig, options);
@@ -943,6 +948,12 @@ export function buildGeneratedSmokeCollection(
   }
   if (options.secretsResolverEnabled === false) {
     collection.item = removeSecretsResolverItems(collection.item);
+  } else if (!containsSecretsResolverItem(collection.item)) {
+    // Default-enabled contract (action.yml secrets-resolver-enabled=true): the
+    // resolver item leads the generated collection even when the generator did
+    // not emit one.
+    const items = Array.isArray(collection.item) ? collection.item : [];
+    collection.item = [createSecretsResolverItem(), ...items];
   }
   preserveRequestEventsFromCollection(collection, options.scriptSourceCollection);
 

@@ -43,6 +43,8 @@ export type ActionInputs = {
   specId: string;
   smokeCollectionId: string;
   flowPath?: string;
+  flowMode: 'auto' | 'curated' | 'off';
+  flowAllowDelete: boolean;
   postmanApiKey: string;
   postmanApiBaseUrl: string;
   postmanIapubBaseUrl: string;

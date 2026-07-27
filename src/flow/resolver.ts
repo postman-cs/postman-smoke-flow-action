@@ -4,6 +4,7 @@ import { parse } from 'yaml';
 
 import type { FlowDefinition, ResolvedRequest } from '../types.js';
 import { ValidationError } from '../lib/errors.js';
+import { collectOperations } from './derive.js';
 
 type CollectionItem = Record<string, unknown>;
 type OperationMatch = {
@@ -99,19 +100,16 @@ function loadOperationMatches(specPath?: string): Map<string, OperationMatch> {
     return new Map();
   }
 
+  // Shared with derivation: same Path Item $ref handling, same synthetic
+  // fallback operationIds, same collision suffixes. A derived step's
+  // operationId therefore ALWAYS has a method+path entry here, even when the
+  // spec omits operationId entirely.
   const operationMatches = new Map<string, OperationMatch>();
-  for (const [specPathKey, pathItem] of Object.entries(paths)) {
-    const pathRecord = asRecord(pathItem);
-    if (!pathRecord) continue;
-    for (const [method, operation] of Object.entries(pathRecord)) {
-      const operationRecord = asRecord(operation);
-      const operationId = typeof operationRecord?.operationId === 'string' ? operationRecord.operationId : '';
-      if (!operationId) continue;
-      operationMatches.set(operationId, {
-        method: method.toUpperCase(),
-        path: normalizePathTemplate(specPathKey)
-      });
-    }
+  for (const operation of collectOperations(document ?? {})) {
+    operationMatches.set(operation.operationId, {
+      method: operation.method,
+      path: normalizePathTemplate(operation.path)
+    });
   }
 
   return operationMatches;

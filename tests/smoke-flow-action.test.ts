@@ -72,6 +72,8 @@ function createInputs(tempDir: string): ActionInputs {
     specId: 'spec-123',
     smokeCollectionId: 'col-smoke',
     flowPath: 'flow.yaml',
+    flowMode: 'auto',
+    flowAllowDelete: false,
     postmanApiKey: 'PMAK-123',
     postmanApiBaseUrl: 'https://api.getpostman.com',
     postmanIapubBaseUrl: 'https://iapub.postman.co',
@@ -302,6 +304,7 @@ describe('runSmokeFlow', () => {
       const outputs = await runSmokeFlow({
         ...createInputs(tempDir),
         flowPath: undefined,
+        flowMode: 'off' as const,
         secretsResolverEnabled: false,
         authConfig: oauthConfig
       }, createDependencies(core, postman));
@@ -412,6 +415,7 @@ describe('runSmokeFlow', () => {
       const outputs = await runSmokeFlow({
         ...createInputs(tempDir),
         flowPath: undefined,
+        flowMode: 'off' as const,
         secretsResolverEnabled: false,
         authConfig: apiKeyConfig
       }, createDependencies(core, postman));
@@ -557,6 +561,7 @@ describe('runSmokeFlow', () => {
       const outputs = await runSmokeFlow({
         ...createInputs(tempDir),
         flowPath: undefined,
+        flowMode: 'off' as const,
         authConfig: oauthConfig
       }, createDependencies(core, postman));
       const finalCollection = postman.updateCollection.mock.calls[1]?.[1] as Record<string, unknown>;
@@ -619,6 +624,7 @@ describe('runSmokeFlow', () => {
       const outputs = await runSmokeFlow({
         ...createInputs(tempDir),
         flowPath: undefined,
+        flowMode: 'off' as const,
         authConfig: undefined
       }, createDependencies(core, postman));
       const summary = JSON.parse(outputs['flow-apply-summary-json']) as Record<string, unknown>;
@@ -671,6 +677,7 @@ describe('runSmokeFlow', () => {
       await expect(runSmokeFlow({
         ...createInputs(tempDir),
         flowPath: undefined,
+        flowMode: 'off' as const,
         authConfig: undefined
       }, createDependencies(core, postman))).rejects.toThrow(
         /Canonical Smoke collection update for col-smoke did not persist.*generated Smoke request\(s\) missing URL: createPayment.*Fix the reported verification mismatch; if another sync is overwriting collection col-smoke, stop or serialize that sync before rerunning/

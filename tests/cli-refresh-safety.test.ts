@@ -69,10 +69,13 @@ describe('CLI no-flow refresh safety', () => {
     expect(telemetrySpy.emitCompletion).not.toHaveBeenCalled();
   });
 
-  it('requires an explicit acknowledgment for CLI no-flow destructive refresh', () => {
+  it('requires an explicit acknowledgment only when a run would actually be an uncurated refresh', () => {
+    // No flow-path, no spec-path derivation: destructive, ack required.
     expect(() =>
       assertCliNoFlowRefreshAllowed({
         flowPath: undefined,
+        flowMode: 'auto',
+        specPath: undefined,
         acknowledgeNoFlowRefresh: false
       })
     ).toThrow(/acknowledge-no-flow-refresh/);
@@ -80,6 +83,8 @@ describe('CLI no-flow refresh safety', () => {
     expect(() =>
       assertCliNoFlowRefreshAllowed({
         flowPath: undefined,
+        flowMode: 'auto',
+        specPath: undefined,
         acknowledgeNoFlowRefresh: true
       })
     ).not.toThrow();
@@ -87,9 +92,31 @@ describe('CLI no-flow refresh safety', () => {
     expect(() =>
       assertCliNoFlowRefreshAllowed({
         flowPath: 'flow.yaml',
+        flowMode: 'auto',
+        specPath: undefined,
         acknowledgeNoFlowRefresh: false
       })
     ).not.toThrow();
+
+    // flow-mode=auto with spec-path derives a flow: no ack needed.
+    expect(() =>
+      assertCliNoFlowRefreshAllowed({
+        flowPath: undefined,
+        flowMode: 'auto',
+        specPath: 'openapi.yaml',
+        acknowledgeNoFlowRefresh: false
+      })
+    ).not.toThrow();
+
+    // flow-mode=off is always the uncurated refresh: ack required even with spec-path.
+    expect(() =>
+      assertCliNoFlowRefreshAllowed({
+        flowPath: undefined,
+        flowMode: 'off',
+        specPath: 'openapi.yaml',
+        acknowledgeNoFlowRefresh: false
+      })
+    ).toThrow(/acknowledge-no-flow-refresh/);
   });
 
   it('preserves GitHub Action no-flow behavior without the CLI acknowledgment flag', async () => {

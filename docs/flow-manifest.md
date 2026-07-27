@@ -36,7 +36,7 @@ Run this action after postman-bootstrap-action has created or refreshed the work
 - The action first tries to resolve each flow step by matching the generated request name or description to the step `operationId`.
 - If `spec-path` is provided, it can also fall back to matching by request method plus normalized path shape from the OpenAPI document.
 - In v1, one `flow.yaml` maps to one curated Smoke collection journey.
-- If `flow-path` is omitted, the action does not generate a temporary collection, apply flow scripts, or reorder existing Smoke requests.
+- If `flow-path` is omitted under `flow-mode: auto` (the default), the action derives a deterministic smoke flow from `spec-path` (see [docs/derived-flow.md](derived-flow.md)); without `spec-path`, or under `flow-mode: off`, it refreshes the canonical Smoke collection without flow curation.
 - If `flow-path` is provided but the file is missing, the action fails because the caller explicitly requested flow mode.
 - This action intentionally does not mutate baseline or contract collections.
 - Runtime auth support is optional and Smoke-only; contract collection auth is intentionally deferred.

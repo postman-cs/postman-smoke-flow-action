@@ -32,7 +32,8 @@ canonical collection from the generated spec collection.
 
 Options mirror action.yml inputs as --kebab-case flags.
 
-Destructive no-flow refresh (omitting --flow-path) requires:
+Destructive no-flow refresh (omitting --flow-path without spec-path
+derivation under flow-mode auto) requires:
   --${ACKNOWLEDGE_NO_FLOW_REFRESH_FLAG}
 
 Other:
@@ -47,18 +48,26 @@ function printVersion(): void {
 
 export function assertCliNoFlowRefreshAllowed(options: {
   flowPath: string | undefined;
+  flowMode: 'auto' | 'curated' | 'off';
+  specPath: string | undefined;
   acknowledgeNoFlowRefresh: boolean;
 }): void {
   const flowPath = options.flowPath?.trim();
   if (flowPath) {
     return;
   }
+  // flow-mode=auto with spec-path derives a curated-equivalent flow; that is
+  // not the destructive uncurated refresh, so no acknowledgment is required.
+  // (If derivation later falls back, fail-on-flow-warning is the guard.)
+  if (options.flowMode === 'auto' && options.specPath?.trim()) {
+    return;
+  }
   if (options.acknowledgeNoFlowRefresh) {
     return;
   }
   throw new Error(
-    `Omitting --flow-path selects a destructive full canonical Smoke refresh. ` +
-      `Re-run with --flow-path <path> or pass --${ACKNOWLEDGE_NO_FLOW_REFRESH_FLAG} to acknowledge.`
+    `Omitting --flow-path without spec-path derivation selects a destructive full canonical Smoke refresh. ` +
+      `Re-run with --flow-path <path>, provide --spec-path under flow-mode auto, or pass --${ACKNOWLEDGE_NO_FLOW_REFRESH_FLAG} to acknowledge.`
   );
 }
 
@@ -81,6 +90,8 @@ export async function runCli(
   const inputs = readActionInputs(mergedEnv);
   assertCliNoFlowRefreshAllowed({
     flowPath: inputs.flowPath,
+    flowMode: inputs.flowMode,
+    specPath: inputs.specPath,
     acknowledgeNoFlowRefresh: parsed.acknowledgeNoFlowRefresh
   });
 
