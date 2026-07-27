@@ -116,7 +116,7 @@ describe('collection transform', () => {
       }
     ];
 
-    const result = buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests);
+    const result = buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests, undefined, 'aws');
     const items = result.collection.item as Array<Record<string, unknown>>;
 
     expect(result.bindingCount).toBe(1);
@@ -155,7 +155,7 @@ describe('collection transform', () => {
         }
       ],
       undefined,
-      false
+      'none'
     );
     const items = result.collection.item as Array<Record<string, unknown>>;
 
@@ -203,7 +203,7 @@ describe('collection transform', () => {
       }
     ];
 
-    const result = buildCuratedSmokeCollection(generatedCollection, exampleFlow, resolvedRequests);
+    const result = buildCuratedSmokeCollection(generatedCollection, exampleFlow, resolvedRequests, undefined, 'aws');
     const items = result.collection.item as Array<Record<string, unknown>>;
     const requestBody = JSON.stringify((items[1] as Record<string, unknown>).request);
     const prerequest = JSON.stringify((items[1] as Record<string, unknown>).event);
@@ -265,7 +265,7 @@ describe('collection transform', () => {
       }
     ];
 
-    const result = buildCuratedSmokeCollection(generatedCollection, providerFlow, resolvedRequests);
+    const result = buildCuratedSmokeCollection(generatedCollection, providerFlow, resolvedRequests, undefined, 'aws');
     const items = result.collection.item as Array<Record<string, unknown>>;
     const request = (items[1] as Record<string, unknown>).request as Record<string, unknown>;
     const url = request.url as Record<string, unknown>;
@@ -311,7 +311,9 @@ describe('collection transform', () => {
             }
           }
         }
-      ]
+      ],
+      undefined,
+      'aws'
     );
 
     const items = result.collection.item as Array<Record<string, unknown>>;
@@ -337,7 +339,8 @@ describe('collection transform', () => {
           }
         }
       ],
-      oauthConfig
+      oauthConfig,
+      'aws'
     );
 
     const collectionText = JSON.stringify(result.collection);
@@ -389,7 +392,8 @@ describe('collection transform', () => {
           }
         }
       ],
-      apiKeyConfig
+      apiKeyConfig,
+      'aws'
     );
 
     const collectionText = JSON.stringify(result.collection);
@@ -436,7 +440,8 @@ describe('collection transform', () => {
           }
         }
       ],
-      queryApiKeyConfig
+      queryApiKeyConfig,
+      'aws'
     );
 
     const items = result.collection.item as Array<Record<string, unknown>>;
@@ -515,6 +520,7 @@ describe('collection transform', () => {
     };
 
     const result = buildGeneratedSmokeCollection(generatedCollection, apiKeyConfig, {
+      secretsResolverProvider: 'aws',
       collectionName: '[Smoke] Widgets API',
       scriptSourceCollection: existingCollection
     });
@@ -838,6 +844,33 @@ describe('collection transform', () => {
     expect(JSON.stringify(result.collection)).not.toContain('old-static-key');
   });
 
+  it('auth-only updates leave an existing resolver in place unless explicitly opted out', () => {
+    const existingCollection = {
+      info: { name: '[Smoke] Providers API' },
+      item: [
+        {
+          name: '00 - Resolve Secrets',
+          request: { auth: { type: 'awsv4' }, method: 'POST', url: 'https://secretsmanager.us-west-2.amazonaws.com' }
+        },
+        {
+          name: 'searchProviders',
+          request: { method: 'GET', url: '{{baseUrl}}/v1/providers' }
+        }
+      ]
+    };
+
+    // No provider passed: an auth refresh must not silently strip a resolver
+    // the caller already has in Postman.
+    const applied = applySmokeCollectionAuth(existingCollection, oauthConfig);
+    const names = (applied.collection.item as Array<Record<string, unknown>>).map((item) => item.name);
+    expect(names).toContain('00 - Resolve Secrets');
+
+    // Explicit opt-out still removes it.
+    const optedOut = applySmokeCollectionAuth(existingCollection, oauthConfig, { secretsResolverProvider: 'none' });
+    const optedOutNames = (optedOut.collection.item as Array<Record<string, unknown>>).map((item) => item.name);
+    expect(optedOutNames).not.toContain('00 - Resolve Secrets');
+  });
+
   it('removes the legacy secrets resolver during auth-only updates when disabled', () => {
     const existingCollection = {
       info: { name: '[Smoke] Providers API' },
@@ -884,7 +917,7 @@ describe('collection transform', () => {
     };
 
     const result = applySmokeCollectionAuth(existingCollection, oauthConfig, {
-      secretsResolverEnabled: false
+      secretsResolverProvider: 'none'
     });
     const collectionText = JSON.stringify(result.collection);
     const items = result.collection.item as Array<Record<string, unknown>>;

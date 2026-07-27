@@ -105,7 +105,7 @@ function derivedInputs(tempDir: string, overrides: Partial<ActionInputs> = {}): 
     postmanApiKey: 'PMAK-123',
     postmanApiBaseUrl: 'https://api.getpostman.com',
     postmanIapubBaseUrl: 'https://iapub.postman.co',
-    secretsResolverEnabled: true,
+    secretsResolverProvider: 'aws',
     specPath: 'openapi.yaml',
     collectionSyncMode: 'refresh',
     failOnFlowWarning: false,

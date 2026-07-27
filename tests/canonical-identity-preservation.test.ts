@@ -7,12 +7,11 @@ import {
 import type { FlowDefinition, ResolvedRequest } from '../src/types.js';
 
 /**
- * Bootstrap owns the canonical Smoke collection's identity: it elects/adopts a
- * final by exact `info.name` plus the durable branch marker carried in
- * `info.description`. smoke-flow refreshes that collection's body in place, so
- * it must never rewrite either identity field. When it does, the next bootstrap
- * run sees no same-name/same-marker final to adopt, imports a fresh collection,
- * and the old one is orphaned along with the monitor bound to its UID.
+ * Bootstrap elects the canonical Smoke final by exact `info.name`. smoke-flow
+ * refreshes that collection's body in place and must not rename it via the
+ * `/name` PATCH; doing so breaks election and triggers a fresh import/orphan
+ * cascade. `info.description` carry-forward is defensive only — the v3 export
+ * does not surface it and the root PATCH does not write it.
  */
 
 const CANONICAL_NAME = '[PROJECT] [Smoke] Example Fixture API';
@@ -93,20 +92,20 @@ describe('canonical Smoke identity preservation', () => {
       flow,
       resolvedRequests,
       undefined,
-      true,
+      'aws',
       { canonicalCollection: canonicalCollection() }
     );
 
     expect(info(collection).name).toBe(CANONICAL_NAME);
   });
 
-  it('curated refresh keeps the canonical branch marker description', () => {
+  it('curated refresh carries a canonical description forward when one is supplied (defensive; the v3 export does not surface it)', () => {
     const { collection } = buildCuratedSmokeCollection(
       generatedCollection(),
       flow,
       resolvedRequests,
       undefined,
-      true,
+      'aws',
       { canonicalCollection: canonicalCollection() }
     );
 
@@ -119,13 +118,13 @@ describe('canonical Smoke identity preservation', () => {
       flow,
       resolvedRequests,
       undefined,
-      true
+      'aws'
     );
 
     expect(info(collection).name).toBe(`[Smoke] ${flow.name}`);
   });
 
-  it('uncurated refresh keeps the canonical branch marker description', () => {
+  it('uncurated refresh carries a canonical description forward when one is supplied (defensive; the v3 export does not surface it)', () => {
     const { collection } = buildGeneratedSmokeCollection(generatedCollection(), undefined, {
       collectionName: CANONICAL_NAME,
       canonicalCollection: canonicalCollection()
@@ -144,7 +143,7 @@ describe('canonical Smoke identity preservation', () => {
       flow,
       resolvedRequests,
       undefined,
-      true,
+      'aws',
       { canonicalCollection: bare }
     );
 
