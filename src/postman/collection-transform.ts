@@ -25,6 +25,16 @@ export type GeneratedSmokeCollectionBuildOptions = {
   secretsResolverEnabled?: boolean;
   collectionName?: string;
   scriptSourceCollection?: JsonRecord;
+  /**
+   * The canonical Smoke collection currently in Postman. Bootstrap elects and
+   * adopts that final by exact `info.name` plus the durable branch marker
+   * carried in `info.description`, so an in-place refresh must carry both
+   * fields forward from the canonical target instead of the generated source.
+   * Dropping either one makes the next bootstrap run treat the collection as a
+   * stranger, import a fresh one, and orphan both it and the monitor bound to
+   * its UID.
+   */
+  canonicalCollection?: JsonRecord;
 };
 
 const GENERATED_OAUTH_EVENT_MARKER = '[Smoke Flow] Auto-generated OAuth2 client-credentials token cache';
@@ -559,6 +569,43 @@ function preserveRequestEventsFromCollection(collection: JsonRecord, scriptSourc
   }
 }
 
+/**
+ * Carry the canonical Smoke collection's identity fields onto a rebuilt body.
+ *
+ * Bootstrap elects and adopts the canonical Smoke final by exact `info.name`
+ * plus the durable branch marker carried in `info.description`. A refresh here
+ * rebuilds the body from a freshly generated temp collection, so without this
+ * both fields would be replaced by generator defaults; the next bootstrap run
+ * would then find no same-name/same-marker final to adopt, import a brand new
+ * collection, and orphan the previous one along with the monitor bound to its
+ * UID. Absent fields on the canonical target are left absent, never invented.
+ */
+function applyCanonicalCollectionIdentity(
+  collection: JsonRecord,
+  canonicalCollection: JsonRecord | undefined
+): void {
+  if (!canonicalCollection) {
+    return;
+  }
+  const canonicalInfo = asRecord(canonicalCollection.info);
+  if (!canonicalInfo) {
+    return;
+  }
+
+  const info = asRecord(collection.info) ?? {};
+  const canonicalName = typeof canonicalInfo.name === 'string' ? canonicalInfo.name.trim() : '';
+  if (canonicalName) {
+    info.name = canonicalName;
+  }
+  const canonicalDescription = canonicalInfo.description;
+  if (typeof canonicalDescription === 'string' || asRecord(canonicalDescription)) {
+    info.description = canonicalDescription;
+  } else {
+    delete info.description;
+  }
+  collection.info = info;
+}
+
 function isSecretsResolverItem(item: JsonRecord): boolean {
   const name = typeof item.name === 'string' ? item.name.trim().toLowerCase() : '';
   if (name === LEGACY_SECRETS_RESOLVER_ITEM_NAME.toLowerCase() || name === 'resolve secrets') {
@@ -946,6 +993,7 @@ export function buildGeneratedSmokeCollection(
     info.name = options.collectionName;
     collection.info = info;
   }
+  applyCanonicalCollectionIdentity(collection, options.canonicalCollection);
   if (options.secretsResolverEnabled === false) {
     collection.item = removeSecretsResolverItems(collection.item);
   } else if (!containsSecretsResolverItem(collection.item)) {
@@ -975,13 +1023,15 @@ export function buildCuratedSmokeCollection(
   flow: FlowDefinition,
   resolvedRequests: ResolvedRequest[],
   authConfig?: SmokeAuthConfig,
-  secretsResolverEnabled = true
+  secretsResolverEnabled = true,
+  options: { canonicalCollection?: JsonRecord } = {}
 ): { collection: JsonRecord; bindingCount: number; extractCount: number; assertionCount: number } {
   const collection = sanitizeForCollectionUpdate(structuredClone(generatedCollection)) as JsonRecord;
   const info = asRecord(collection.info);
   if (info) {
     info.name = `[Smoke] ${flow.name}`;
   }
+  applyCanonicalCollectionIdentity(collection, options.canonicalCollection);
   applyCollectionAuth(collection, authConfig);
   const requestItems = resolvedRequests.map((request) => curateRequestItem(request, authConfig));
   collection.item = secretsResolverEnabled ? [createSecretsResolverItem(), ...requestItems] : requestItems;

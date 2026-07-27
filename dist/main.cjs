@@ -37610,6 +37610,27 @@ function preserveRequestEventsFromCollection(collection, scriptSourceCollection)
     }
   }
 }
+function applyCanonicalCollectionIdentity(collection, canonicalCollection) {
+  if (!canonicalCollection) {
+    return;
+  }
+  const canonicalInfo = asRecord3(canonicalCollection.info);
+  if (!canonicalInfo) {
+    return;
+  }
+  const info2 = asRecord3(collection.info) ?? {};
+  const canonicalName = typeof canonicalInfo.name === "string" ? canonicalInfo.name.trim() : "";
+  if (canonicalName) {
+    info2.name = canonicalName;
+  }
+  const canonicalDescription = canonicalInfo.description;
+  if (typeof canonicalDescription === "string" || asRecord3(canonicalDescription)) {
+    info2.description = canonicalDescription;
+  } else {
+    delete info2.description;
+  }
+  collection.info = info2;
+}
 function isSecretsResolverItem(item) {
   const name = typeof item.name === "string" ? item.name.trim().toLowerCase() : "";
   if (name === LEGACY_SECRETS_RESOLVER_ITEM_NAME.toLowerCase() || name === "resolve secrets") {
@@ -37891,6 +37912,7 @@ function buildGeneratedSmokeCollection(generatedCollection, authConfig, options 
     info2.name = options.collectionName;
     collection.info = info2;
   }
+  applyCanonicalCollectionIdentity(collection, options.canonicalCollection);
   if (options.secretsResolverEnabled === false) {
     collection.item = removeSecretsResolverItems(collection.item);
   } else if (!containsSecretsResolverItem(collection.item)) {
@@ -37909,12 +37931,13 @@ function buildGeneratedSmokeCollection(generatedCollection, authConfig, options 
     requestCount: collectSmokeRequestItems(collection.item).length
   };
 }
-function buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests, authConfig, secretsResolverEnabled = true) {
+function buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests, authConfig, secretsResolverEnabled = true, options = {}) {
   const collection = sanitizeForCollectionUpdate(structuredClone(generatedCollection));
   const info2 = asRecord3(collection.info);
   if (info2) {
     info2.name = `[Smoke] ${flow.name}`;
   }
+  applyCanonicalCollectionIdentity(collection, options.canonicalCollection);
   applyCollectionAuth(collection, authConfig);
   const requestItems = resolvedRequests.map((request) => curateRequestItem(request, authConfig));
   collection.item = secretsResolverEnabled ? [createSecretsResolverItem(), ...requestItems] : requestItems;
@@ -40813,7 +40836,8 @@ async function runWithoutFlowManifest(inputs, dependencies, extraWarnings = []) 
       buildCollection: (sourceCollection) => buildGeneratedSmokeCollection(sourceCollection, inputs.authConfig, {
         secretsResolverEnabled: inputs.secretsResolverEnabled,
         collectionName: canonicalCollectionName,
-        scriptSourceCollection: existingCollection
+        scriptSourceCollection: existingCollection,
+        canonicalCollection: existingCollection
       }),
       verifyCollection: (collection) => verifyGeneratedSmokeCollection(collection, inputs.authConfig, {
         secretsResolverEnabled: inputs.secretsResolverEnabled
@@ -40992,6 +41016,7 @@ async function runWithFlowDefinition(inputs, dependencies, flow, warningMessages
   let tempCollectionDeleted = false;
   let runFailed = false;
   try {
+    const canonicalCollection = await dependencies.postman.getCollection(inputs.smokeCollectionId);
     tempCollectionId = await dependencies.postman.generateCollection(inputs.specId, inputs.projectName, inputs.tempCollectionPrefix);
     dependencies.core.info(`Generated temporary Smoke collection ${tempCollectionId}`);
     const generatedCollection = await dependencies.postman.getCollection(tempCollectionId);
@@ -41021,7 +41046,8 @@ async function runWithFlowDefinition(inputs, dependencies, flow, warningMessages
           flow,
           resolvedRequests2,
           inputs.authConfig,
-          inputs.secretsResolverEnabled
+          inputs.secretsResolverEnabled,
+          { canonicalCollection }
         );
       },
       verifyCollection: (collection) => verifyCuratedSmokeCollection(collection, flow, inputs.authConfig, {

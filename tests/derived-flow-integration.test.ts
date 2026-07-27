@@ -604,15 +604,21 @@ describe('round-2 integration pins', () => {
       }]
     };
     let canonical: Record<string, unknown> = clone(driftedCanonical);
-    let canonicalReads = 0;
+    let canonicalWrites = 0;
     const postman = {
       generateCollection: vi.fn().mockResolvedValue('temp-123'),
-      getCollection: vi.fn(async (collectionId: string) => {
-        if (collectionId === 'temp-123') return clone(strongGenerated);
-        canonicalReads += 1;
-        return clone(canonicalReads === 1 ? driftedCanonical : canonical);
-      }),
+      getCollection: vi.fn(async (collectionId: string) =>
+        collectionId === 'temp-123' ? clone(strongGenerated) : clone(canonical)
+      ),
+      // First write does not stick: the canonical collection stays drifted, so
+      // stabilization must reapply against the refreshed (drifted) source and
+      // discover the weak resolution on the retry.
       updateCollection: vi.fn(async (_collectionId: string, collection: Record<string, unknown>) => {
+        canonicalWrites += 1;
+        if (canonicalWrites === 1) {
+          canonical = clone(driftedCanonical);
+          return;
+        }
         canonical = clone(collection);
       }),
       deleteCollection: vi.fn().mockResolvedValue(undefined)
