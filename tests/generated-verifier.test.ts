@@ -112,4 +112,64 @@ describe('generated smoke collection secrets resolver contract', () => {
     expect(verification.ok).toBe(false);
     expect(verification.summary).toContain('secrets resolver request is still present');
   });
+
+  it('reproduces the historical AWS helper wire shape exactly', () => {
+    const built = buildGeneratedSmokeCollection(generatedCollection(), undefined, {
+      secretsResolverProvider: 'aws'
+    });
+    const resolver = (built.collection.item as JsonRecord[])[0];
+
+    expect(resolver).toEqual({
+      name: '00 - Resolve Secrets',
+      request: {
+        auth: {
+          type: 'awsv4',
+          awsv4: [
+            { key: 'accessKey', value: '{{AWS_ACCESS_KEY_ID}}' },
+            { key: 'secretKey', value: '{{AWS_SECRET_ACCESS_KEY}}' },
+            { key: 'region', value: '{{AWS_REGION}}' },
+            { key: 'service', value: 'secretsmanager' }
+          ]
+        },
+        method: 'POST',
+        header: [
+          { key: 'X-Amz-Target', value: 'secretsmanager.GetSecretValue' },
+          { key: 'Content-Type', value: 'application/x-amz-json-1.1' }
+        ],
+        body: { mode: 'raw', raw: '{"SecretId": "{{AWS_SECRET_NAME}}"}' },
+        url: {
+          raw: 'https://secretsmanager.{{AWS_REGION}}.amazonaws.com',
+          protocol: 'https',
+          host: ['secretsmanager', '{{AWS_REGION}}', 'amazonaws', 'com']
+        }
+      },
+      event: [
+        {
+          listen: 'test',
+          script: {
+            type: 'text/javascript',
+            exec: [
+              'if (pm.environment.get("CI") === "true") { return; }',
+              'const body = pm.response.json();',
+              'if (body.SecretString) {',
+              '  const secrets = JSON.parse(body.SecretString);',
+              '  Object.entries(secrets).forEach(([k, v]) => pm.collectionVariables.set(k, v));',
+              '}'
+            ]
+          }
+        }
+      ]
+    });
+  });
+
+  it('stamps the script type on every provider helper', () => {
+    for (const provider of ['aws', 'azure', 'gcp'] as const) {
+      const built = buildGeneratedSmokeCollection(generatedCollection(), undefined, {
+        secretsResolverProvider: provider
+      });
+      const resolver = (built.collection.item as JsonRecord[])[0]!;
+      const event = (resolver.event as JsonRecord[])[0]!;
+      expect((event.script as JsonRecord).type).toBe('text/javascript');
+    }
+  });
 });

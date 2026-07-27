@@ -37538,7 +37538,13 @@ function resolverExecTail(extractExpression) {
     "}"
   ];
 }
-function createSecretsResolverExec(provider = "aws") {
+function assertSecretsResolverEnabled(provider) {
+  if (provider === "none") {
+    throw new Error('SECRETS_RESOLVER_DISABLED: provider "none" cannot create a secrets resolver');
+  }
+}
+function createSecretsResolverExec(provider) {
+  assertSecretsResolverEnabled(provider);
   switch (provider) {
     case "azure":
       return resolverExecTail("body.value");
@@ -37564,7 +37570,8 @@ function createSecretsResolverExec(provider = "aws") {
       ];
   }
 }
-function createSecretsResolverItem(provider = "aws") {
+function createSecretsResolverItem(provider) {
+  assertSecretsResolverEnabled(provider);
   if (provider === "azure") {
     return {
       name: SECRETS_RESOLVER_ITEM_NAME,
@@ -37583,7 +37590,12 @@ function createSecretsResolverItem(provider = "aws") {
           query: [{ key: "api-version", value: "7.4" }]
         }
       },
-      event: [{ listen: "test", script: { exec: createSecretsResolverExec("azure") } }]
+      event: [
+        {
+          listen: "test",
+          script: { type: "text/javascript", exec: createSecretsResolverExec("azure") }
+        }
+      ]
     };
   }
   if (provider === "gcp") {
@@ -37611,7 +37623,12 @@ function createSecretsResolverItem(provider = "aws") {
           ]
         }
       },
-      event: [{ listen: "test", script: { exec: createSecretsResolverExec("gcp") } }]
+      event: [
+        {
+          listen: "test",
+          script: { type: "text/javascript", exec: createSecretsResolverExec("gcp") }
+        }
+      ]
     };
   }
   return {
@@ -37638,7 +37655,12 @@ function createSecretsResolverItem(provider = "aws") {
         host: ["secretsmanager", "{{AWS_REGION}}", "amazonaws", "com"]
       }
     },
-    event: [{ listen: "test", script: { exec: createSecretsResolverExec("aws") } }]
+    event: [
+      {
+        listen: "test",
+        script: { type: "text/javascript", exec: createSecretsResolverExec("aws") }
+      }
+    ]
   };
 }
 
@@ -38281,6 +38303,18 @@ function applyCanonicalCollectionIdentity(collection, canonicalCollection) {
   }
   collection.info = info2;
 }
+function buildSecretsResolverItem(provider) {
+  const item = createSecretsResolverItem(provider);
+  const events2 = Array.isArray(item.event) ? item.event : [];
+  for (const entry of events2) {
+    const event = asRecord3(entry);
+    const script = asRecord3(event?.script);
+    if (script && typeof script.type !== "string") {
+      script.type = "text/javascript";
+    }
+  }
+  return item;
+}
 function isSecretsResolverItem(item) {
   const name = typeof item.name === "string" ? item.name.trim().toLowerCase() : "";
   if (name === LEGACY_SECRETS_RESOLVER_ITEM_NAME.toLowerCase() || name === "resolve secrets") {
@@ -38297,7 +38331,10 @@ function isSecretsResolverItem(item) {
   const hasSecretsManagerTarget = headers.some(
     (entry) => typeof entry.key === "string" && entry.key.toLowerCase() === "x-amz-target" && String(entry.value ?? "").toLowerCase().includes("secretsmanager.getsecretvalue")
   );
-  return authType === "awsv4" && (urlText.includes("secretsmanager") || hasSecretsManagerTarget);
+  const isAwsShape = authType === "awsv4" && (urlText.includes("secretsmanager") || hasSecretsManagerTarget);
+  const isAzureShape = authType === "bearer" && urlText.includes("vault.azure.net");
+  const isGcpShape = authType === "bearer" && urlText.includes("secretmanager.googleapis.com") && urlText.includes(":access");
+  return isAwsShape || isAzureShape || isGcpShape;
 }
 function removeSecretsResolverItems(items) {
   if (!Array.isArray(items)) {
@@ -38567,7 +38604,7 @@ function buildGeneratedSmokeCollection(generatedCollection, authConfig, options 
     collection.item = removeSecretsResolverItems(collection.item);
   } else if (!containsSecretsResolverItem(collection.item)) {
     const items = Array.isArray(collection.item) ? collection.item : [];
-    collection.item = [createSecretsResolverItem(options.secretsResolverProvider ?? "none"), ...items];
+    collection.item = [buildSecretsResolverItem(options.secretsResolverProvider ?? "none"), ...items];
   }
   preserveRequestEventsFromCollection(collection, options.scriptSourceCollection);
   let authRequestCount = 0;
@@ -38590,7 +38627,7 @@ function buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests
   applyCanonicalCollectionIdentity(collection, options.canonicalCollection);
   applyCollectionAuth(collection, authConfig);
   const requestItems = resolvedRequests.map((request) => curateRequestItem(request, authConfig));
-  collection.item = isSecretsResolverEnabled(secretsResolverProvider) ? [createSecretsResolverItem(secretsResolverProvider), ...requestItems] : requestItems;
+  collection.item = isSecretsResolverEnabled(secretsResolverProvider) ? [buildSecretsResolverItem(secretsResolverProvider), ...requestItems] : requestItems;
   const sanitizedCollection = sanitizeForCollectionUpdate(collection);
   const bindingCount = flow.steps.reduce((sum, step) => sum + step.bindings.length, 0);
   const extractCount = flow.steps.reduce((sum, step) => sum + step.extract.length, 0);
