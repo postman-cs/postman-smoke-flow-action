@@ -33,10 +33,9 @@ Run this action after postman-bootstrap-action has created or refreshed the work
 
 ## Resolution behavior
 
-- The action first tries to resolve each flow step by matching the generated request name or description to the step `operationId`.
-- If `spec-path` is provided, it can also fall back to matching by request method plus normalized path shape from the OpenAPI document.
+- The action resolves each flow step through match tiers, strongest first: exact or case-insensitive generated request **name**, then request **method plus normalized path** from the OpenAPI document (when `spec-path` is provided), then a **description substring** — a weak signal used only when no strong tier matched anywhere in the collection, and always accompanied by a warning naming the resolved request. Weak-tier warnings pass through `fail-on-flow-warning` before any canonical mutation.
 - In v1, one `flow.yaml` maps to one curated Smoke collection journey.
-- If `flow-path` is omitted under `flow-mode: auto` (the default), the action derives a deterministic smoke flow from `spec-path` (see [docs/derived-flow.md](derived-flow.md)); without `spec-path`, or under `flow-mode: off`, it refreshes the canonical Smoke collection without flow curation.
+- If `flow-path` is omitted under `flow-mode: auto` (the default), the action derives a deterministic smoke flow from `spec-path` (see [docs/derived-flow.md](derived-flow.md)); derivation that yields zero steps (no operations, or every operation excluded) fails with an error instead of falling back to the uncurated refresh. Without `spec-path`, or under `flow-mode: off`, it refreshes the canonical Smoke collection without flow curation.
 - If `flow-path` is provided but the file is missing, the action fails because the caller explicitly requested flow mode.
 - This action intentionally does not mutate baseline or contract collections.
 - Runtime auth support is optional and Smoke-only; contract collection auth is intentionally deferred.
@@ -53,4 +52,4 @@ When `flow-path` is provided, the action:
 - updates the canonical Smoke collection in place
 - deletes the temporary collection
 
-When `flow-path` is omitted, it still generates a temporary Smoke collection from the spec and refreshes the canonical Smoke collection from that generated collection. If `auth-config-json` is enabled, it injects Smoke-only runtime auth without adding flow scripts, bindings, extracts, or curated ordering.
+When `flow-path` is omitted under `flow-mode: auto` (the default) with `spec-path` set, the action instead **derives** a flow from the OpenAPI document and applies it through this same pipeline ([derived-flow.md](derived-flow.md)). If derivation yields zero steps, the action fails rather than falling back to the uncurated refresh. Only without `spec-path`, or under `flow-mode: off`, does it fall back to the uncurated refresh: it still generates a temporary Smoke collection from the spec and refreshes the canonical Smoke collection from that generated collection. If `auth-config-json` is enabled, it injects Smoke-only runtime auth without adding flow scripts, bindings, extracts, or curated ordering.

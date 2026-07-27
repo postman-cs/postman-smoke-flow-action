@@ -35,7 +35,7 @@ The binary embeds its own runtime and never consults `PATH` for `node`. You can 
 ```bash
 # Reaches the CLI's own input validation with no Node on PATH:
 env -i PATH=/nonexistent ./postman-smoke-flow
-# -> "Omitting --flow-path selects a destructive full canonical Smoke refresh. ..."
+# -> "Omitting --flow-path without spec-path derivation selects a destructive full canonical Smoke refresh. ..."
 ```
 
 This is the same assertion the release workflow runs before publishing the asset.
@@ -44,7 +44,7 @@ This is the same assertion the release workflow runs before publishing the asset
 
 This action reshapes the generated Postman **Smoke** collection to match a curated `flow.yaml` (or, without a flow, refreshes the canonical Smoke collection). Every operation runs over the **access-token gateway** — it generates a temporary collection, reshapes the canonical one in place, and deletes the temp. It does **not** run the collection (no newman/Postman CLI), so there are **no runtime tool downloads** on any path.
 
-Omitting `--flow-path` selects a destructive full-canonical Smoke refresh; the binary refuses that unless you also pass `--acknowledge-no-flow-refresh`.
+Omitting `--flow-path` with `--spec-path` set under `flow-mode` auto derives a flow instead (no acknowledgment needed). Omitting both `--flow-path` and `--spec-path` (or using `--flow-mode off`) triggers the destructive full-canonical Smoke refresh and must be paired with `--acknowledge-no-flow-refresh`. When auto derivation yields zero steps (empty spec or all operations excluded), the binary fails with an error naming the cause — it does not silently fall back to that refresh.
 
 ## Credentials
 
@@ -97,7 +97,7 @@ export POSTMAN_ACCESS_TOKEN="<minted-token>"
 ```
 
 - The reshape targets the canonical Smoke collection identified by `--smoke-collection-id`; the collection must already exist (this action does not create it — `postman-bootstrap-action` does).
-- `--flow-path` points at your curated `flow.yaml`. To run the destructive no-flow refresh instead, omit it and pass `--acknowledge-no-flow-refresh`.
+- `--flow-path` points at your curated `flow.yaml`. Without it, `flow-mode` auto with `--spec-path` derives a flow; the destructive uncurated refresh (omit `--spec-path` or use `--flow-mode off`) requires `--acknowledge-no-flow-refresh`.
 - The CLI prints the run result as JSON on stdout (logs go to stderr).
 
 ## Jenkins pipeline example

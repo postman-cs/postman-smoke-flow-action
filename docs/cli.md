@@ -16,10 +16,13 @@ postman-smoke-flow \
   --postman-access-token "$POSTMAN_ACCESS_TOKEN"
 ```
 
-For OAuth updates before a flow manifest exists, omit `--flow-path` and pass
-`--acknowledge-no-flow-refresh` so a missing/typoed flow path cannot silently
-select destructive full refresh. The CLI still refreshes the canonical Smoke
-collection from a spec-generated temporary collection before applying auth:
+Under `flow-mode` auto (default), omitting `--flow-path` with `--spec-path` set
+derives a smoke flow from the spec and needs no acknowledgment. The example
+below is the genuine uncurated path (no `--spec-path`): a destructive
+full-canonical refresh that requires `--acknowledge-no-flow-refresh` so a
+missing or typoed flow path cannot silently select that path. The CLI still
+refreshes the canonical Smoke collection from a spec-generated temporary
+collection before applying auth:
 
 ```sh
 postman-smoke-flow \
@@ -33,11 +36,11 @@ postman-smoke-flow \
   --postman-access-token "$POSTMAN_ACCESS_TOKEN"
 ```
 
-For API key auth updates before a flow manifest exists, omit `--flow-path`, pass
-`--acknowledge-no-flow-refresh`, and pass an API key auth config. The CLI still
-refreshes the canonical Smoke collection from a spec-generated temporary
-collection before applying auth. The real target API key is supplied later when
-the Smoke collection runs:
+For API key auth updates before a flow manifest exists, use the same uncurated
+path as above (no `--spec-path`, pass `--acknowledge-no-flow-refresh`) and pass
+an API key auth config. The CLI still refreshes the canonical Smoke collection
+from a spec-generated temporary collection before applying auth. The real target
+API key is supplied later when the Smoke collection runs:
 
 ```sh
 postman-smoke-flow \
@@ -50,6 +53,11 @@ postman-smoke-flow \
   --postman-region eu \
   --postman-access-token "$POSTMAN_ACCESS_TOKEN"
 ```
+
+When `flow-mode` auto with `--spec-path` derives zero flow steps (empty spec or
+all operations excluded), the CLI fails with an error naming the cause; it does
+not silently fall back to the uncurated refresh. Correct the spec or exclusions,
+pass `--flow-path`, or set `--flow-mode off`.
 
 Every action input is available as the same kebab-case CLI flag. The CLI writes the action outputs as JSON to stdout and writes logs to stderr, so other CI systems can capture IDs without GitHub Actions output files.
 

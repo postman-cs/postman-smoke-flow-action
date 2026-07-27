@@ -99,6 +99,8 @@ outputs:
     description: Number of extracts applied as test logic.
   assertion-count:
     description: Number of generated assertions applied across flow steps.
+  derived-flow-json:
+    description: JSON FlowDefinition of the derived flow when flow-mode auto derived one from spec-path (empty for curated manifests and uncurated refreshes). Structural curation seed only -- operationIds, bindings, extracts; no request values or auth material. Persist it as a flow.yaml starting point for curation.
   sync-status:
     description: 'Branch-aware sync status: synced, skipped-branch-gate, or empty under branch-strategy legacy.'
   branch-decision:

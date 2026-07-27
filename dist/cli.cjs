@@ -33772,6 +33772,7 @@ var smokeFlowActionContract = {
     "applied-binding-count": {},
     "applied-extract-count": {},
     "assertion-count": {},
+    "derived-flow-json": {},
     "sync-status": {},
     "branch-decision": {}
   }
@@ -36234,6 +36235,23 @@ function derefSchema(document, schema, depth = 0) {
   const resolved = resolveRef(document, ref);
   return resolved ? derefSchema(document, resolved, depth + 1) : null;
 }
+function collectRequiredQueryParams(document, pathItem, operation) {
+  const merged = /* @__PURE__ */ new Map();
+  const absorb = (list) => {
+    if (!Array.isArray(list)) return;
+    for (const entry of list) {
+      const param = derefSchema(document, asRecord(entry));
+      if (!param) continue;
+      const name = typeof param.name === "string" ? param.name.trim() : "";
+      const location = typeof param.in === "string" ? param.in : "";
+      if (!name || location !== "query") continue;
+      merged.set(`${name}::${location}`, { name, required: param.required === true });
+    }
+  };
+  absorb(pathItem.parameters);
+  absorb(operation.parameters);
+  return [...merged.values()].filter((param) => param.required).map((param) => param.name);
+}
 function collectResponseProps(document, schema) {
   const found = /* @__PURE__ */ new Map();
   const root = derefSchema(document, schema);
@@ -36381,6 +36399,7 @@ function collectOperations(document) {
         collectionPath,
         isItemPath,
         pathParams: pathLevelParams,
+        requiredQueryParams: collectRequiredQueryParams(document, pathItem, operation),
         requestBodyProps: collectRequestBodyProps(document, operation),
         responseProps: collectResponseProps(document, pickSuccessResponseSchema(document, operation)),
         specIndex: specIndex++
@@ -36423,7 +36442,7 @@ function deriveFlowFromSpec(document, options = {}) {
   const warnings = [];
   const operations = collectOperations(document);
   if (operations.length === 0) {
-    warnings.push({ message: "Flow derivation found no operations in the OpenAPI document; falling back to uncurated refresh." });
+    warnings.push({ message: "Flow derivation found no operations in the OpenAPI document; a smoke flow cannot be derived." });
     return {
       flow: null,
       warnings,
@@ -36462,6 +36481,12 @@ function deriveFlowFromSpec(document, options = {}) {
     if (props.size > 0) publishable.set(resource, props);
   }
   const dependsOn = /* @__PURE__ */ new Map();
+  const addDependency = (resource, producerResource) => {
+    if (!producerResource || producerResource === resource) return;
+    const set = dependsOn.get(resource) ?? /* @__PURE__ */ new Set();
+    set.add(producerResource);
+    dependsOn.set(resource, set);
+  };
   for (const [resource, list] of groups) {
     for (const op of list) {
       for (const param of op.pathParams) {
@@ -36475,11 +36500,13 @@ function deriveFlowFromSpec(document, options = {}) {
             (other) => other !== resource && candidates.some((candidate) => publishable.get(other)?.has(candidate))
           );
         }
-        if (producerResource && producerResource !== resource) {
-          const set = dependsOn.get(resource) ?? /* @__PURE__ */ new Set();
-          set.add(producerResource);
-          dependsOn.set(resource, set);
-        }
+        addDependency(resource, producerResource);
+      }
+      for (const queryParam of op.requiredQueryParams) {
+        addDependency(
+          resource,
+          baseOrder.find((other) => other !== resource && publishable.get(other)?.has(queryParam))
+        );
       }
     }
   }
@@ -36540,6 +36567,20 @@ function deriveFlowFromSpec(document, options = {}) {
         bindings.push({ fieldKey: param.name, source: "example" });
       }
     }
+    for (const queryParam of op.requiredQueryParams) {
+      if (bindings.some((binding) => binding.fieldKey === queryParam)) continue;
+      const producer = producers.get(queryParam);
+      if (producer) {
+        bindings.push({
+          fieldKey: queryParam,
+          source: "prior_output",
+          sourceStepKey: producer.stepKey,
+          variable: producer.variable
+        });
+      } else {
+        bindings.push({ fieldKey: queryParam, source: "example" });
+      }
+    }
     if (op.method === "DELETE") {
       const provenanceOk = options.allowDelete === true && sameRunCreateProvenance;
       if (!provenanceOk) {
@@ -36575,7 +36616,7 @@ function deriveFlowFromSpec(document, options = {}) {
   }
   if (steps.length === 0) {
     warnings.push({
-      message: "Flow derivation excluded every operation (all were DELETE without provenance); falling back to uncurated refresh."
+      message: "Flow derivation excluded every operation because each was a DELETE operation that did not meet the allow-and-provenance requirements; a smoke flow cannot be derived."
     });
     return {
       flow: null,
@@ -36668,10 +36709,13 @@ function flattenRequestItems(node) {
   visit(node);
   return results;
 }
-function matchesOperationId(item, operationId) {
+function matchesByName(item, operationId) {
   const name = getItemName(item);
+  return name === operationId || name.toLowerCase() === operationId.toLowerCase();
+}
+function matchesByDescription(item, operationId) {
   const description = getRequestDescription(item);
-  return name === operationId || name.toLowerCase() === operationId.toLowerCase() || description.includes(operationId) || description.toLowerCase().includes(operationId.toLowerCase());
+  return description.includes(operationId) || description.toLowerCase().includes(operationId.toLowerCase());
 }
 function loadOperationMatches(specPath) {
   if (!specPath) {
@@ -36697,13 +36741,24 @@ function matchesOperationByRequestShape(item, operationMatch) {
   }
   return getRequestMethod(item) === operationMatch.method && getRequestPath(item) === operationMatch.path;
 }
-function resolveFlowRequests(flow, generatedCollection, specPath) {
+function resolveFlowRequests(flow, generatedCollection, specPath, onWarning) {
   const requestItems = flattenRequestItems(generatedCollection);
   const operationMatches = loadOperationMatches(specPath);
   return flow.steps.map((step) => {
-    const match = requestItems.find(
-      (item) => matchesOperationId(item, step.operationId) || matchesOperationByRequestShape(item, operationMatches.get(step.operationId))
-    );
+    let match = requestItems.find((item) => matchesByName(item, step.operationId));
+    if (!match) {
+      match = requestItems.find(
+        (item) => matchesOperationByRequestShape(item, operationMatches.get(step.operationId))
+      );
+    }
+    if (!match) {
+      match = requestItems.find((item) => matchesByDescription(item, step.operationId));
+      if (match) {
+        onWarning?.(
+          `Resolved operationId "${step.operationId}" to request "${getItemName(match)}" only via a description substring match; verify the flow targets the intended request (name and method+path tiers found no match).`
+        );
+      }
+    }
     if (!match) {
       throw new ValidationError(`Could not resolve operationId "${step.operationId}" in the generated temporary Smoke collection.`);
     }
@@ -40646,7 +40701,7 @@ function validateInputsBeforeSideEffects(inputs) {
     throw new Error(`Flow validation produced ${warnings.length} warning(s) and fail-on-flow-warning=true.`);
   }
 }
-function createOutputs(summary2) {
+function createOutputs(summary2, derivedFlow) {
   const envDecision = process.env[BRANCH_DECISION_ENV];
   return {
     "smoke-collection-id": summary2.canonicalSmokeCollectionId,
@@ -40658,6 +40713,9 @@ function createOutputs(summary2) {
     "applied-binding-count": String(summary2.appliedBindingCount),
     "applied-extract-count": String(summary2.appliedExtractCount),
     "assertion-count": String(summary2.assertionCount),
+    // Structural curation seed only: operationIds, bindings, extracts. No
+    // request values, auth material, or collection bytes.
+    "derived-flow-json": derivedFlow ? JSON.stringify(derivedFlow) : "",
     "sync-status": summary2.status === "skipped" ? "skipped-branch-gate" : "synced",
     "branch-decision": envDecision ?? ""
   };
@@ -40713,6 +40771,7 @@ async function runWithoutFlowManifest(inputs, dependencies, extraWarnings = []) 
     return createOutputs({
       flowName: "",
       status: "success",
+      flowSource: "none",
       temporaryCollectionId: tempCollectionId,
       canonicalSmokeCollectionId: inputs.smokeCollectionId,
       authApplied,
@@ -40729,6 +40788,7 @@ async function runWithoutFlowManifest(inputs, dependencies, extraWarnings = []) 
     const summary2 = {
       flowName: "",
       status: "failed",
+      flowSource: "none",
       temporaryCollectionId: tempCollectionId || void 0,
       canonicalSmokeCollectionId: inputs.smokeCollectionId,
       authApplied,
@@ -40793,6 +40853,13 @@ async function runSmokeFlow(inputs, dependencies) {
   if (!flowPath) {
     const derived = deriveAutoFlow(inputs, dependencies);
     if (!derived.flow) {
+      const specPath = inputs.specPath?.trim();
+      if (specPath) {
+        const causes = derived.warnings.map((warning2) => warning2.message).join(" ");
+        throw new Error(
+          `Flow derivation from spec-path "${specPath}" produced no flow: ${causes} Fix the spec/exclusions, pass flow-path, or explicitly choose flow-mode=off.`
+        );
+      }
       return runWithoutFlowManifest(inputs, dependencies, derived.warnings.map((warning2) => warning2.message));
     }
     return runWithFlowDefinition(
@@ -40800,7 +40867,11 @@ async function runSmokeFlow(inputs, dependencies) {
       dependencies,
       derived.flow,
       derived.warnings.map((warning2) => warning2.message),
-      "derived"
+      "derived",
+      {
+        ...derived.trace,
+        excludedOperationIds: derived.excludedOperationIds
+      }
     );
   }
   const manifest = loadFlowManifest(flowPath);
@@ -40850,7 +40921,7 @@ function deriveAutoFlow(inputs, dependencies) {
   }
   return derived;
 }
-async function runWithFlowDefinition(inputs, dependencies, flow, warningMessages, flowSource) {
+async function runWithFlowDefinition(inputs, dependencies, flow, warningMessages, flowSource, derivation) {
   const flowName = flow.name;
   const secretMasker = createInputSecretMasker(inputs);
   warningMessages.forEach((message) => dependencies.core.warning(message));
@@ -40864,12 +40935,27 @@ async function runWithFlowDefinition(inputs, dependencies, flow, warningMessages
     tempCollectionId = await dependencies.postman.generateCollection(inputs.specId, inputs.projectName, inputs.tempCollectionPrefix);
     dependencies.core.info(`Generated temporary Smoke collection ${tempCollectionId}`);
     const generatedCollection = await dependencies.postman.getCollection(tempCollectionId);
+    const resolutionWarnings = /* @__PURE__ */ new Set();
+    resolveFlowRequests(flow, generatedCollection, inputs.specPath, (message) => {
+      resolutionWarnings.add(message);
+    });
+    for (const message of resolutionWarnings) {
+      dependencies.core.warning(message);
+      warningMessages.push(message);
+    }
+    if (resolutionWarnings.size > 0 && inputs.failOnFlowWarning) {
+      throw new Error(
+        `Flow request resolution produced ${resolutionWarnings.size} warning(s) and fail-on-flow-warning=true; refusing the canonical Smoke mutation.`
+      );
+    }
     const transformed = await updateCanonicalCollectionUntilStable({
       inputs,
       dependencies,
       initialSourceCollection: generatedCollection,
       buildCollection: (sourceCollection) => {
-        const resolvedRequests2 = resolveFlowRequests(flow, sourceCollection, inputs.specPath);
+        const resolvedRequests2 = resolveFlowRequests(flow, sourceCollection, inputs.specPath, (message) => {
+          resolutionWarnings.add(message);
+        });
         return buildCuratedSmokeCollection(
           sourceCollection,
           flow,
@@ -40883,10 +40969,22 @@ async function runWithFlowDefinition(inputs, dependencies, flow, warningMessages
       })
     });
     dependencies.core.info(`Updated canonical Smoke collection ${inputs.smokeCollectionId} from ${flowSource} flow.`);
+    for (const message of resolutionWarnings) {
+      if (warningMessages.includes(message)) continue;
+      dependencies.core.warning(message);
+      warningMessages.push(message);
+    }
+    if (inputs.failOnFlowWarning && warningMessages.length > 0) {
+      throw new Error(
+        `Flow request resolution produced ${warningMessages.length} warning(s) and fail-on-flow-warning=true.`
+      );
+    }
     const resolvedRequests = resolveFlowRequests(flow, generatedCollection, inputs.specPath);
     const summary2 = {
       flowName: flow.name,
       status: "success",
+      flowSource,
+      derivation,
       temporaryCollectionId: tempCollectionId,
       canonicalSmokeCollectionId: inputs.smokeCollectionId,
       authApplied: Boolean(inputs.authConfig?.enabled),
@@ -40897,12 +40995,14 @@ async function runWithFlowDefinition(inputs, dependencies, flow, warningMessages
       assertionCount: transformed.assertionCount,
       warnings: warningMessages
     };
-    return createOutputs(summary2);
+    return createOutputs(summary2, flowSource === "derived" ? flow : void 0);
   } catch (error2) {
     runFailed = true;
     const summary2 = {
       flowName,
       status: "failed",
+      flowSource,
+      derivation,
       temporaryCollectionId: tempCollectionId || void 0,
       canonicalSmokeCollectionId: inputs.smokeCollectionId,
       authApplied: Boolean(inputs.authConfig?.enabled),
@@ -41009,6 +41109,7 @@ async function runGatedSkip(inputs, decision, actionCore) {
     "applied-binding-count": "0",
     "applied-extract-count": "0",
     "assertion-count": "0",
+    "derived-flow-json": "",
     "sync-status": "skipped-branch-gate",
     "branch-decision": serializeBranchDecision(decision)
   };

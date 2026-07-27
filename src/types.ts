@@ -113,6 +113,8 @@ export type ResolvedRequest = {
 export type FlowApplySummary = {
   flowName: string;
   status: 'success' | 'failed' | 'skipped';
+  /** Where the applied flow came from: a curated manifest, spec derivation, or none (uncurated refresh). */
+  flowSource?: 'curated' | 'derived' | 'none';
   temporaryCollectionId?: string;
   canonicalSmokeCollectionId: string;
   authApplied?: boolean;
@@ -122,6 +124,17 @@ export type FlowApplySummary = {
   appliedBindingCount: number;
   appliedExtractCount: number;
   assertionCount: number;
+  /** Present only for derived flows: machine-readable derivation decision record. */
+  derivation?: {
+    resourceCount: number;
+    operationCount: number;
+    derivedStepCount: number;
+    extractCount: number;
+    bindingCount: number;
+    excludedDeleteCount: number;
+    unresolvedParameterCount: number;
+    excludedOperationIds: string[];
+  };
   warnings: string[];
 };
 
@@ -135,6 +148,8 @@ export type ActionOutputs = {
   'applied-binding-count': string;
   'applied-extract-count': string;
   'assertion-count': string;
+  /** JSON FlowDefinition of the derived flow ('' for curated/none) so callers can persist a curation seed. */
+  'derived-flow-json': string;
   'sync-status': string;
   'branch-decision': string;
 };

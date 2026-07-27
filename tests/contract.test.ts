@@ -40,6 +40,20 @@ function markerSection(content: string, startMarker: string, endMarker: string):
   return content.slice(start, end);
 }
 
+function parseMarkdownTableRowKeys(section: string): string[] {
+  const rowKeyPattern = /^\|\s*`([^`]+)`\s*\|/;
+  const keys: string[] = [];
+
+  for (const line of section.split('\n')) {
+    const match = line.match(rowKeyPattern);
+    if (match) {
+      keys.push(match[1]);
+    }
+  }
+
+  return keys;
+}
+
 describe('postman-smoke-flow-action contract', () => {
   it('uses the expected action name and required inputs', () => {
     const manifest = loadManifest();
@@ -60,10 +74,18 @@ describe('postman-smoke-flow-action contract', () => {
         'resolved-operation-count',
         'applied-binding-count',
         'applied-extract-count',
-        'assertion-count',
-        'sync-status',
+      'assertion-count',
+      'derived-flow-json',
+      'sync-status',
         'branch-decision'
     ]);
+  });
+
+  it('keeps action.yml outputs in parity with the internal contract', async () => {
+    const manifest = loadManifest();
+    const { smokeFlowActionContract } = await import('../src/contracts.js');
+    expect(Object.keys(manifest.outputs)).toEqual(Object.keys(smokeFlowActionContract.outputs));
+    expect(Object.keys(manifest.inputs)).toEqual(Object.keys(smokeFlowActionContract.inputs));
   });
 
   it('keeps README action tables in sync with action.yml', () => {
@@ -71,14 +93,20 @@ describe('postman-smoke-flow-action contract', () => {
     const readme = loadText('README.md');
     const inputsTable = markerSection(readme, '<!-- inputs-table:start -->', '<!-- inputs-table:end -->');
     const outputsTable = markerSection(readme, '<!-- outputs-table:start -->', '<!-- outputs-table:end -->');
+    const manifestInputKeys = Object.keys(manifest.inputs);
+    const manifestOutputKeys = Object.keys(manifest.outputs);
+    const readmeInputKeys = parseMarkdownTableRowKeys(inputsTable);
+    const readmeOutputKeys = parseMarkdownTableRowKeys(outputsTable);
 
-    for (const inputName of Object.keys(manifest.inputs)) {
-      const tick = String.fromCharCode(96);
+    expect(readmeInputKeys).toEqual(manifestInputKeys);
+    expect(readmeOutputKeys).toEqual(manifestOutputKeys);
+
+    const tick = String.fromCharCode(96);
+    for (const inputName of manifestInputKeys) {
       expect(inputsTable).toContain('| ' + tick + inputName + tick + ' |');
     }
 
-    for (const outputName of Object.keys(manifest.outputs)) {
-      const tick = String.fromCharCode(96);
+    for (const outputName of manifestOutputKeys) {
       expect(outputsTable).toContain('| ' + tick + outputName + tick + ' |');
     }
   });

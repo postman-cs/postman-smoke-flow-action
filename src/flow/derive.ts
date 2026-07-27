@@ -76,6 +76,8 @@ export type SpecOperation = {
   /** True when the path's final segment is a parameter (item-style path). */
   isItemPath: boolean;
   pathParams: PathParamRef[];
+  /** Required query parameter names, merged path-item + operation, operation wins. */
+  requiredQueryParams: string[];
   requestBodyProps: string[];
   responseProps: Map<string, string>; // property name -> jsonPath
   specIndex: number;
@@ -106,6 +108,34 @@ function derefSchema(document: JsonRecord, schema: JsonRecord | null, depth = 0)
   if (!ref) return schema;
   const resolved = resolveRef(document, ref);
   return resolved ? derefSchema(document, resolved, depth + 1) : null;
+}
+
+/**
+ * Merge path-item and operation `parameters` per OpenAPI override rules
+ * ((name, in) identity, operation wins) and return required query parameter
+ * names in deterministic declaration order. Parameter Object $refs resolve
+ * through the document; unresolvable refs are skipped.
+ */
+function collectRequiredQueryParams(
+  document: JsonRecord,
+  pathItem: JsonRecord,
+  operation: JsonRecord
+): string[] {
+  const merged = new Map<string, { name: string; required: boolean }>();
+  const absorb = (list: unknown): void => {
+    if (!Array.isArray(list)) return;
+    for (const entry of list) {
+      const param = derefSchema(document, asRecord(entry));
+      if (!param) continue;
+      const name = typeof param.name === 'string' ? param.name.trim() : '';
+      const location = typeof param.in === 'string' ? param.in : '';
+      if (!name || location !== 'query') continue;
+      merged.set(`${name}::${location}`, { name, required: param.required === true });
+    }
+  };
+  absorb(pathItem.parameters);
+  absorb(operation.parameters); // operation-level entries override path-item entries
+  return [...merged.values()].filter((param) => param.required).map((param) => param.name);
 }
 
 /**
@@ -312,6 +342,7 @@ export function collectOperations(document: JsonRecord): SpecOperation[] {
         collectionPath,
         isItemPath,
         pathParams: pathLevelParams,
+        requiredQueryParams: collectRequiredQueryParams(document, pathItem, operation),
         requestBodyProps: collectRequestBodyProps(document, operation),
         responseProps: collectResponseProps(document, pickSuccessResponseSchema(document, operation)),
         specIndex: specIndex++
@@ -371,7 +402,7 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
   const operations = collectOperations(document);
 
   if (operations.length === 0) {
-    warnings.push({ message: 'Flow derivation found no operations in the OpenAPI document; falling back to uncurated refresh.' });
+    warnings.push({ message: 'Flow derivation found no operations in the OpenAPI document; a smoke flow cannot be derived.' });
     return {
       flow: null,
       warnings,
@@ -420,6 +451,12 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
   // matching property; otherwise the first base-order resource publishing the
   // exact parameter name.
   const dependsOn = new Map<string, Set<string>>();
+  const addDependency = (resource: string, producerResource: string | undefined): void => {
+    if (!producerResource || producerResource === resource) return;
+    const set = dependsOn.get(resource) ?? new Set<string>();
+    set.add(producerResource);
+    dependsOn.set(resource, set);
+  };
   for (const [resource, list] of groups) {
     for (const op of list) {
       for (const param of op.pathParams) {
@@ -435,11 +472,15 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
               candidates.some((candidate) => publishable.get(other)?.has(candidate))
           );
         }
-        if (producerResource && producerResource !== resource) {
-          const set = dependsOn.get(resource) ?? new Set<string>();
-          set.add(producerResource);
-          dependsOn.set(resource, set);
-        }
+        addDependency(resource, producerResource);
+      }
+      // Required query parameters chain from exact-name producers too, so the
+      // producing resource must be emitted first for the binding to resolve.
+      for (const queryParam of op.requiredQueryParams) {
+        addDependency(
+          resource,
+          baseOrder.find((other) => other !== resource && publishable.get(other)?.has(queryParam))
+        );
       }
     }
   }
@@ -518,6 +559,26 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
       }
     }
 
+    // Required query parameters: bind with source example so the transform
+    // PRESERVES the generated value instead of pruning the query entry.
+    // Optional query parameters stay unbound (pruned), keeping smoke requests
+    // minimal. A prior-output producer with the exact name wins over the
+    // generated example when available.
+    for (const queryParam of op.requiredQueryParams) {
+      if (bindings.some((binding) => binding.fieldKey === queryParam)) continue;
+      const producer = producers.get(queryParam);
+      if (producer) {
+        bindings.push({
+          fieldKey: queryParam,
+          source: 'prior_output',
+          sourceStepKey: producer.stepKey,
+          variable: producer.variable
+        });
+      } else {
+        bindings.push({ fieldKey: queryParam, source: 'example' });
+      }
+    }
+
     // DELETE safety: excluded unless allowed AND id provably from same-run create.
     if (op.method === 'DELETE') {
       const provenanceOk = options.allowDelete === true && sameRunCreateProvenance;
@@ -562,7 +623,8 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
 
   if (steps.length === 0) {
     warnings.push({
-      message: 'Flow derivation excluded every operation (all were DELETE without provenance); falling back to uncurated refresh.'
+      message:
+        'Flow derivation excluded every operation because each was a DELETE operation that did not meet the allow-and-provenance requirements; a smoke flow cannot be derived.'
     });
     return {
       flow: null,

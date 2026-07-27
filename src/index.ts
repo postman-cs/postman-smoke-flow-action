@@ -354,7 +354,7 @@ function validateInputsBeforeSideEffects(inputs: ActionInputs): void {
   }
 }
 
-function createOutputs(summary: FlowApplySummary): ActionOutputs {
+function createOutputs(summary: FlowApplySummary, derivedFlow?: FlowDefinition): ActionOutputs {
   const envDecision = process.env[BRANCH_DECISION_ENV];
   return {
     'smoke-collection-id': summary.canonicalSmokeCollectionId,
@@ -366,6 +366,9 @@ function createOutputs(summary: FlowApplySummary): ActionOutputs {
     'applied-binding-count': String(summary.appliedBindingCount),
     'applied-extract-count': String(summary.appliedExtractCount),
     'assertion-count': String(summary.assertionCount),
+    // Structural curation seed only: operationIds, bindings, extracts. No
+    // request values, auth material, or collection bytes.
+    'derived-flow-json': derivedFlow ? JSON.stringify(derivedFlow) : '',
     'sync-status': summary.status === 'skipped' ? 'skipped-branch-gate' : 'synced',
     'branch-decision': envDecision ?? ''
   };
@@ -438,6 +441,7 @@ async function runWithoutFlowManifest(
     return createOutputs({
       flowName: '',
       status: 'success',
+      flowSource: 'none',
       temporaryCollectionId: tempCollectionId,
       canonicalSmokeCollectionId: inputs.smokeCollectionId,
       authApplied,
@@ -454,6 +458,7 @@ async function runWithoutFlowManifest(
     const summary: FlowApplySummary = {
       flowName: '',
       status: 'failed',
+      flowSource: 'none',
       temporaryCollectionId: tempCollectionId || undefined,
       canonicalSmokeCollectionId: inputs.smokeCollectionId,
       authApplied,
@@ -530,6 +535,14 @@ export async function runSmokeFlow(
     // flow-mode=auto without a curated manifest: derive the flow from the spec.
     const derived = deriveAutoFlow(inputs, dependencies);
     if (!derived.flow) {
+      const specPath = inputs.specPath?.trim();
+      if (specPath) {
+        const causes = derived.warnings.map((warning) => warning.message).join(' ');
+        throw new Error(
+          `Flow derivation from spec-path "${specPath}" produced no flow: ${causes} ` +
+            'Fix the spec/exclusions, pass flow-path, or explicitly choose flow-mode=off.'
+        );
+      }
       return runWithoutFlowManifest(inputs, dependencies, derived.warnings.map((warning) => warning.message));
     }
     return runWithFlowDefinition(
@@ -537,7 +550,11 @@ export async function runSmokeFlow(
       dependencies,
       derived.flow,
       derived.warnings.map((warning) => warning.message),
-      'derived'
+      'derived',
+      {
+        ...derived.trace,
+        excludedOperationIds: derived.excludedOperationIds
+      }
     );
   }
 
@@ -600,7 +617,8 @@ async function runWithFlowDefinition(
   dependencies: SmokeFlowDependencies,
   flow: FlowDefinition,
   warningMessages: string[],
-  flowSource: 'curated' | 'derived'
+  flowSource: 'curated' | 'derived',
+  derivation?: NonNullable<FlowApplySummary['derivation']>
 ): Promise<ActionOutputs> {
   const flowName = flow.name;
   const secretMasker = createInputSecretMasker(inputs);
@@ -617,12 +635,36 @@ async function runWithFlowDefinition(
     dependencies.core.info(`Generated temporary Smoke collection ${tempCollectionId}`);
 
     const generatedCollection = await dependencies.postman.getCollection(tempCollectionId);
+
+    // Pre-resolve against the generated collection BEFORE any canonical
+    // mutation so weak-tier resolution warnings pass through the same
+    // fail-on-flow-warning gate as manifest/derivation warnings. Deduped:
+    // buildCollection re-resolves on every stabilization iteration.
+    const resolutionWarnings = new Set<string>();
+    resolveFlowRequests(flow, generatedCollection, inputs.specPath, (message) => {
+      resolutionWarnings.add(message);
+    });
+    for (const message of resolutionWarnings) {
+      dependencies.core.warning(message);
+      warningMessages.push(message);
+    }
+    if (resolutionWarnings.size > 0 && inputs.failOnFlowWarning) {
+      throw new Error(
+        `Flow request resolution produced ${resolutionWarnings.size} warning(s) and fail-on-flow-warning=true; refusing the canonical Smoke mutation.`
+      );
+    }
+
     const transformed = await updateCanonicalCollectionUntilStable({
       inputs,
       dependencies,
       initialSourceCollection: generatedCollection,
       buildCollection: (sourceCollection) => {
-        const resolvedRequests = resolveFlowRequests(flow, sourceCollection, inputs.specPath);
+        // Retry iterations resolve against a refreshed source; collect into
+        // the same dedupe set so a retry-only weak-tier match is still
+        // surfaced and gated after stabilization.
+        const resolvedRequests = resolveFlowRequests(flow, sourceCollection, inputs.specPath, (message) => {
+          resolutionWarnings.add(message);
+        });
         return buildCuratedSmokeCollection(
           sourceCollection,
           flow,
@@ -638,11 +680,27 @@ async function runWithFlowDefinition(
     });
     dependencies.core.info(`Updated canonical Smoke collection ${inputs.smokeCollectionId} from ${flowSource} flow.`);
 
+    // Retry-only weak-tier warnings (source refreshed mid-stabilization)
+    // surface and gate here; the mutation already happened, so failing now is
+    // an honest post-mutation failure rather than a silent success.
+    for (const message of resolutionWarnings) {
+      if (warningMessages.includes(message)) continue;
+      dependencies.core.warning(message);
+      warningMessages.push(message);
+    }
+    if (inputs.failOnFlowWarning && warningMessages.length > 0) {
+      throw new Error(
+        `Flow request resolution produced ${warningMessages.length} warning(s) and fail-on-flow-warning=true.`
+      );
+    }
+
     const resolvedRequests = resolveFlowRequests(flow, generatedCollection, inputs.specPath);
 
     const summary: FlowApplySummary = {
       flowName: flow.name,
       status: 'success',
+      flowSource,
+      derivation,
       temporaryCollectionId: tempCollectionId,
       canonicalSmokeCollectionId: inputs.smokeCollectionId,
       authApplied: Boolean(inputs.authConfig?.enabled),
@@ -654,12 +712,14 @@ async function runWithFlowDefinition(
       warnings: warningMessages
     };
 
-    return createOutputs(summary);
+    return createOutputs(summary, flowSource === 'derived' ? flow : undefined);
   } catch (error) {
     runFailed = true;
     const summary: FlowApplySummary = {
       flowName,
       status: 'failed',
+      flowSource,
+      derivation,
       temporaryCollectionId: tempCollectionId || undefined,
       canonicalSmokeCollectionId: inputs.smokeCollectionId,
       authApplied: Boolean(inputs.authConfig?.enabled),
@@ -806,6 +866,7 @@ async function runGatedSkip(
     'applied-binding-count': '0',
     'applied-extract-count': '0',
     'assertion-count': '0',
+    'derived-flow-json': '',
     'sync-status': 'skipped-branch-gate',
     'branch-decision': serializeBranchDecision(decision)
   };

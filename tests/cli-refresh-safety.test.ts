@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { ACKNOWLEDGE_NO_FLOW_REFRESH_FLAG, parseCliArgs } from '../src/lib/cli-args.js';
@@ -117,6 +121,55 @@ describe('CLI no-flow refresh safety', () => {
         acknowledgeNoFlowRefresh: false
       })
     ).toThrow(/acknowledge-no-flow-refresh/);
+  });
+
+  it('fails hard when auto derivation from a spec produces no flow', async () => {
+    const previousCwd = process.cwd();
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-cli-refresh-'));
+    writeFileSync(
+      path.join(tempDir, 'openapi.yaml'),
+      ['openapi: 3.0.3', 'info:', '  title: Empty API', '  version: 1.0.0', 'paths: {}', ''].join('\n')
+    );
+    mintSpy.mockClear();
+    preflightSpy.mockClear();
+    telemetrySpy.emitCompletion.mockClear();
+
+    try {
+      process.chdir(tempDir);
+      const failure = runCli(
+        [
+          'node',
+          'postman-smoke-flow',
+          '--flow-mode',
+          'auto',
+          '--spec-path',
+          'openapi.yaml'
+        ],
+        silentCore(),
+        {
+          INPUT_PROJECT_NAME: 'payments',
+          INPUT_WORKSPACE_ID: 'ws-1',
+          INPUT_SPEC_ID: 'spec-1',
+          INPUT_SMOKE_COLLECTION_ID: 'col-1',
+          INPUT_POSTMAN_ACCESS_TOKEN: 'pma_at'
+        } as NodeJS.ProcessEnv
+      );
+
+      const rejection = await failure.then(
+        () => undefined,
+        (error: unknown) => error
+      );
+      expect(rejection).toBeInstanceOf(Error);
+      const failureMessage = (rejection as Error).message;
+      expect(failureMessage).toMatch(/no operations/i);
+      expect(failureMessage).toMatch(/flow-path/i);
+      expect(failureMessage).toMatch(/flow-mode\s*=\s*off/i);
+      expect(failureMessage).not.toMatch(/acknowledge-no-flow-refresh/i);
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+      vi.clearAllMocks();
+    }
   });
 
   it('preserves GitHub Action no-flow behavior without the CLI acknowledgment flag', async () => {

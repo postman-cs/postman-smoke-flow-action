@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/postman-cs/postman-smoke-flow-action/actions/workflows/ci.yml/badge.svg)](https://github.com/postman-cs/postman-smoke-flow-action/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/postman-cs/postman-smoke-flow-action?sort=semver)](https://github.com/postman-cs/postman-smoke-flow-action/releases) [![npm](https://img.shields.io/npm/v/%40postman-cse%2Fonboarding-smoke-flow)](https://www.npmjs.com/package/@postman-cse/onboarding-smoke-flow) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Reshapes the generated Postman Smoke collection into an ordered smoke journey — derived deterministically from the OpenAPI spec by default, or from a curated `flow.yaml` when one is provided — with optional runtime auth injection for [OAuth2](https://learning.postman.com/docs/use/send-requests/authorization/oauth-20/) and API keys.
+Reshapes the generated Postman Smoke collection into an ordered smoke journey — derived deterministically from the OpenAPI spec at `spec-path` when `flow-path` is omitted under `flow-mode: auto`, or from a curated `flow.yaml` when one is provided — with optional runtime auth injection for [OAuth2](https://learning.postman.com/docs/use/send-requests/authorization/oauth-20/) and API keys.
 
 Part of the [Postman API Onboarding suite](https://github.com/postman-cs/postman-api-onboarding-action); the composite action's README has the full [action-picker table](https://github.com/postman-cs/postman-api-onboarding-action#which-action-should-i-use).
 
@@ -110,7 +110,7 @@ jobs:
 
 ### Derive a flow automatically (default)
 
-Under `flow-mode: auto` (the default), when `flow-path` is not set the action derives a deterministic smoke flow from the OpenAPI document at `spec-path`: operations are grouped per resource, ordered create -> list -> read -> update, and chained by matching create-response ID properties to later path parameters (`POST /payments` returns `paymentId`; `GET /payments/{paymentId}` binds it). DELETE operations are excluded unless `flow-allow-delete: 'true'` is set and the deleted ID is proven to come from the same run's create step. The full rule set is in [docs/derived-flow.md](docs/derived-flow.md). A curated `flow.yaml` always wins when present; `flow-mode: off` restores the plain uncurated refresh.
+Under `flow-mode: auto` (the default), when `flow-path` is not set the action derives a deterministic smoke flow from the OpenAPI document at `spec-path`: operations are grouped per resource, ordered create -> list -> read -> update, and chained by matching create-response ID properties to later path parameters (`POST /payments` returns `paymentId`; `GET /payments/{paymentId}` binds it). DELETE operations are excluded unless `flow-allow-delete: 'true'` is set and the deleted ID is proven to come from the same run's create step. If the spec has no operations or every operation is excluded, derivation fails with a hard error (fix the spec or exclusions, pass `flow-path`, or set `flow-mode: off`) rather than falling back to the uncurated refresh. The full rule set is in [docs/derived-flow.md](docs/derived-flow.md). A curated `flow.yaml` always wins when present; `flow-mode: off` restores the plain uncurated refresh.
 
 ### Apply a curated flow.yaml
 
@@ -131,7 +131,7 @@ With `flow-path` set, the action generates a temporary Smoke collection from the
 
 ### OAuth update without flow-path
 
-To add Smoke-only [OAuth2](https://learning.postman.com/docs/use/send-requests/authorization/oauth-20/) client-credentials token acquisition before a `flow.yaml` exists, omit `flow-path` and enable OAuth in the onboarding config that wraps this action. The workflow still generates a temporary Smoke collection from the spec, refreshes the canonical Smoke collection from that generated collection, and then applies OAuth without adding flow scripts, bindings, extracts, or curated ordering. Full configuration options are in [docs/smoke-oauth.md](docs/smoke-oauth.md).
+To add Smoke-only [OAuth2](https://learning.postman.com/docs/use/send-requests/authorization/oauth-20/) client-credentials token acquisition before a `flow.yaml` exists, omit `flow-path` and enable OAuth in the onboarding config that wraps this action. Under `flow-mode: auto` with `spec-path` set the workflow derives a smoke flow from the spec and applies OAuth on top of the derived curation; set `flow-mode: off` (or omit `spec-path`) for the plain uncurated refresh that applies OAuth without flow scripts, bindings, extracts, or curated ordering. Full configuration options are in [docs/smoke-oauth.md](docs/smoke-oauth.md).
 
 ```yaml
 smoke:
@@ -147,7 +147,7 @@ smoke:
 
 ### API key update without flow-path
 
-To add Smoke-only API key auth before a `flow.yaml` exists, omit `flow-path` and enable API key auth in the onboarding config that wraps this action. The workflow still generates a temporary Smoke collection from the spec, refreshes the canonical Smoke collection from that generated collection, and then applies API key auth without adding flow scripts, bindings, extracts, or curated ordering. The action writes a placeholder variable only; inject the real API key when the Smoke collection runs. Full configuration options are in [docs/smoke-api-key.md](docs/smoke-api-key.md).
+To add Smoke-only API key auth before a `flow.yaml` exists, omit `flow-path` and enable API key auth in the onboarding config that wraps this action. Under `flow-mode: auto` with `spec-path` set the workflow derives a smoke flow from the spec and applies API key auth on top of the derived curation; set `flow-mode: off` (or omit `spec-path`) for the plain uncurated refresh that applies API key auth without flow scripts, bindings, extracts, or curated ordering. The action writes a placeholder variable only; inject the real API key when the Smoke collection runs. Full configuration options are in [docs/smoke-api-key.md](docs/smoke-api-key.md).
 
 ```yaml
 smoke:
@@ -245,6 +245,7 @@ See [docs/cli.md](docs/cli.md) for GitLab CI, Bitbucket Pipelines, Azure DevOps,
 | `applied-binding-count` | Number of bindings applied as prerequest logic. |
 | `applied-extract-count` | Number of extracts applied as test logic. |
 | `assertion-count` | Number of generated assertions applied across flow steps. |
+| `derived-flow-json` | JSON FlowDefinition of the derived flow when flow-mode auto derived one from spec-path (empty for curated manifests and uncurated refreshes). Structural curation seed only -- operationIds, bindings, extracts; no request values or auth material. Persist it as a flow.yaml starting point for curation. |
 | `sync-status` | Branch-aware sync status: synced, skipped-branch-gate, or empty under branch-strategy legacy. |
 | `branch-decision` | Serialized BranchDecision JSON for downstream actions (also exported as POSTMAN_BRANCH_DECISION). |
 <!-- outputs-table:end -->
@@ -267,7 +268,7 @@ export POSTMAN_ACCESS_TOKEN="<minted-token>"
 ./postman-smoke-flow --project-name core-payments --workspace-id ws-123 --smoke-collection-id col-smoke --flow-path ./flow.yaml
 ```
 
-Credentials resolve from a CLI flag, then the `INPUT_*` env var, then a plain `POSTMAN_ACCESS_TOKEN` / `POSTMAN_API_KEY` — so Jenkins `withCredentials` works with no flag. Proxy-only agents must set `NODE_USE_ENV_PROXY=1` alongside `HTTP_PROXY` / `HTTPS_PROXY`. The binary makes **no runtime tool downloads** (it reshapes the Smoke collection over the access-token gateway; it does not run the collection). Its business calls use the region API host, Bifrost gateway, and iapub; best-effort completion telemetry uses `events.pm-cse.dev`. Omitting `--flow-path` triggers a destructive full-canonical Smoke refresh, so it must be paired with `--acknowledge-no-flow-refresh` when intentional. Current target is `linux-x64`. Full runbook, credential minting, the complete host allowlist, and a Jenkins pipeline: [Self-contained binary](docs/self-contained-binary.md).
+Credentials resolve from a CLI flag, then the `INPUT_*` env var, then a plain `POSTMAN_ACCESS_TOKEN` / `POSTMAN_API_KEY` — so Jenkins `withCredentials` works with no flag. Proxy-only agents must set `NODE_USE_ENV_PROXY=1` alongside `HTTP_PROXY` / `HTTPS_PROXY`. The binary makes **no runtime tool downloads** (it reshapes the Smoke collection over the access-token gateway; it does not run the collection). Its business calls use the region API host, Bifrost gateway, and iapub; best-effort completion telemetry uses `events.pm-cse.dev`. Omitting `--flow-path` with `--spec-path` set derives a flow instead (no acknowledgment needed); omitting both triggers the destructive full-canonical Smoke refresh and must be paired with `--acknowledge-no-flow-refresh` when intentional. Current target is `linux-x64`. Full runbook, credential minting, the complete host allowlist, and a Jenkins pipeline: [Self-contained binary](docs/self-contained-binary.md).
 
 ## How it works
 
@@ -282,9 +283,11 @@ flowchart LR
     O["Smoke runtime auth<br/>OAuth2 or API key"] --> C
 ```
 
-In flow mode (`flow-path` set), the action reads the curated manifest, generates a temporary Smoke collection from the spec, resolves each flow step against the generated requests by `operationId` (with an optional method-plus-path fallback when `spec-path` is provided), wires bindings and extracts into pre-request and test scripts, refreshes the canonical Smoke collection in place, and removes the temporary collection. The manifest schema and resolution rules are in [docs/flow-manifest.md](docs/flow-manifest.md).
+In flow mode (`flow-path` set), the action reads the curated manifest, generates a temporary Smoke collection from the spec, resolves each flow step against the generated requests by `operationId` (tiered: name, then method-plus-path when `spec-path` is provided, then a warned description-substring fallback), wires bindings and extracts into pre-request and test scripts, refreshes the canonical Smoke collection in place, and removes the temporary collection. The manifest schema and resolution rules are in [docs/flow-manifest.md](docs/flow-manifest.md).
 
-In no-flow mode (`flow-path` omitted), the action still generates a temporary Smoke collection from the spec and refreshes the canonical Smoke collection from that generated collection. If Smoke runtime auth is configured, it applies that auth during the refresh. It does not add flow scripts, bindings, extracts, or curated ordering. OAuth2 client credentials are documented in [docs/smoke-oauth.md](docs/smoke-oauth.md), and API key auth is documented in [docs/smoke-api-key.md](docs/smoke-api-key.md).
+When `flow-path` is omitted under `flow-mode: auto` (the default) and `spec-path` is set, the action **derives** a deterministic smoke flow from the OpenAPI document and applies it through the exact same curated pipeline — including a `derived-flow-json` output that seeds later curation ([docs/derived-flow.md](docs/derived-flow.md)). An empty spec or a spec where every operation is excluded fails the run instead of silently refreshing without curation.
+
+In no-flow mode (`flow-path` omitted without `spec-path`, or `flow-mode: off`), the action still generates a temporary Smoke collection from the spec and refreshes the canonical Smoke collection from that generated collection. If Smoke runtime auth is configured, it applies that auth during the refresh. It does not add flow scripts, bindings, extracts, or curated ordering. OAuth2 client credentials are documented in [docs/smoke-oauth.md](docs/smoke-oauth.md), and API key auth is documented in [docs/smoke-api-key.md](docs/smoke-api-key.md).
 
 All collection operations — generating the temporary collection from the spec, reading it, reshaping the canonical collection, and deleting the temporary one — run through the Postman gateway under postman-access-token. The action never mutates baseline or contract collections, and it never writes runtime tokens or client secrets back to Postman environments.
 

@@ -33,6 +33,7 @@ export const smokeFlowActionContract = {
     'applied-binding-count': {},
     'applied-extract-count': {},
     'assertion-count': {},
+    'derived-flow-json': {},
     'sync-status': {},
     'branch-decision': {}
   }

@@ -85,7 +85,7 @@ describe('deriveFlowFromSpec', () => {
     );
     expect(result.flow).toBeNull();
     expect(result.excludedOperationIds).toEqual(['deleteOrphan']);
-    expect(result.warnings.some((warning) => warning.message.includes('falling back to uncurated refresh'))).toBe(true);
+    expect(result.warnings.some((warning) => warning.message.includes('a smoke flow cannot be derived'))).toBe(true);
   });
 
   // 4. Output->input ID chaining via extract + prior_output binding
