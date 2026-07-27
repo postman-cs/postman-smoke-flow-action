@@ -33,7 +33,7 @@ import {
   type BranchDecision,
   type BranchStrategy
 } from './lib/repo-branch-decision.js';
-import { createTelemetryContext } from '@postman-cse/automation-telemetry-core';
+import { createTelemetryContext } from '@postman-cse/automation-core';
 import { resolveActionVersion } from './action-version.js';
 
 type JsonRecord = Record<string, unknown>;

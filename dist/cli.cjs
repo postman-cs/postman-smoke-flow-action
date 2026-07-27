@@ -39428,7 +39428,7 @@ function resolveEffectiveBranchDecision(options, env = process.env) {
   return resolveBranchDecision(options);
 }
 
-// node_modules/@postman-cse/automation-telemetry-core/dist/ci-context.js
+// node_modules/@postman-cse/automation-core/dist/ci-context.js
 function norm(value) {
   const trimmed = (value ?? "").trim();
   return trimmed.length > 0 ? trimmed : void 0;
@@ -39579,7 +39579,7 @@ function detectCiProviderContext(env = process.env) {
   return { ciProvider: "unknown", runnerKind: "unknown" };
 }
 
-// node_modules/@postman-cse/automation-telemetry-core/dist/repo-context.js
+// node_modules/@postman-cse/automation-core/dist/repo-context.js
 function normalize(value) {
   const trimmed = (value ?? "").trim();
   return trimmed.length > 0 ? trimmed : void 0;
@@ -39668,7 +39668,7 @@ function detectRepoContext(input, env = process.env) {
   };
 }
 
-// node_modules/@postman-cse/automation-telemetry-core/dist/telemetry.js
+// node_modules/@postman-cse/automation-core/dist/telemetry.js
 var import_node_crypto = require("node:crypto");
 var import_undici2 = __toESM(require_undici(), 1);
 var SCHEMA_VERSION = 3;
@@ -39678,9 +39678,13 @@ var proxyDispatcher;
 function getProxyDispatcher() {
   return proxyDispatcher ??= new import_undici2.EnvHttpProxyAgent();
 }
-function resolveActionVersion2(explicit) {
+function resolveActionVersion2(explicit, env = process.env) {
   if (explicit) {
     return explicit;
+  }
+  const ref = env.GITHUB_ACTION_REF?.trim();
+  if (ref) {
+    return ref;
   }
   return typeof __ACTION_VERSION__ !== "undefined" && __ACTION_VERSION__ ? __ACTION_VERSION__ : "unknown";
 }
@@ -39764,7 +39768,7 @@ async function send(event, options) {
 function createTelemetryContext(options) {
   const env = options.env ?? process.env;
   const now = options.now ?? Date.now;
-  const actionVersion = resolveActionVersion2(options.actionVersion);
+  const actionVersion = resolveActionVersion2(options.actionVersion, env);
   let teamId = "";
   let accountType = "unknown";
   let emitted = false;

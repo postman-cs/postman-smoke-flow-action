@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   accountTypeFromConsumer,
   type AccountType
-} from '@postman-cse/automation-telemetry-core';
+} from '@postman-cse/automation-core';
 
 import { readActionInputs, resolveGatewayTeamContext } from '../src/index.js';
 import { AccessTokenGatewayClient } from '../src/lib/postman/gateway-client.js';

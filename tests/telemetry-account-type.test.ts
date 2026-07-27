@@ -8,7 +8,7 @@ const telemetrySpy = {
   emitCompletion: vi.fn()
 };
 
-vi.mock('@postman-cse/automation-telemetry-core', () => ({
+vi.mock('@postman-cse/automation-core', () => ({
   createTelemetryContext: () => telemetrySpy
 }));
 

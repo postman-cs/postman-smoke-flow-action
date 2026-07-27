@@ -36,7 +36,7 @@ vi.mock('../src/postman/credential-identity.js', async () => {
 });
 
 
-vi.mock('@postman-cse/automation-telemetry-core', () => ({
+vi.mock('@postman-cse/automation-core', () => ({
   createTelemetryContext: () => telemetrySpy
 }));
 
