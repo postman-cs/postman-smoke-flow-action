@@ -1,171 +1,230 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { test } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import test from 'node:test';
 
 import {
-  DEFAULT_DISPATCH_TIMEOUT_MS,
+  buildCorrelationId,
   buildDispatchInputs,
+  buildDispatchPayload,
   buildDispatchUrl,
   dispatchE2eMonitor,
-  formatDispatchFailureWarning,
-  reportDispatchFailure
+  normalizeSuite,
+  redactTokenOccurrences,
+  REDACTED_TOKEN_MARKER,
+  SUPPORTED_SUITES
 } from './dispatch-e2e-monitor.mjs';
 
 const baseEnv = {
-  E2E_DISPATCH_TOKEN: 'test-token-secret',
+  E2E_DISPATCH_TOKEN: 'test-token',
   GITHUB_REPOSITORY: 'postman-cs/postman-smoke-flow-action',
-  E2E_GATE_REF: 'v2.1.6',
+  GITHUB_REF_NAME: 'v9.9.9',
+  GITHUB_RUN_ID: '4242',
+  GITHUB_RUN_ATTEMPT: '2',
   E2E_GATE_SUITE: 'smoke'
 };
 
-const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'dispatch-e2e-monitor.mjs'), 'utf8');
-
-test('buildDispatchInputs pins the immutable action ref and smoke suite', () => {
-  assert.deepEqual(buildDispatchInputs({ action: 'postman-smoke-flow-action', refName: 'v2.1.6', suite: 'smoke' }), {
-    action: 'postman-smoke-flow-action',
-    ref: 'v2.1.6',
-    suite: 'smoke'
-  });
-  assert.throws(() => buildDispatchInputs({ action: 'x', refName: 'v1', suite: 'fast' }), /smoke or full/);
-});
-
-test('buildDispatchUrl validates and encodes owner/repo/workflow segments', () => {
-  assert.equal(
-    buildDispatchUrl('postman-cs/postman-actions-e2e', 'e2e.yml'),
-    'https://api.github.com/repos/postman-cs/postman-actions-e2e/actions/workflows/e2e.yml/dispatches'
-  );
-  assert.throws(() => buildDispatchUrl('../evil/repo', 'e2e.yml'), /owner\/repo/);
-  assert.throws(() => buildDispatchUrl('postman-cs/postman-actions-e2e', '../e2e.yml'), /path segment/);
-});
-
-test('dispatchE2eMonitor posts once with exact immutable smoke payload and bounded signal', async () => {
-  const calls = [];
-  const notices = [];
-  const fetchImpl = async (url, init) => {
-    calls.push({ url, init });
-    return { ok: true, status: 204 };
+function okFetch(captured) {
+  return async (url, options) => {
+    captured.url = url;
+    captured.options = options;
+    return { ok: true, status: 204, text: async () => '' };
   };
+}
 
-  await dispatchE2eMonitor({
-    env: baseEnv,
-    fetchImpl,
-    log: (message) => notices.push(message)
-  });
+// --- listener contract -------------------------------------------------
+// postman-cs/postman-actions-e2e e2e.yml is triggered by workflow_dispatch and
+// reads inputs.action / inputs.ref / inputs.gate_correlation_id / inputs.suite.
+// A repository_dispatch whose event type does not match returns HTTP 204 and is
+// then silently dropped, so these assertions are the only thing standing
+// between a green release job and zero live coverage.
 
-  assert.equal(calls.length, 1);
+test('targets the workflow_dispatch endpoint, never bare repository_dispatch', async () => {
+  const captured = {};
+  await dispatchE2eMonitor({ env: baseEnv, fetchImpl: okFetch(captured), log() {} });
   assert.equal(
-    calls[0].url,
+    captured.url,
     'https://api.github.com/repos/postman-cs/postman-actions-e2e/actions/workflows/e2e.yml/dispatches'
   );
-  assert.equal(calls[0].init.method, 'POST');
-  assert.equal(calls[0].init.headers.Accept, 'application/vnd.github+json');
-  assert.equal(calls[0].init.headers.Authorization, 'Bearer test-token-secret');
-  assert.equal(calls[0].init.headers['Content-Type'], 'application/json');
-  assert.equal(calls[0].init.headers['X-GitHub-Api-Version'], '2026-03-10');
-  assert.ok(calls[0].init.signal instanceof globalThis.AbortSignal);
-  assert.deepEqual(JSON.parse(calls[0].init.body), {
-    ref: 'main',
-    inputs: {
-      action: 'postman-smoke-flow-action',
-      ref: 'v2.1.6',
-      suite: 'smoke'
-    }
-  });
-  assert.equal(notices.length, 1);
-  assert.equal(notices[0], '::notice::Dispatched asynchronous smoke E2E monitor for v2.1.6');
-  assert.equal(DEFAULT_DISPATCH_TIMEOUT_MS, 30_000);
+  assert.ok(
+    !/\/repos\/[^/]+\/[^/]+\/dispatches$/.test(String(captured.url)),
+    'must not POST the repository_dispatch endpoint'
+  );
 });
 
-test('dispatchE2eMonitor rejects missing required env without leaking a token', async () => {
+test('sends exactly the four inputs the listener reads, and no event_type', async () => {
+  const captured = {};
+  await dispatchE2eMonitor({ env: baseEnv, fetchImpl: okFetch(captured), log() {} });
+  const body = JSON.parse(String(captured.options.body));
+  assert.equal(captured.options.method, 'POST');
+  assert.equal(body.ref, 'main', 'workflow ref must be the monitor default branch');
+  assert.deepEqual(Object.keys(body.inputs).sort(), [
+    'action',
+    'gate_correlation_id',
+    'ref',
+    'suite'
+  ]);
+  assert.equal(body.inputs.action, 'postman-smoke-flow-action');
+  assert.equal(body.inputs.ref, 'v9.9.9');
+  assert.equal(body.inputs.suite, 'smoke');
+  assert.equal(body.event_type, undefined, 'event_type belongs to repository_dispatch only');
+  assert.equal(body.client_payload, undefined, 'client_payload belongs to repository_dispatch only');
+  assert.match(String(captured.options.headers.Authorization), /^Bearer test-token$/);
+  assert.ok(captured.options.signal, 'bounded AbortSignal must be supplied');
+});
+
+test('E2E_GATE_REF pins the immutable release tag over GITHUB_REF_NAME', async () => {
+  const captured = {};
+  await dispatchE2eMonitor({
+    env: { ...baseEnv, E2E_GATE_REF: 'v1.2.3' },
+    fetchImpl: okFetch(captured),
+    log() {}
+  });
+  assert.equal(JSON.parse(String(captured.options.body)).inputs.ref, 'v1.2.3');
+});
+
+test('correlation id is deterministic, sanitized, and traceable to the release run', () => {
+  const id = buildCorrelationId({
+    repository: 'postman-cs/some-action',
+    runId: '77',
+    runAttempt: '1',
+    refName: 'v1.0.0'
+  });
+  assert.equal(id, 'postman-cs-some-action-77-1-v1.0.0');
+  assert.doesNotMatch(id, /[^A-Za-z0-9_.-]/);
+});
+
+test('suite accepts every value the monitor workflow offers and rejects the rest', () => {
+  assert.deepEqual([...SUPPORTED_SUITES], ['smoke', 'full', 'branch-aware']);
+  for (const suite of SUPPORTED_SUITES) {
+    assert.equal(normalizeSuite(suite), suite);
+  }
+  assert.equal(normalizeSuite(undefined), 'smoke');
+  assert.throws(() => normalizeSuite('nightly'), /must be one of smoke\|full\|branch-aware/);
+});
+
+test('failure text names the action and ref, and never leaks the token', async () => {
+  await assert.rejects(
+    () =>
+      dispatchE2eMonitor({
+        env: baseEnv,
+        fetchImpl: async () => ({
+          ok: false,
+          status: 422,
+          text: async () => 'workflow inputs rejected for test-token'
+        }),
+        log() {}
+      }),
+    (error) => {
+      assert.match(error.message, /HTTP 422 for postman-smoke-flow-action@v9\.9\.9/);
+      assert.match(error.message, /workflow inputs rejected/);
+      assert.doesNotMatch(error.message, /test-token/);
+      assert.match(error.message, new RegExp(REDACTED_TOKEN_MARKER.replace(/[[\]]/g, '\\$&')));
+      return true;
+    }
+  );
+});
+
+test('an unreadable error body still reports the status code', async () => {
+  await assert.rejects(
+    () =>
+      dispatchE2eMonitor({
+        env: baseEnv,
+        fetchImpl: async () => ({
+          ok: false,
+          status: 503,
+          text: async () => {
+            throw new Error('stream closed');
+          }
+        }),
+        log() {}
+      }),
+    /HTTP 503 for postman-smoke-flow-action@v9\.9\.9: <response body unavailable>/
+  );
+});
+
+test('transport failures are redacted and carry no token-bearing cause', async () => {
+  await assert.rejects(
+    () =>
+      dispatchE2eMonitor({
+        env: baseEnv,
+        fetchImpl: async () => {
+          throw new Error('connect ECONNREFUSED (auth test-token)');
+        },
+        log() {}
+      }),
+    (error) => {
+      assert.doesNotMatch(error.message, /test-token/);
+      assert.equal(error.cause, undefined);
+      return true;
+    }
+  );
+});
+
+test('missing required env fails closed without echoing the token', async () => {
   await assert.rejects(
     () =>
       dispatchE2eMonitor({
         env: { E2E_DISPATCH_TOKEN: 'secret-token' },
-        fetchImpl: async () => ({ ok: true, status: 204 })
+        fetchImpl: okFetch({}),
+        log() {}
       }),
     (error) => {
-      assert.match(String(error.message), /E2E_DISPATCH_TOKEN, GITHUB_REPOSITORY, and GITHUB_REF_NAME are required/);
-      assert.doesNotMatch(String(error.message), /secret-token/);
+      assert.match(error.message, /E2E_DISPATCH_TOKEN, GITHUB_REPOSITORY, and E2E_GATE_REF/);
+      assert.doesNotMatch(error.message, /secret-token/);
       return true;
     }
   );
 });
 
-test('dispatchE2eMonitor rejects an invalid suite before fetch', async () => {
-  let called = 0;
-  await assert.rejects(
-    () =>
-      dispatchE2eMonitor({
-        env: { ...baseEnv, E2E_GATE_SUITE: 'fast' },
-        fetchImpl: async () => {
-          called += 1;
-          return { ok: true, status: 204 };
-        }
-      }),
-    /smoke or full/
-  );
-  assert.equal(called, 0);
+test('dispatch target is validated before any network call', () => {
+  assert.throws(() => buildDispatchUrl('not-a-repo', 'e2e.yml'), /must be owner\/repo/);
+  assert.throws(() => buildDispatchUrl('o/r', 'nested/path.yml'), /single path segment/);
 });
 
-test('dispatchE2eMonitor throws status-only errors without disclosing the token', async () => {
-  await assert.rejects(
-    () =>
-      dispatchE2eMonitor({
-        env: baseEnv,
-        fetchImpl: async () => ({ ok: false, status: 502 })
-      }),
-    (error) => {
-      assert.equal(String(error.message), 'E2E monitor dispatch failed with HTTP 502');
-      assert.doesNotMatch(String(error.message), /test-token-secret/);
-      return true;
-    }
-  );
-});
-
-test('dispatchE2eMonitor rejects when a tiny injected timeout aborts the request', async () => {
-  await assert.rejects(
-    () =>
-      dispatchE2eMonitor({
-        env: baseEnv,
-        timeoutMs: 1,
-        fetchImpl: (_url, init) =>
-          new Promise((_resolve, reject) => {
-            init.signal.addEventListener(
-              'abort',
-              () => {
-                reject(init.signal.reason);
-              },
-              { once: true }
-            );
-          })
-      }),
-    (error) => {
-      assert.equal(error.name, 'TimeoutError');
-      assert.doesNotMatch(String(error.message ?? error), /test-token-secret/);
-      return true;
-    }
-  );
-});
-
-test('failed dispatch warning keeps HTTP status, redacts tokens, and is wired in the CLI catch', () => {
-  assert.equal(
-    formatDispatchFailureWarning(new Error('E2E monitor dispatch failed with HTTP 502'), ['test-token-secret']),
-    '::warning::E2E monitor dispatch failed with HTTP 502'
-  );
-  assert.equal(
-    formatDispatchFailureWarning(new Error('boom test-token-secret HTTP 403'), ['test-token-secret']),
-    '::warning::boom [redacted] HTTP 403'
-  );
-
-  const warnings = [];
-  reportDispatchFailure(new Error('E2E monitor dispatch failed with HTTP 503'), {
-    env: { E2E_DISPATCH_TOKEN: 'test-token-secret' },
-    log: (message) => warnings.push(message)
+test('an explicit abort deadline is honoured', async () => {
+  const controller = new AbortController();
+  let seen;
+  await dispatchE2eMonitor({
+    env: baseEnv,
+    fetchImpl: async (_url, options) => {
+      seen = options.signal;
+      return { ok: true, status: 204, text: async () => '' };
+    },
+    log() {},
+    abortSignal: controller.signal
   });
-  assert.deepEqual(warnings, ['::warning::E2E monitor dispatch failed with HTTP 503']);
-  assert.match(source, /reportDispatchFailure\(error\);/);
-  assert.match(source, /process\.exit\(1\);/);
-  assert.doesNotMatch(source, /console\.error\(error\.message\)/);
+  assert.equal(seen, controller.signal);
+});
+
+test('success is announced with the correlation id for run-name tracing', async () => {
+  const lines = [];
+  const result = await dispatchE2eMonitor({
+    env: baseEnv,
+    fetchImpl: okFetch({}),
+    log: (line) => lines.push(line)
+  });
+  assert.equal(result.status, 204);
+  assert.equal(result.correlationId, 'postman-cs-postman-smoke-flow-action-4242-2-v9.9.9');
+  assert.ok(lines.some((line) => line.includes(result.correlationId)));
+});
+
+test('payload builders are pure and reusable', () => {
+  const inputs = buildDispatchInputs({
+    action: 'a',
+    refName: 'v1',
+    correlationId: 'c',
+    suite: 'full'
+  });
+  assert.deepEqual(inputs, { action: 'a', ref: 'v1', gate_correlation_id: 'c', suite: 'full' });
+  assert.deepEqual(
+    buildDispatchPayload({
+      workflowRef: 'main',
+      action: 'a',
+      refName: 'v1',
+      correlationId: 'c',
+      suite: 'full'
+    }),
+    { ref: 'main', inputs }
+  );
+  assert.equal(redactTokenOccurrences('a-token-b', 'token'), `a-${REDACTED_TOKEN_MARKER}-b`);
+  assert.equal(redactTokenOccurrences(undefined, 'token'), '');
 });
