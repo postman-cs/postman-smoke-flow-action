@@ -445,7 +445,8 @@ async function runWithoutFlowManifest(
         buildGeneratedSmokeCollection(sourceCollection, inputs.authConfig, {
           secretsResolverEnabled: inputs.secretsResolverEnabled,
           collectionName: canonicalCollectionName,
-          scriptSourceCollection: existingCollection
+          scriptSourceCollection: existingCollection,
+          canonicalCollection: existingCollection
         }),
       verifyCollection: (collection) =>
         verifyGeneratedSmokeCollection(collection, inputs.authConfig, {
@@ -664,6 +665,12 @@ async function runWithFlowDefinition(
   let tempCollectionDeleted = false;
   let runFailed = false;
   try {
+    // Bootstrap owns this collection’s identity: it re-elects/adopts the final
+    // by exact info.name plus the durable branch marker in info.description.
+    // Read it before the rebuild so both fields survive the refresh; losing
+    // them makes the next bootstrap run import a fresh Smoke collection and
+    // orphan this one plus the monitor bound to its UID.
+    const canonicalCollection = await dependencies.postman.getCollection(inputs.smokeCollectionId);
     tempCollectionId = await dependencies.postman.generateCollection(inputs.specId, inputs.projectName, inputs.tempCollectionPrefix);
     dependencies.core.info(`Generated temporary Smoke collection ${tempCollectionId}`);
 
@@ -703,7 +710,8 @@ async function runWithFlowDefinition(
           flow,
           resolvedRequests,
           inputs.authConfig,
-          inputs.secretsResolverEnabled
+          inputs.secretsResolverEnabled,
+          { canonicalCollection }
         );
       },
       verifyCollection: (collection) =>
