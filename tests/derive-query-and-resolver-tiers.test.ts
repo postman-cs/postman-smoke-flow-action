@@ -31,7 +31,7 @@ describe('derived query bindings and resolver tier precedence', () => {
           }
         }
       }),
-      cause: 'excluded every operation because each was a DELETE operation'
+      cause: 'excluded every operation'
     }
   ])('Q3: $name produces an accurate hard-error cause', ({ doc, cause }) => {
     const result = deriveFlowFromSpec(doc as never);
