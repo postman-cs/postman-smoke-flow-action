@@ -1,3 +1,5 @@
+import type { SecretsResolverProvider } from '@postman-cse/automation-core';
+
 export type BindingSource = 'example' | 'literal' | 'prior_output';
 
 export type FlowBinding = {
@@ -49,7 +51,7 @@ export type ActionInputs = {
   postmanApiBaseUrl: string;
   postmanIapubBaseUrl: string;
   authConfig?: SmokeAuthConfig;
-  secretsResolverEnabled: boolean;
+  secretsResolverProvider: SecretsResolverProvider;
   specPath?: string;
   debugDumpPath?: string;
   collectionSyncMode: 'refresh' | 'version';

@@ -36,7 +36,13 @@ import {
   type BranchDecision,
   type BranchStrategy
 } from './lib/repo-branch-decision.js';
-import { actionSink, createLogger, createTelemetryContext, type Logger } from '@postman-cse/automation-core';
+import {
+  actionSink,
+  createLogger,
+  createTelemetryContext,
+  parseSecretsResolverProvider,
+  type Logger
+} from '@postman-cse/automation-core';
 import { resolveActionVersion } from './action-version.js';
 
 type JsonRecord = Record<string, unknown>;
@@ -202,10 +208,10 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
     postmanApiBaseUrl: resolvePostmanApiBaseUrl(getInput('postman-region', env)),
     postmanIapubBaseUrl: resolvePostmanIapubBaseUrl(getInput('postman-region', env)),
     authConfig: parseAuthConfig(getInput('auth-config-json', env)),
-    secretsResolverEnabled: parseBooleanInput(
-      'secrets-resolver-enabled',
-      getInput('secrets-resolver-enabled', env),
-      true
+    // Opt-in provider selection. The legacy boolean input is still honoured
+    // (`true` -> the historical AWS helper) so existing callers keep working.
+    secretsResolverProvider: parseSecretsResolverProvider(
+      getInput('secrets-resolver', env) || getInput('secrets-resolver-enabled', env)
     ),
     specPath: getInput('spec-path', env) || undefined,
     debugDumpPath: getInput('debug-dump-path', env) || undefined,
@@ -443,14 +449,14 @@ async function runWithoutFlowManifest(
       refreshSourceFromLatest: false,
       buildCollection: (sourceCollection) =>
         buildGeneratedSmokeCollection(sourceCollection, inputs.authConfig, {
-          secretsResolverEnabled: inputs.secretsResolverEnabled,
+          secretsResolverProvider: inputs.secretsResolverProvider,
           collectionName: canonicalCollectionName,
           scriptSourceCollection: existingCollection,
           canonicalCollection: existingCollection
         }),
       verifyCollection: (collection) =>
         verifyGeneratedSmokeCollection(collection, inputs.authConfig, {
-          secretsResolverEnabled: inputs.secretsResolverEnabled
+          secretsResolverProvider: inputs.secretsResolverProvider
         })
     });
 
@@ -665,11 +671,10 @@ async function runWithFlowDefinition(
   let tempCollectionDeleted = false;
   let runFailed = false;
   try {
-    // Bootstrap owns this collection’s identity: it re-elects/adopts the final
-    // by exact info.name plus the durable branch marker in info.description.
-    // Read it before the rebuild so both fields survive the refresh; losing
-    // them makes the next bootstrap run import a fresh Smoke collection and
-    // orphan this one plus the monitor bound to its UID.
+    // Bootstrap re-elects the canonical Smoke final by exact info.name. Read the
+    // canonical collection before the rebuild so its name survives the refresh;
+    // renaming it via the /name PATCH breaks election and triggers a fresh
+    // import/orphan cascade for this collection and its bound monitor.
     const canonicalCollection = await dependencies.postman.getCollection(inputs.smokeCollectionId);
     tempCollectionId = await dependencies.postman.generateCollection(inputs.specId, inputs.projectName, inputs.tempCollectionPrefix);
     dependencies.core.info(`Generated temporary Smoke collection ${tempCollectionId}`);
@@ -710,13 +715,13 @@ async function runWithFlowDefinition(
           flow,
           resolvedRequests,
           inputs.authConfig,
-          inputs.secretsResolverEnabled,
+          inputs.secretsResolverProvider,
           { canonicalCollection }
         );
       },
       verifyCollection: (collection) =>
         verifyCuratedSmokeCollection(collection, flow, inputs.authConfig, {
-          secretsResolverEnabled: inputs.secretsResolverEnabled
+          secretsResolverProvider: inputs.secretsResolverProvider
         })
     });
     dependencies.core.info(`Updated canonical Smoke collection ${inputs.smokeCollectionId} from ${flowSource} flow.`);

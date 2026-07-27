@@ -37,13 +37,43 @@ describe('readActionInputs', () => {
     if (inputs.authConfig?.type === 'oauth2') {
       expect(inputs.authConfig.tokenUrl).toBe('{{auth_token_url}}');
     }
-    expect(inputs.secretsResolverEnabled).toBe(false);
+    // legacy boolean spelling still honoured: false -> no provider
+    expect(inputs.secretsResolverProvider).toBe('none');
   });
 
-  it('keeps the legacy secrets resolver enabled by default for existing callers', () => {
+  it('leaves the secrets resolver off by default so non-AWS consumers ship no doomed request', () => {
     const inputs = readActionInputs({} as NodeJS.ProcessEnv);
 
-    expect(inputs.secretsResolverEnabled).toBe(true);
+    expect(inputs.secretsResolverProvider).toBe('none');
+  });
+
+  it('maps the legacy boolean input onto the AWS provider for existing callers', () => {
+    const inputs = readActionInputs({
+      INPUT_SECRETS_RESOLVER_ENABLED: 'true'
+    } as NodeJS.ProcessEnv);
+
+    expect(inputs.secretsResolverProvider).toBe('aws');
+  });
+
+  it('reads each supported provider and lets the new input win over the legacy one', () => {
+    for (const provider of ['aws', 'azure', 'gcp'] as const) {
+      const inputs = readActionInputs({
+        INPUT_SECRETS_RESOLVER: provider
+      } as NodeJS.ProcessEnv);
+      expect(inputs.secretsResolverProvider).toBe(provider);
+    }
+
+    const both = readActionInputs({
+      INPUT_SECRETS_RESOLVER: 'azure',
+      INPUT_SECRETS_RESOLVER_ENABLED: 'true'
+    } as NodeJS.ProcessEnv);
+    expect(both.secretsResolverProvider).toBe('azure');
+  });
+
+  it('rejects an unknown provider instead of silently shipping no helper', () => {
+    expect(() =>
+      readActionInputs({ INPUT_SECRETS_RESOLVER: 'vault' } as NodeJS.ProcessEnv)
+    ).toThrow(/SECRETS_RESOLVER_PROVIDER_INVALID/);
   });
 
   it('resolves credentials from flags, action inputs, then plain environment variables', () => {

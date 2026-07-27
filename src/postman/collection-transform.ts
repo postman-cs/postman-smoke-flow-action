@@ -8,9 +8,15 @@ import type {
   SmokeOAuthConfig
 } from '../types.js';
 import {
+  createSecretsResolverItem,
+  isSecretsResolverEnabled,
+  SECRETS_RESOLVER_ITEM_NAME,
+  type SecretsResolverProvider
+} from '@postman-cse/automation-core';
+
+import {
   createOAuthPreRequestEvent,
   createPreRequestEvent,
-  createSecretsResolverItem,
   createTestEvent,
   countAssertionsForStep
 } from './scripts.js';
@@ -22,23 +28,23 @@ export type CollectionVerification = {
 };
 
 export type GeneratedSmokeCollectionBuildOptions = {
-  secretsResolverEnabled?: boolean;
+  secretsResolverProvider?: SecretsResolverProvider;
   collectionName?: string;
   scriptSourceCollection?: JsonRecord;
   /**
    * The canonical Smoke collection currently in Postman. Bootstrap elects and
-   * adopts that final by exact `info.name` plus the durable branch marker
-   * carried in `info.description`, so an in-place refresh must carry both
-   * fields forward from the canonical target instead of the generated source.
-   * Dropping either one makes the next bootstrap run treat the collection as a
-   * stranger, import a fresh one, and orphan both it and the monitor bound to
-   * its UID.
+   * adopts that final by exact `info.name`; a refresh that renames it via the
+   * `/name` PATCH breaks election and triggers a fresh import/orphan cascade.
+   * Carry `info.name` forward from the canonical target, not the generated
+   * source. `info.description` is carried forward defensively only — this
+   * client's v3 export does not surface it and its root PATCH does not write
+   * it, so any bootstrap marker there is preserved simply by never being touched.
    */
   canonicalCollection?: JsonRecord;
 };
 
 const GENERATED_OAUTH_EVENT_MARKER = '[Smoke Flow] Auto-generated OAuth2 client-credentials token cache';
-const LEGACY_SECRETS_RESOLVER_ITEM_NAME = '00 - Resolve Secrets';
+const LEGACY_SECRETS_RESOLVER_ITEM_NAME = SECRETS_RESOLVER_ITEM_NAME;
 
 function asRecord(value: unknown): JsonRecord | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : null;
@@ -572,13 +578,12 @@ function preserveRequestEventsFromCollection(collection: JsonRecord, scriptSourc
 /**
  * Carry the canonical Smoke collection's identity fields onto a rebuilt body.
  *
- * Bootstrap elects and adopts the canonical Smoke final by exact `info.name`
- * plus the durable branch marker carried in `info.description`. A refresh here
- * rebuilds the body from a freshly generated temp collection, so without this
- * both fields would be replaced by generator defaults; the next bootstrap run
- * would then find no same-name/same-marker final to adopt, import a brand new
- * collection, and orphan the previous one along with the monitor bound to its
- * UID. Absent fields on the canonical target are left absent, never invented.
+ * Bootstrap elects the canonical Smoke final by exact `info.name`; this package
+ * previously broke election by PATCHing `/name` to the flow-derived title.
+ * `info.name` is therefore the operative field and must survive the rebuild.
+ * `info.description` is carried forward defensively only — the v3 export path
+ * does not surface it and the root PATCH does not write it, so the marker is
+ * preserved simply by never being touched. Absent canonical fields stay absent.
  */
 function applyCanonicalCollectionIdentity(
   collection: JsonRecord,
@@ -805,7 +810,7 @@ function hasFlowRequestScripts(item: JsonRecord): boolean {
 export function verifySmokeCollectionAuth(
   collection: JsonRecord,
   authConfig: SmokeAuthConfig,
-  options: { secretsResolverEnabled?: boolean } = {}
+  options: { secretsResolverProvider?: SecretsResolverProvider } = {}
 ): CollectionVerification {
   const variableKeys = getCollectionVariableKeys(collection);
   const failures: string[] = [];
@@ -826,7 +831,7 @@ export function verifySmokeCollectionAuth(
     if (bearerAuthRequestCount === 0) {
       failures.push('no requests use generated bearer auth');
     }
-    if (options.secretsResolverEnabled === false && containsSecretsResolverItem(collection.item)) {
+    if (!isSecretsResolverEnabled(options.secretsResolverProvider ?? 'none') && containsSecretsResolverItem(collection.item)) {
       failures.push('secrets resolver request is still present');
     }
 
@@ -853,7 +858,7 @@ export function verifySmokeCollectionAuth(
     const suffix = requestsWithExplicitAuth.length > 5 ? `, and ${requestsWithExplicitAuth.length - 5} more` : '';
     failures.push(`request(s) override collection-level API key auth: ${sample}${suffix}`);
   }
-  if (options.secretsResolverEnabled === false && containsSecretsResolverItem(collection.item)) {
+  if (!isSecretsResolverEnabled(options.secretsResolverProvider ?? 'none') && containsSecretsResolverItem(collection.item)) {
     failures.push('secrets resolver request is still present');
   }
 
@@ -866,7 +871,7 @@ export function verifySmokeCollectionAuth(
 export function verifyGeneratedSmokeCollection(
   collection: JsonRecord,
   authConfig: SmokeAuthConfig | undefined,
-  options: { secretsResolverEnabled?: boolean } = {}
+  options: { secretsResolverProvider?: SecretsResolverProvider } = {}
 ): CollectionVerification {
   const requestItems = collectSmokeRequestItems(collection.item);
   const requestsMissingUrls = requestItems
@@ -885,11 +890,11 @@ export function verifyGeneratedSmokeCollection(
     const suffix = requestsMissingUrls.length > 5 ? `, and ${requestsMissingUrls.length - 5} more` : '';
     failures.push(`generated Smoke request(s) missing URL: ${sample}${suffix}`);
   }
-  if (!authConfig?.enabled && options.secretsResolverEnabled === false && containsSecretsResolverItem(collection.item)) {
+  if (!authConfig?.enabled && !isSecretsResolverEnabled(options.secretsResolverProvider ?? 'none') && containsSecretsResolverItem(collection.item)) {
     failures.push('secrets resolver request is still present');
   }
-  if (options.secretsResolverEnabled !== false && !containsSecretsResolverItem(collection.item)) {
-    failures.push('secrets resolver request is missing (secrets-resolver-enabled defaults to true)');
+  if (isSecretsResolverEnabled(options.secretsResolverProvider ?? 'none') && !containsSecretsResolverItem(collection.item)) {
+    failures.push('secrets resolver request is missing for the selected secrets-resolver provider');
   }
 
   if (authConfig?.enabled) {
@@ -909,7 +914,7 @@ export function verifyCuratedSmokeCollection(
   collection: JsonRecord,
   flow: FlowDefinition,
   authConfig: SmokeAuthConfig | undefined,
-  options: { secretsResolverEnabled?: boolean } = {}
+  options: { secretsResolverProvider?: SecretsResolverProvider } = {}
 ): CollectionVerification {
   const topLevelItems = getTopLevelItems(collection);
   const requestItems = topLevelItems.filter((item) => asRecord(item.request) && !isSecretsResolverItem(item));
@@ -932,10 +937,10 @@ export function verifyCuratedSmokeCollection(
   }
 
   const hasSecretsResolver = containsSecretsResolverItem(collection.item);
-  if (options.secretsResolverEnabled === false && hasSecretsResolver) {
+  if (!isSecretsResolverEnabled(options.secretsResolverProvider ?? 'none') && hasSecretsResolver) {
     failures.push('secrets resolver request is still present');
   }
-  if (options.secretsResolverEnabled !== false && !hasSecretsResolver) {
+  if (isSecretsResolverEnabled(options.secretsResolverProvider ?? 'none') && !hasSecretsResolver) {
     failures.push('secrets resolver request is missing');
   }
 
@@ -968,10 +973,13 @@ function curateRequestItem(resolved: ResolvedRequest, authConfig?: SmokeAuthConf
 export function applySmokeCollectionAuth(
   existingCollection: JsonRecord,
   authConfig: SmokeAuthConfig,
-  options: { secretsResolverEnabled?: boolean } = {}
+  options: { secretsResolverProvider?: SecretsResolverProvider } = {}
 ): { collection: JsonRecord; authRequestCount: number } {
   const collection = sanitizeForCollectionUpdate(structuredClone(existingCollection)) as JsonRecord;
-  if (options.secretsResolverEnabled === false) {
+  // Auth-only path: only an EXPLICIT opt-out removes a resolver the caller
+  // already has. Leaving this on the 'none' default would silently strip the
+  // helper out of every existing collection on the next auth refresh.
+  if (options.secretsResolverProvider === 'none') {
     collection.item = removeSecretsResolverItems(collection.item);
   }
   applyCollectionAuth(collection, authConfig);
@@ -994,14 +1002,14 @@ export function buildGeneratedSmokeCollection(
     collection.info = info;
   }
   applyCanonicalCollectionIdentity(collection, options.canonicalCollection);
-  if (options.secretsResolverEnabled === false) {
+  if (!isSecretsResolverEnabled(options.secretsResolverProvider ?? 'none')) {
     collection.item = removeSecretsResolverItems(collection.item);
   } else if (!containsSecretsResolverItem(collection.item)) {
     // Default-enabled contract (action.yml secrets-resolver-enabled=true): the
     // resolver item leads the generated collection even when the generator did
     // not emit one.
     const items = Array.isArray(collection.item) ? collection.item : [];
-    collection.item = [createSecretsResolverItem(), ...items];
+    collection.item = [createSecretsResolverItem(options.secretsResolverProvider ?? 'none'), ...items];
   }
   preserveRequestEventsFromCollection(collection, options.scriptSourceCollection);
 
@@ -1023,7 +1031,7 @@ export function buildCuratedSmokeCollection(
   flow: FlowDefinition,
   resolvedRequests: ResolvedRequest[],
   authConfig?: SmokeAuthConfig,
-  secretsResolverEnabled = true,
+  secretsResolverProvider: SecretsResolverProvider = 'none',
   options: { canonicalCollection?: JsonRecord } = {}
 ): { collection: JsonRecord; bindingCount: number; extractCount: number; assertionCount: number } {
   const collection = sanitizeForCollectionUpdate(structuredClone(generatedCollection)) as JsonRecord;
@@ -1034,7 +1042,9 @@ export function buildCuratedSmokeCollection(
   applyCanonicalCollectionIdentity(collection, options.canonicalCollection);
   applyCollectionAuth(collection, authConfig);
   const requestItems = resolvedRequests.map((request) => curateRequestItem(request, authConfig));
-  collection.item = secretsResolverEnabled ? [createSecretsResolverItem(), ...requestItems] : requestItems;
+  collection.item = isSecretsResolverEnabled(secretsResolverProvider)
+    ? [createSecretsResolverItem(secretsResolverProvider), ...requestItems]
+    : requestItems;
   const sanitizedCollection = sanitizeForCollectionUpdate(collection) as JsonRecord;
 
   const bindingCount = flow.steps.reduce((sum, step) => sum + step.bindings.length, 0);

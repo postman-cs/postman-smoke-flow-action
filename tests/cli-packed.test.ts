@@ -35,6 +35,14 @@ const packagingSource = readFileSync(fileURLToPath(import.meta.url), 'utf8');
 const tempDirs: string[] = [];
 
 const EXPECTED_PACKAGE_NAME = '@postman-cse/onboarding-smoke-flow';
+const EXPECTED_AUTOMATION_CORE_PACKAGE = '@postman-cse/automation-core';
+const AUTOMATION_CORE_WORKSPACE_ROOT = path.resolve(repoRoot, '../../../automation-telemetry-core');
+const AUTOMATION_CORE_INSTALLED_ROOT = path.join(
+  repoRoot,
+  'node_modules',
+  '@postman-cse',
+  'automation-core'
+);
 const EXPECTED_BIN_NAME = 'postman-smoke-flow';
 const EXPECTED_PACK_CENSUS = [
   'action.yml',
@@ -189,6 +197,53 @@ function resolveBinEntry(
   };
 }
 
+async function resolveAutomationCorePackRoot(): Promise<string | undefined> {
+  for (const candidate of [AUTOMATION_CORE_WORKSPACE_ROOT, AUTOMATION_CORE_INSTALLED_ROOT]) {
+    try {
+      const packageJson = JSON.parse(await readFile(path.join(candidate, 'package.json'), 'utf8')) as {
+        name?: string;
+      };
+      if (packageJson.name !== EXPECTED_AUTOMATION_CORE_PACKAGE) {
+        continue;
+      }
+      await access(path.join(candidate, 'dist'), constants.F_OK);
+      return candidate;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return undefined;
+}
+
+async function packAutomationCoreTarball(packDir: string): Promise<string | undefined> {
+  const packRoot = await resolveAutomationCorePackRoot();
+  if (!packRoot) {
+    return undefined;
+  }
+
+  const packResult = await execFileAsync(
+    npmCommand,
+    [...npmCliArgs, 'pack', '--json', '--pack-destination', packDir, '--ignore-scripts'],
+    {
+      cwd: packRoot,
+      encoding: 'utf8',
+      env: {
+        NPM_CONFIG_CACHE: path.join(packDir, '.npm-cache'),
+        PATH: process.env.PATH ?? ''
+      },
+      maxBuffer: 20 * 1024 * 1024
+    }
+  );
+  const [packed] = JSON.parse(packResult.stdout) as Array<{
+    filename: string;
+    name: string;
+  }>;
+  expect(packed.name).toBe(EXPECTED_AUTOMATION_CORE_PACKAGE);
+  const tarballPath = path.join(packDir, packed.filename);
+  await access(tarballPath, constants.F_OK);
+  return tarballPath;
+}
+
 async function npmPackJson(packDir: string): Promise<{ filename: string; name: string; files: Array<{ path: string }> }> {
   const packResult = await execFileAsync(
     npmCommand,
@@ -339,8 +394,14 @@ async function runPosixInstallPackaging(): Promise<{ binPath: string; version: s
   const packed = await npmPackJson(packDir);
   assertPackedCensus(packed.files);
   const tarballPath = path.join(packDir, packed.filename);
+  const automationCoreTarball = await packAutomationCoreTarball(packDir);
+  const installArgs = [...npmCliArgs, 'install', '--ignore-scripts'];
+  if (automationCoreTarball) {
+    installArgs.push(automationCoreTarball);
+  }
+  installArgs.push(tarballPath);
 
-  await execFileAsync(npmCommand, [...npmCliArgs, 'install', '--ignore-scripts', tarballPath], {
+  await execFileAsync(npmCommand, installArgs, {
     cwd: installRoot,
     encoding: 'utf8',
     env: {
