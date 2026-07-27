@@ -611,6 +611,24 @@ function applyCanonicalCollectionIdentity(
   collection.info = info;
 }
 
+/**
+ * The shared factory omits `script.type`, which the pre-provider AWS helper
+ * always carried. Stamp it back on so the injected item keeps the historical
+ * wire shape and matches every other script this action emits.
+ */
+function buildSecretsResolverItem(provider: SecretsResolverProvider): JsonRecord {
+  const item = createSecretsResolverItem(provider) as JsonRecord;
+  const events = Array.isArray(item.event) ? item.event : [];
+  for (const entry of events) {
+    const event = asRecord(entry);
+    const script = asRecord(event?.script);
+    if (script && typeof script.type !== 'string') {
+      script.type = 'text/javascript';
+    }
+  }
+  return item;
+}
+
 function isSecretsResolverItem(item: JsonRecord): boolean {
   const name = typeof item.name === 'string' ? item.name.trim().toLowerCase() : '';
   if (name === LEGACY_SECRETS_RESOLVER_ITEM_NAME.toLowerCase() || name === 'resolve secrets') {
@@ -634,7 +652,15 @@ function isSecretsResolverItem(item: JsonRecord): boolean {
       String(entry.value ?? '').toLowerCase().includes('secretsmanager.getsecretvalue')
   );
 
-  return authType === 'awsv4' && (urlText.includes('secretsmanager') || hasSecretsManagerTarget);
+  const isAwsShape = authType === 'awsv4' && (urlText.includes('secretsmanager') || hasSecretsManagerTarget);
+  // Bearer-token providers: match the vault/secret-manager endpoints so a
+  // renamed helper is still detected instead of being treated as an API
+  // operation (duplicated on rebuild, stripped-check missed, auth overwritten).
+  const isAzureShape = authType === 'bearer' && urlText.includes('vault.azure.net');
+  const isGcpShape =
+    authType === 'bearer' && urlText.includes('secretmanager.googleapis.com') && urlText.includes(':access');
+
+  return isAwsShape || isAzureShape || isGcpShape;
 }
 
 function removeSecretsResolverItems(items: unknown): unknown {
@@ -1005,11 +1031,11 @@ export function buildGeneratedSmokeCollection(
   if (!isSecretsResolverEnabled(options.secretsResolverProvider ?? 'none')) {
     collection.item = removeSecretsResolverItems(collection.item);
   } else if (!containsSecretsResolverItem(collection.item)) {
-    // Default-enabled contract (action.yml secrets-resolver-enabled=true): the
-    // resolver item leads the generated collection even when the generator did
-    // not emit one.
+    // Opt-in contract (action.yml secrets-resolver defaults to none): when a
+    // provider IS selected the helper leads the generated collection even if
+    // the generator did not emit one.
     const items = Array.isArray(collection.item) ? collection.item : [];
-    collection.item = [createSecretsResolverItem(options.secretsResolverProvider ?? 'none'), ...items];
+    collection.item = [buildSecretsResolverItem(options.secretsResolverProvider ?? 'none'), ...items];
   }
   preserveRequestEventsFromCollection(collection, options.scriptSourceCollection);
 
@@ -1043,7 +1069,7 @@ export function buildCuratedSmokeCollection(
   applyCollectionAuth(collection, authConfig);
   const requestItems = resolvedRequests.map((request) => curateRequestItem(request, authConfig));
   collection.item = isSecretsResolverEnabled(secretsResolverProvider)
-    ? [createSecretsResolverItem(secretsResolverProvider), ...requestItems]
+    ? [buildSecretsResolverItem(secretsResolverProvider), ...requestItems]
     : requestItems;
   const sanitizedCollection = sanitizeForCollectionUpdate(collection) as JsonRecord;
 

@@ -525,7 +525,7 @@ describe('collection transform', () => {
       scriptSourceCollection: existingCollection
     });
     const topItems = result.collection.item as Array<Record<string, unknown>>;
-    // The secrets resolver item leads the generated collection by default.
+    // The selected provider's resolver item leads the generated collection.
     expect(JSON.stringify(topItems[0])).toContain('SecretString');
     const folder = topItems[1] as Record<string, unknown>;
     const item = (folder.item as Array<Record<string, unknown>>)[0] as Record<string, unknown>;
@@ -927,5 +927,178 @@ describe('collection transform', () => {
     expect(items.map((item) => item.name)).toEqual(['Providers']);
     expect(folderItems.map((item) => item.name)).toEqual(['searchProviders']);
     expect(collectionText).not.toContain('00 - Resolve Secrets');
+  });
+
+  it('does not duplicate a renamed Azure or GCP resolver on rebuild', () => {
+    const azureCollection = {
+      info: { name: '[Smoke] Providers API' },
+      item: [
+        {
+          name: 'Fetch vault secrets',
+          request: {
+            auth: { type: 'bearer', bearer: [{ key: 'token', value: '{{AZURE_ACCESS_TOKEN}}' }] },
+            method: 'GET',
+            header: [{ key: 'Accept', value: 'application/json' }],
+            url: {
+              raw: 'https://{{AZURE_KEY_VAULT_NAME}}.vault.azure.net/secrets/{{AZURE_SECRET_NAME}}?api-version=7.4',
+              protocol: 'https',
+              host: ['{{AZURE_KEY_VAULT_NAME}}', 'vault', 'azure', 'net'],
+              path: ['secrets', '{{AZURE_SECRET_NAME}}'],
+              query: [{ key: 'api-version', value: '7.4' }]
+            }
+          }
+        },
+        {
+          name: 'searchProviders',
+          request: { method: 'GET', url: '{{baseUrl}}/v1/providers' }
+        }
+      ]
+    };
+
+    const azureResult = buildGeneratedSmokeCollection(azureCollection, undefined, {
+      secretsResolverProvider: 'azure'
+    });
+    const azureItems = azureResult.collection.item as Array<Record<string, unknown>>;
+    expect(azureItems.filter((item) => JSON.stringify(item).includes('AZURE_ACCESS_TOKEN')).length).toBe(1);
+    expect(azureItems).toHaveLength(2);
+    expect(azureItems.map((item) => item.name)).not.toContain('00 - Resolve Secrets');
+
+    const gcpCollection = {
+      info: { name: '[Smoke] Providers API' },
+      item: [
+        {
+          name: 'Load GCP secrets',
+          request: {
+            auth: { type: 'bearer', bearer: [{ key: 'token', value: '{{GCP_ACCESS_TOKEN}}' }] },
+            method: 'GET',
+            header: [{ key: 'Accept', value: 'application/json' }],
+            url: {
+              raw: 'https://secretmanager.googleapis.com/v1/projects/{{GCP_PROJECT_ID}}/secrets/{{GCP_SECRET_NAME}}/versions/latest:access',
+              protocol: 'https',
+              host: ['secretmanager', 'googleapis', 'com'],
+              path: ['v1', 'projects', '{{GCP_PROJECT_ID}}', 'secrets', '{{GCP_SECRET_NAME}}', 'versions', 'latest:access']
+            }
+          }
+        },
+        {
+          name: 'searchProviders',
+          request: { method: 'GET', url: '{{baseUrl}}/v1/providers' }
+        }
+      ]
+    };
+
+    const gcpResult = buildGeneratedSmokeCollection(gcpCollection, undefined, {
+      secretsResolverProvider: 'gcp'
+    });
+    const gcpItems = gcpResult.collection.item as Array<Record<string, unknown>>;
+    expect(gcpItems.filter((item) => JSON.stringify(item).includes('GCP_ACCESS_TOKEN')).length).toBe(1);
+    expect(gcpItems).toHaveLength(2);
+    expect(gcpItems.map((item) => item.name)).not.toContain('00 - Resolve Secrets');
+  });
+
+  it('removes a renamed Azure or GCP resolver when the provider is cleared', () => {
+    const azureCollection = {
+      info: { name: '[Smoke] Providers API' },
+      item: [
+        {
+          name: 'Fetch vault secrets',
+          request: {
+            auth: { type: 'bearer', bearer: [{ key: 'token', value: '{{AZURE_ACCESS_TOKEN}}' }] },
+            method: 'GET',
+            header: [{ key: 'Accept', value: 'application/json' }],
+            url: {
+              raw: 'https://{{AZURE_KEY_VAULT_NAME}}.vault.azure.net/secrets/{{AZURE_SECRET_NAME}}?api-version=7.4',
+              protocol: 'https',
+              host: ['{{AZURE_KEY_VAULT_NAME}}', 'vault', 'azure', 'net'],
+              path: ['secrets', '{{AZURE_SECRET_NAME}}'],
+              query: [{ key: 'api-version', value: '7.4' }]
+            }
+          }
+        },
+        {
+          name: 'searchProviders',
+          request: { method: 'GET', url: '{{baseUrl}}/v1/providers' }
+        }
+      ]
+    };
+
+    const azureResult = buildGeneratedSmokeCollection(azureCollection, undefined, {
+      secretsResolverProvider: 'none'
+    });
+    const azureItems = azureResult.collection.item as Array<Record<string, unknown>>;
+    expect(JSON.stringify(azureResult.collection)).not.toContain('AZURE_ACCESS_TOKEN');
+    expect(azureItems.map((item) => item.name)).toEqual(['searchProviders']);
+
+    const gcpCollection = {
+      info: { name: '[Smoke] Providers API' },
+      item: [
+        {
+          name: 'Load GCP secrets',
+          request: {
+            auth: { type: 'bearer', bearer: [{ key: 'token', value: '{{GCP_ACCESS_TOKEN}}' }] },
+            method: 'GET',
+            header: [{ key: 'Accept', value: 'application/json' }],
+            url: {
+              raw: 'https://secretmanager.googleapis.com/v1/projects/{{GCP_PROJECT_ID}}/secrets/{{GCP_SECRET_NAME}}/versions/latest:access',
+              protocol: 'https',
+              host: ['secretmanager', 'googleapis', 'com'],
+              path: ['v1', 'projects', '{{GCP_PROJECT_ID}}', 'secrets', '{{GCP_SECRET_NAME}}', 'versions', 'latest:access']
+            }
+          }
+        },
+        {
+          name: 'searchProviders',
+          request: { method: 'GET', url: '{{baseUrl}}/v1/providers' }
+        }
+      ]
+    };
+
+    const gcpResult = buildGeneratedSmokeCollection(gcpCollection, undefined, {
+      secretsResolverProvider: 'none'
+    });
+    const gcpItems = gcpResult.collection.item as Array<Record<string, unknown>>;
+    expect(JSON.stringify(gcpResult.collection)).not.toContain('GCP_ACCESS_TOKEN');
+    expect(gcpItems.map((item) => item.name)).toEqual(['searchProviders']);
+  });
+
+  it('never overwrites a renamed Azure resolver bearer auth when applying API key auth', () => {
+    const azureCollection = {
+      info: { name: '[Smoke] Providers API' },
+      item: [
+        {
+          name: 'Fetch vault secrets',
+          request: {
+            auth: { type: 'bearer', bearer: [{ key: 'token', value: '{{AZURE_ACCESS_TOKEN}}' }] },
+            method: 'GET',
+            header: [{ key: 'Accept', value: 'application/json' }],
+            url: {
+              raw: 'https://{{AZURE_KEY_VAULT_NAME}}.vault.azure.net/secrets/{{AZURE_SECRET_NAME}}?api-version=7.4',
+              protocol: 'https',
+              host: ['{{AZURE_KEY_VAULT_NAME}}', 'vault', 'azure', 'net'],
+              path: ['secrets', '{{AZURE_SECRET_NAME}}'],
+              query: [{ key: 'api-version', value: '7.4' }]
+            }
+          }
+        },
+        {
+          name: 'searchProviders',
+          request: { method: 'GET', url: '{{baseUrl}}/v1/providers' }
+        }
+      ]
+    };
+
+    const result = buildGeneratedSmokeCollection(
+      azureCollection,
+      { enabled: true, type: 'apiKey', name: 'X-API-Key', location: 'header' } as never,
+      { secretsResolverProvider: 'azure' }
+    );
+    const items = result.collection.item as Array<Record<string, unknown>>;
+    const resolverItem = items.find((item) => JSON.stringify(item).includes('AZURE_ACCESS_TOKEN'));
+    const request = resolverItem?.request as Record<string, unknown>;
+
+    expect(request.auth).toEqual({
+      type: 'bearer',
+      bearer: [{ key: 'token', value: '{{AZURE_ACCESS_TOKEN}}' }]
+    });
   });
 });
