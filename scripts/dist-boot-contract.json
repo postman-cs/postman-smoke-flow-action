@@ -8,5 +8,9 @@
   "outputIncludes": [
     "gated run",
     "skipping smoke-flow reshape"
+  ],
+  "githubOutputIncludes": [
+    "sync-status",
+    "skipped-branch-gate"
   ]
 }
