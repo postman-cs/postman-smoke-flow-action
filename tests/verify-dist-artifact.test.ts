@@ -47,6 +47,7 @@ interface FixtureOptions {
   requireSpecifier?: string;
   requireExampleOnly?: string;
   contractEntry?: string;
+  contractEnv?: Record<string, string>;
   actionBootThrows?: boolean;
 }
 
@@ -75,9 +76,9 @@ async function writeFixture(root: string, options: FixtureOptions = {}): Promise
       'utf8'
     );
   }
-  if (options.contractEntry !== undefined || options.actionBootThrows) {
+  if (options.contractEntry !== undefined || options.contractEnv !== undefined || options.actionBootThrows) {
     await mkdir(path.join(root, 'scripts'), { recursive: true });
-    await writeFile(path.join(root, 'scripts', 'dist-boot-contract.json'), JSON.stringify({ entry: options.contractEntry ?? CONFIG.actionMain, exitCode: 0, outputIncludes: [] }), 'utf8');
+    await writeFile(path.join(root, 'scripts', 'dist-boot-contract.json'), JSON.stringify({ entry: options.contractEntry ?? CONFIG.actionMain, exitCode: 0, outputIncludes: [], ...(options.contractEnv === undefined ? {} : { env: options.contractEnv }) }), 'utf8');
   }
 
   const shebang = options.shebang === false ? '' : '#!/usr/bin/env node\n';
@@ -189,6 +190,20 @@ describe('verify-dist-artifact canonical contract', () => {
     const result = await runVerify(root);
     expect(result.code).not.toBe(0);
     expect(result.stderr).toMatch(/must point under dist/);
+  });
+
+  it('rejects boot contracts that override protected boot environment', async () => {
+    const protectedEnvs: Record<string, string>[] = [
+      { NODE_OPTIONS: '--require=fixture' },
+      { GITHUB_OUTPUT: '/tmp/fixture-output' }
+    ];
+    for (const env of protectedEnvs) {
+      const root = await makeTempDir('verify-dist-protected-env-');
+      await writeFixture(root, { contractEnv: env });
+      const result = await runVerify(root);
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toMatch(/protected boot environment/);
+    }
   });
 
   it('fails when the CLI shebang is missing', async () => {
