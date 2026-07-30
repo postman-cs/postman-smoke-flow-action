@@ -44,6 +44,8 @@ interface FixtureOptions {
   brokenEntry?: string;
   requireSpecifier?: string;
   requireExampleOnly?: string;
+  contractEntry?: string;
+  actionBootThrows?: boolean;
 }
 
 async function writeFixture(root: string, options: FixtureOptions = {}): Promise<void> {
@@ -70,6 +72,10 @@ async function writeFixture(root: string, options: FixtureOptions = {}): Promise
       `name: fixture\nruns:\n  using: node24\n  main: ${CONFIG.actionMain}\n`,
       'utf8'
     );
+  }
+  if (options.contractEntry !== undefined || options.actionBootThrows) {
+    await mkdir(path.join(root, 'scripts'), { recursive: true });
+    await writeFile(path.join(root, 'scripts', 'dist-boot-contract.json'), JSON.stringify({ entry: options.contractEntry ?? CONFIG.actionMain, exitCode: 0, outputIncludes: [] }), 'utf8');
   }
 
   const shebang = options.shebang === false ? '' : '#!/usr/bin/env node\n';
@@ -105,7 +111,7 @@ process.exit(1);
       await symlink(cliPath, path.join(distDir, name));
       continue;
     }
-    const body = name === options.brokenEntry ? 'const = broken;\n' : 'module.exports = {};\n';
+    const body = name === options.brokenEntry ? 'const = broken;\n' : options.actionBootThrows && name === path.posix.basename(CONFIG.actionMain ?? '') ? "throw new TypeError('action boot failure');\n" : 'module.exports = {};\n';
     await writeFile(path.join(distDir, name), body, 'utf8');
   }
   if (options.extraDistFile) {
@@ -149,6 +155,38 @@ describe('verify-dist-artifact canonical contract', () => {
     const result = await runVerify(root);
     expect(result.stderr).toBe('');
     expect(result.code).toBe(0);
+  });
+
+  it('fails the real verifier when the action entry throws during boot', async () => {
+    const root = await makeTempDir('verify-dist-actionboot-');
+    await writeFixture(root, { actionBootThrows: true });
+    const result = await runVerify(root);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toMatch(/action entrypoint.*boot exited|action boot failure/);
+  });
+
+  it('rejects a boot contract entry that differs from action.yml runs.main', async () => {
+    const root = await makeTempDir('verify-dist-contract-mismatch-');
+    await writeFixture(root, { contractEntry: 'dist/cli.cjs' });
+    const result = await runVerify(root);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toMatch(/does not match action.yml runs\.main/);
+  });
+
+  it('rejects a traversing boot contract entry', async () => {
+    const root = await makeTempDir('verify-dist-contract-traversal-');
+    await writeFixture(root, { contractEntry: '../outside.cjs' });
+    const result = await runVerify(root);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toMatch(/must not traverse outside dist/);
+  });
+
+  it('rejects a boot contract entry outside dist', async () => {
+    const root = await makeTempDir('verify-dist-contract-nondist-');
+    await writeFixture(root, { contractEntry: 'outside.cjs' });
+    const result = await runVerify(root);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toMatch(/must point under dist/);
   });
 
   it('fails when the CLI shebang is missing', async () => {
