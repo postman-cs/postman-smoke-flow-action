@@ -317,6 +317,28 @@ describe('verify-dist-artifact canonical contract', () => {
     expect(prefixed.code).toBe(0);
   });
 
+  it.skipIf(process.platform === 'win32')('rejects symlinked dist roots, caught network calls, and unconsumed GitHub output markers', async () => {
+    const actionMain = CONFIG.actionMain as string;
+    const symlinkRoot = await makeTempDir('verify-dist-parent-symlink-');
+    await writeFixture(symlinkRoot);
+    await rm(path.join(symlinkRoot, 'dist'), { recursive: true });
+    await symlink(symlinkRoot, path.join(symlinkRoot, 'dist'));
+    expect((await runVerify(symlinkRoot)).stderr).toMatch(/dist root must be a regular non-symlink directory/);
+
+    const networkRoot = await makeTempDir('verify-dist-network-');
+    await writeFixture(networkRoot, { contractEntry: actionMain });
+    await writeFile(path.join(networkRoot, actionMain), "try { require('node:https').get('https://example.invalid'); } catch {}\nmodule.exports = {};\n", 'utf8');
+    expect((await runVerify(networkRoot)).stderr).toMatch(/attempted network I\/O/);
+
+    const outputRoot = await makeTempDir('verify-dist-github-output-');
+    await writeFixture(outputRoot, { contractEntry: actionMain });
+    await writeFile(path.join(outputRoot, 'scripts', 'dist-boot-contract.json'), JSON.stringify({ entry: actionMain, exitCode: 0, outputIncludes: [], githubOutputIncludes: ['fixture-output=ok'] }), 'utf8');
+    await writeFile(path.join(outputRoot, actionMain), "require('node:fs').appendFileSync(process.env.GITHUB_OUTPUT, 'fixture-output=ok\\n');\nmodule.exports = {};\n", 'utf8');
+    expect((await runVerify(outputRoot)).code).toBe(0);
+    await writeFile(path.join(outputRoot, 'scripts', 'dist-boot-contract.json'), JSON.stringify({ entry: actionMain, exitCode: 0, outputIncludes: [], githubOutputIncludes: ['missing-output'] }), 'utf8');
+    expect((await runVerify(outputRoot)).stderr).toMatch(/GitHub output missing contract marker/);
+  });
+
   it('accepts the documented optional peer allowlist', async () => {
     const root = await makeTempDir('verify-dist-peer-');
     await writeFixture(root, { requireSpecifier: 'encoding' });
