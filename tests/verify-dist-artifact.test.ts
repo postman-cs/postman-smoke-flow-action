@@ -36,6 +36,8 @@ interface FixtureOptions {
   shebang?: boolean;
   mode?: number;
   helpBody?: string;
+  helpHangs?: boolean;
+  versionHangs?: boolean;
   cliVersion?: string;
   pkgVersion?: string;
   extraDistFile?: string;
@@ -80,6 +82,8 @@ async function writeFixture(root: string, options: FixtureOptions = {}): Promise
 
   const shebang = options.shebang === false ? '' : '#!/usr/bin/env node\n';
   const helpBody = options.helpBody ?? `Usage: ${CONFIG.binName} [options]\n`;
+  const helpBehavior = options.helpHangs ? 'for (;;) {}' : `process.stdout.write(${JSON.stringify(helpBody)});\n  process.exit(0);`;
+  const versionBehavior = options.versionHangs ? 'for (;;) {}' : `process.stdout.write(${JSON.stringify(`${cliVersion}\n`)});\n  process.exit(0);`;
   const requireLine = options.requireSpecifier
     ? `let peer;\ntry {\n  peer = require(${JSON.stringify(options.requireSpecifier)});\n} catch {\n  peer = undefined;\n}\nvoid peer;\n`
     : '';
@@ -88,12 +92,10 @@ async function writeFixture(root: string, options: FixtureOptions = {}): Promise
     : '';
   const cliSource = `${shebang}${requireLine}${requireExample}const args = process.argv.slice(2);
 if (args.includes('--help') || args.includes('-h')) {
-  process.stdout.write(${JSON.stringify(helpBody)});
-  process.exit(0);
+  ${helpBehavior}
 }
 if (args.includes('--version') || args.includes('-V')) {
-  process.stdout.write(${JSON.stringify(`${cliVersion}\n`)});
-  process.exit(0);
+  ${versionBehavior}
 }
 process.stderr.write('unexpected\\n');
 process.exit(1);
@@ -262,6 +264,17 @@ describe('verify-dist-artifact canonical contract', () => {
     expect(result.stderr).toMatch(/missing usage banner/);
   });
 
+  it('fails within the test budget when direct --help hangs', async () => {
+    const root = await makeTempDir('verify-dist-help-timeout-');
+    await writeFixture(root, { helpHangs: true });
+    const startedAt = Date.now();
+    const result = await runVerify(root);
+    const elapsedMs = Date.now() - startedAt;
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toMatch(/direct .* --help timed out after 5000ms/);
+    expect(elapsedMs).toBeLessThan(10_000);
+  }, 15_000);
+
   it('fails when direct --version drifts from package.json', async () => {
     const root = await makeTempDir('verify-dist-version-');
     await writeFixture(root, { cliVersion: '0.0.0-drift' });
@@ -269,6 +282,17 @@ describe('verify-dist-artifact canonical contract', () => {
     expect(result.code).not.toBe(0);
     expect(result.stderr).toMatch(/--version was/);
   });
+
+  it('fails within the test budget when direct --version hangs', async () => {
+    const root = await makeTempDir('verify-dist-version-timeout-');
+    await writeFixture(root, { versionHangs: true });
+    const startedAt = Date.now();
+    const result = await runVerify(root);
+    const elapsedMs = Date.now() - startedAt;
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toMatch(/--version timed out after 5000ms/);
+    expect(elapsedMs).toBeLessThan(10_000);
+  }, 15_000);
 
   it('fails when node --check rejects a bundled entrypoint', async () => {
     const root = await makeTempDir('verify-dist-syntax-');
