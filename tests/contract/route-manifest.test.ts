@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import {
+  extractRoutesFromSource,
   validateRouteManifest,
   type RouteManifest
 } from '@postman-cse/automation-core/route-manifest';
@@ -12,6 +13,13 @@ const repoRoot = path.resolve(import.meta.dirname, '../..');
 const sourceRoot = path.join(repoRoot, 'src');
 const manifestPath = path.join(import.meta.dirname, 'route-manifest.json');
 const tempDirs: string[] = [];
+
+const EXTRACTION_CONFIG = {
+  serviceAliases: {
+    'probeSessionIdentity:baseUrl': 'iapub',
+    'this.apiBaseUrl': 'postman-api'
+  }
+} as const;
 
 afterEach(() => {
   while (tempDirs.length > 0) {
@@ -25,7 +33,7 @@ function loadManifest(): RouteManifest {
 }
 
 function verify(manifest: RouteManifest, root = sourceRoot) {
-  return validateRouteManifest({ repoRoot, sourceRoot: root, manifest });
+  return validateRouteManifest({ repoRoot, sourceRoot: root, manifest, ...EXTRACTION_CONFIG });
 }
 
 describe('contract: HTTP route manifest', () => {
@@ -36,6 +44,7 @@ describe('contract: HTTP route manifest', () => {
     expect(manifest.routes).toHaveLength(15);
     expect(result.ok, result.errors.join('\n')).toBe(true);
     expect(result.errors).toEqual([]);
+    expect(extractRoutesFromSource({ sourceRoot, ...EXTRACTION_CONFIG }).unattributed).toEqual([]);
   });
 
   it('fails red when a throwaway source route is not manifested', () => {
@@ -51,9 +60,7 @@ describe('contract: HTTP route manifest', () => {
     const result = verify(loadManifest(), fixtureSource);
 
     expect(result.ok).toBe(false);
-    expect(result.errors).toContain(
-      'Unmanifested route: ratchet-proof GET /throwaway-route (throwaway-route.ts)'
-    );
+    expect(result.errors.some((error) => /unmanifested route ratchet-proof GET \/throwaway-route/.test(error))).toBe(true);
   });
 
   it('fails red for a stale manifest row and a simulated route without a cassette', () => {
@@ -69,7 +76,7 @@ describe('contract: HTTP route manifest', () => {
     const staleResult = verify(stale);
     expect(staleResult.ok).toBe(false);
     expect(staleResult.errors).toContain(
-      'Stale manifest route ratchet-proof.stale: ratchet-proof GET /stale-route'
+      'stale manifest entry ratchet-proof GET /stale-route has no matching route in src/'
     );
 
     const missingCassette = loadManifest();
@@ -81,7 +88,7 @@ describe('contract: HTTP route manifest', () => {
     const cassetteResult = verify(missingCassette);
     expect(cassetteResult.ok).toBe(false);
     expect(cassetteResult.errors).toContain(
-      `Route ${route!.id} cassette does not exist: tests/contract/cassettes/throwaway-missing.json`
+      'routes[0] simulated cassette not found: tests/contract/cassettes/throwaway-missing.json'
     );
   });
 });
