@@ -37,7 +37,7 @@
       "id": "collection.list-items",
       "service": "collection",
       "method": "GET",
-      "path": "/v3/collections/{param}/items/",
+      "path": "/v3/collections/{param}/items",
       "classification": "live-only",
       "reason": "Smoke-flow has no committed cassette yet; focused client tests and live probes cover item inventory."
     },
@@ -45,7 +45,7 @@
       "id": "collection.list-workspace-collections",
       "service": "collection",
       "method": "GET",
-      "path": "/v3/collections/?workspace={param}",
+      "path": "/v3/collections",
       "classification": "live-only",
       "reason": "Smoke-flow has no committed cassette yet; focused ownership tests and live probes cover workspace collection inventory."
     },
@@ -69,7 +69,7 @@
       "id": "collection.create-item",
       "service": "collection",
       "method": "POST",
-      "path": "/v3/collections/{param}/items/",
+      "path": "/v3/collections/{param}/items",
       "classification": "live-only",
       "reason": "Smoke-flow has no committed cassette yet; focused create-reconciliation tests and live probes cover item creation."
     },
@@ -77,7 +77,7 @@
       "id": "app-version.get-update-status",
       "service": "dl.pstmn.io",
       "method": "GET",
-      "path": "/update/status?currentVersion=12.0.0&platform=osx_arm64",
+      "path": "/update/status",
       "classification": "intentionally-unsimulated",
       "reason": "The non-critical memoized app-version probe is disabled in deterministic tests so test order cannot alter the observed wire surface."
     },
