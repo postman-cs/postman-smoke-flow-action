@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { AccessTokenGatewayClient } from '../src/lib/postman/gateway-client.js';
+import { AccessTokenGatewayClient } from '@postman-cse/automation-core';
 import { AccessTokenProvider } from '../src/lib/postman/token-provider.js';
 
 function makeGateway(fetchImpl: typeof fetch) {
@@ -10,7 +10,12 @@ function makeGateway(fetchImpl: typeof fetch) {
       tokenProvider: new AccessTokenProvider({ accessToken: 'tok' }),
       fetchImpl,
       sleepImpl: sleep,
-      retryBaseDelayMs: 1
+      retryBaseDelayMs: 1,
+      refreshEmptyToken: false,
+      defaultInnerErrorStatus: 500,
+      classifyInnerAuthError: true,
+      refreshOnInnerAuthError: true,
+      jitterRounding: 'round'
     }),
     sleep
   };

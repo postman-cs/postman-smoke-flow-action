@@ -5,7 +5,7 @@
  *   POSTMAN_API_KEY="$POSTMAN_E2E_API_KEY_NON_ORG_MODE" npx tsx scripts/diag-export-shape.ts
  */
 import { AccessTokenProvider } from '../src/lib/postman/token-provider.js';
-import { AccessTokenGatewayClient } from '../src/lib/postman/gateway-client.js';
+import { AccessTokenGatewayClient } from '@postman-cse/automation-core';
 import { POSTMAN_ENDPOINT_PROFILES } from '../src/lib/postman/base-urls.js';
 import { PostmanGatewaySmokeClient } from '../src/postman/postman-gateway-smoke-client.js';
 
@@ -22,7 +22,14 @@ async function main(): Promise<void> {
   if (!apiKey) { console.log('[skip] no api key'); return; }
   const provider = new AccessTokenProvider({ apiKey, apiBaseUrl: API });
   await provider.refresh();
-  const raw = new AccessTokenGatewayClient({ tokenProvider: provider });
+  const raw = new AccessTokenGatewayClient({
+    tokenProvider: provider,
+    refreshEmptyToken: false,
+    defaultInnerErrorStatus: 500,
+    classifyInnerAuthError: true,
+    refreshOnInnerAuthError: true,
+    jitterRounding: 'round'
+  });
   const client = new PostmanGatewaySmokeClient({ tokenProvider: provider });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const created = new Set<string>();

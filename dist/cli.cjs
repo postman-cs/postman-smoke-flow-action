@@ -1314,7 +1314,7 @@ var require_util = __commonJS({
         return new BodyAsyncIterable(body);
       } else if (body && isFormDataLike(body)) {
         return body;
-      } else if (body && typeof body !== "string" && !ArrayBuffer.isView(body) && isIterable2(body)) {
+      } else if (body && typeof body !== "string" && !ArrayBuffer.isView(body) && isIterable3(body)) {
         return new BodyAsyncIterable(body);
       } else {
         return body;
@@ -1426,7 +1426,7 @@ var require_util = __commonJS({
     function isAsyncIterable(obj) {
       return !!(obj != null && typeof obj[Symbol.asyncIterator] === "function");
     }
-    function isIterable2(obj) {
+    function isIterable3(obj) {
       return !!(obj != null && (typeof obj[Symbol.iterator] === "function" || typeof obj[Symbol.asyncIterator] === "function"));
     }
     function hasSafeIterator(obj) {
@@ -2088,7 +2088,7 @@ var require_util = __commonJS({
       parseURL,
       getServerName,
       isStream,
-      isIterable: isIterable2,
+      isIterable: isIterable3,
       hasSafeIterator,
       isAsyncIterable,
       isDestroyed,
@@ -2396,7 +2396,7 @@ var require_request = __commonJS({
       destroy,
       isBuffer,
       isFormDataLike,
-      isIterable: isIterable2,
+      isIterable: isIterable3,
       hasSafeIterator,
       isBlobLike,
       serializePathWithQuery,
@@ -2551,7 +2551,7 @@ var require_request = __commonJS({
           this.body = body.byteLength ? Buffer.from(body) : null;
         } else if (typeof body === "string") {
           this.body = body.length ? Buffer.from(body) : null;
-        } else if (isFormDataLike(body) || isIterable2(body) || isBlobLike(body)) {
+        } else if (isFormDataLike(body) || isIterable3(body) || isBlobLike(body)) {
           this.body = body;
         } else {
           throw new InvalidArgumentError("body must be a string, a Buffer, a Readable stream, an iterable, or an async iterable");
@@ -19747,7 +19747,7 @@ var require_response = __commonJS({
     var assert = require("node:assert");
     var { isomorphicEncode, serializeJavascriptValueToJSONString } = require_infra();
     var textEncoder = new TextEncoder("utf-8");
-    var Response = class _Response {
+    var Response2 = class _Response {
       /** @type {Headers} */
       #headers;
       #state;
@@ -19917,13 +19917,13 @@ var require_response = __commonJS({
         response.#state = newState;
       }
     };
-    var { getResponseHeaders, setResponseHeaders, getResponseState, setResponseState } = Response;
-    Reflect.deleteProperty(Response, "getResponseHeaders");
-    Reflect.deleteProperty(Response, "setResponseHeaders");
-    Reflect.deleteProperty(Response, "getResponseState");
-    Reflect.deleteProperty(Response, "setResponseState");
-    mixinBody(Response, getResponseState);
-    Object.defineProperties(Response.prototype, {
+    var { getResponseHeaders, setResponseHeaders, getResponseState, setResponseState } = Response2;
+    Reflect.deleteProperty(Response2, "getResponseHeaders");
+    Reflect.deleteProperty(Response2, "setResponseHeaders");
+    Reflect.deleteProperty(Response2, "getResponseState");
+    Reflect.deleteProperty(Response2, "setResponseState");
+    mixinBody(Response2, getResponseState);
+    Object.defineProperties(Response2.prototype, {
       type: kEnumerableProperty,
       url: kEnumerableProperty,
       status: kEnumerableProperty,
@@ -19939,7 +19939,7 @@ var require_response = __commonJS({
         configurable: true
       }
     });
-    Object.defineProperties(Response, {
+    Object.defineProperties(Response2, {
       json: kEnumerableProperty,
       redirect: kEnumerableProperty,
       error: kEnumerableProperty
@@ -20072,7 +20072,7 @@ var require_response = __commonJS({
       }
     }
     function fromInnerResponse(innerResponse, guard) {
-      const response = new Response(kConstruct);
+      const response = new Response2(kConstruct);
       setResponseState(response, innerResponse);
       const headers = new Headers3(kConstruct);
       setResponseHeaders(response, headers);
@@ -20126,14 +20126,14 @@ var require_response = __commonJS({
         converter: webidl.converters.HeadersInit
       }
     ]);
-    webidl.is.Response = webidl.util.MakeTypeAssertion(Response);
+    webidl.is.Response = webidl.util.MakeTypeAssertion(Response2);
     module2.exports = {
       isNetworkError,
       makeNetworkError,
       makeResponse,
       makeAppropriateNetworkError,
       filterResponse,
-      Response,
+      Response: Response2,
       cloneResponse,
       fromInnerResponse,
       getResponseState
@@ -36985,14 +36985,6 @@ function stringifyFlowManifest(flow, spec) {
 
 // src/lib/secrets.ts
 var REDACTED = "[REDACTED]";
-var SENSITIVE_HEADER_NAMES = /* @__PURE__ */ new Set([
-  "authorization",
-  "cookie",
-  "proxy-authorization",
-  "set-cookie",
-  "x-access-token",
-  "x-api-key"
-]);
 function isIterable(value) {
   return value !== null && value !== void 0 && typeof value !== "string" && typeof value[Symbol.iterator] === "function";
 }
@@ -37049,26 +37041,6 @@ function createMutableSecretMasker(initialSecretValues = [], replacement = REDAC
       }
     }
   };
-}
-function headerEntries(headers) {
-  if (headers instanceof Headers) {
-    return Array.from(headers.entries());
-  }
-  if (Array.isArray(headers)) {
-    return headers.map(([name, value]) => [name, String(value)]);
-  }
-  return Object.entries(headers).map(([name, value]) => [name, String(value)]);
-}
-function sanitizeHeaders(headers, secretValues) {
-  if (!headers) {
-    return {};
-  }
-  const sanitized = {};
-  for (const [name, value] of headerEntries(headers)) {
-    const normalizedName = name.toLowerCase();
-    sanitized[normalizedName] = SENSITIVE_HEADER_NAMES.has(normalizedName) ? REDACTED : redactSecrets(value, secretValues);
-  }
-  return sanitized;
 }
 
 // node_modules/@postman-cse/automation-core/dist/ci-context.js
@@ -37788,6 +37760,635 @@ function createSecretsResolverItem(provider) {
   };
 }
 
+// node_modules/@postman-cse/automation-core/dist/http/http-error.js
+var REDACTED2 = "[REDACTED]";
+var SENSITIVE_HEADER_NAMES = /* @__PURE__ */ new Set([
+  "authorization",
+  "cookie",
+  "proxy-authorization",
+  "set-cookie",
+  "x-access-token",
+  "x-api-key"
+]);
+function isIterable2(value) {
+  return value !== null && value !== void 0 && typeof value !== "string" && typeof value[Symbol.iterator] === "function";
+}
+function appendStringSecret(value, results) {
+  const normalized = value.trim();
+  if (!normalized)
+    return;
+  results.push(normalized);
+  try {
+    const encoded = encodeURIComponent(normalized);
+    if (encoded !== normalized)
+      results.push(encoded);
+  } catch {
+  }
+  try {
+    const url = new URL("http://localhost/");
+    url.password = normalized;
+    if (url.password && url.password !== normalized)
+      results.push(url.password);
+  } catch {
+  }
+}
+function appendSecretValues2(value, results) {
+  if (value === null || value === void 0)
+    return;
+  if (typeof value === "string") {
+    appendStringSecret(value, results);
+    return;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    appendStringSecret(String(value), results);
+    return;
+  }
+  if (Array.isArray(value) || isIterable2(value)) {
+    for (const entry of value)
+      appendSecretValues2(entry, results);
+  }
+}
+function normalizeSecretValues2(secretValues) {
+  const values = [];
+  appendSecretValues2(secretValues, values);
+  return [...new Set(values)].sort((left, right) => right.length - left.length);
+}
+function redactSecrets2(input, secretValues, replacement = REDACTED2) {
+  let output = String(input ?? "");
+  for (const secret of normalizeSecretValues2(secretValues)) {
+    output = output.split(secret).join(replacement);
+  }
+  return output;
+}
+function toOneLine(value) {
+  const source = String(value ?? "");
+  let output = "";
+  let pendingSpace = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const code = source.charCodeAt(index);
+    if (code <= 32 || code === 127) {
+      pendingSpace = output.length > 0;
+      continue;
+    }
+    if (pendingSpace) {
+      output += " ";
+      pendingSpace = false;
+    }
+    output += source.charAt(index);
+  }
+  return output;
+}
+function headerEntries(headers) {
+  if (headers instanceof Headers)
+    return Array.from(headers.entries());
+  if (Array.isArray(headers)) {
+    return headers.map(([name, value]) => [name, String(value)]);
+  }
+  return Object.entries(headers).map(([name, value]) => [name, String(value)]);
+}
+function sanitizeHeaders(headers, secretValues) {
+  if (!headers)
+    return {};
+  const sanitized = {};
+  for (const [name, value] of headerEntries(headers)) {
+    const normalizedName = name.toLowerCase();
+    sanitized[normalizedName] = SENSITIVE_HEADER_NAMES.has(normalizedName) ? REDACTED2 : redactSecrets2(value, secretValues);
+  }
+  return sanitized;
+}
+function truncate2(value, limit) {
+  if (value.length <= limit)
+    return value;
+  return `${value.slice(0, limit)}...[truncated]`;
+}
+function buildMessage(init) {
+  if (init.message !== void 0)
+    return init.message;
+  const format = init.oneLine ? toOneLine : String;
+  const method = String(init.method || "GET").toUpperCase();
+  const status = `${init.status}${init.statusText ? ` ${init.statusText}` : ""}`;
+  const url = format(redactSecrets2(init.url, init.secretValues));
+  const body = format(truncate2(redactSecrets2(init.responseBody || "", init.secretValues), Math.max(0, init.bodyLimit ?? 800)));
+  return body ? `${method} ${url} failed: ${status} - ${body}` : `${method} ${url} failed: ${status}`;
+}
+var HttpError = class _HttpError extends Error {
+  method;
+  requestHeaders;
+  responseBody;
+  secretValues;
+  status;
+  statusText;
+  url;
+  constructor(initOrMessage, legacyStatus) {
+    const init = typeof initOrMessage === "string" ? {
+      method: "",
+      url: "",
+      status: legacyStatus ?? 0,
+      statusText: "",
+      message: initOrMessage
+    } : initOrMessage;
+    super(buildMessage(init));
+    this.name = "HttpError";
+    this.method = String(init.method || "GET").toUpperCase();
+    this.requestHeaders = init.requestHeaders;
+    this.responseBody = init.responseBody || "";
+    this.secretValues = init.secretValues;
+    this.status = init.status;
+    this.statusText = init.statusText;
+    this.url = init.url;
+  }
+  static async fromResponse(response, init) {
+    const responseBody = init.responseBody ?? await response.text().catch(() => "");
+    return new _HttpError({
+      ...init,
+      responseBody,
+      status: response.status,
+      statusText: response.statusText
+    });
+  }
+  toJSON() {
+    return {
+      method: this.method,
+      name: this.name,
+      requestHeaders: sanitizeHeaders(this.requestHeaders, this.secretValues),
+      responseBody: redactSecrets2(this.responseBody, this.secretValues),
+      status: this.status,
+      statusText: this.statusText,
+      url: redactSecrets2(this.url, this.secretValues)
+    };
+  }
+};
+
+// node_modules/@postman-cse/automation-core/dist/http/retry.js
+function sleep(delayMs) {
+  return new Promise((resolve2) => {
+    setTimeout(resolve2, delayMs);
+  });
+}
+function normalizeRetryOptions(options) {
+  return {
+    maxAttempts: Math.max(1, options.maxAttempts ?? 3),
+    delayMs: Math.max(0, options.delayMs ?? 2e3),
+    backoffMultiplier: Math.max(1, options.backoffMultiplier ?? 1),
+    maxDelayMs: options.maxDelayMs === void 0 ? Number.POSITIVE_INFINITY : Math.max(0, options.maxDelayMs),
+    onRetry: options.onRetry ?? (async () => void 0),
+    shouldRetry: options.shouldRetry ?? (() => true),
+    sleep: options.sleep ?? sleep
+  };
+}
+async function retry(operation, options = {}) {
+  const normalized = normalizeRetryOptions(options);
+  let nextDelayMs = normalized.delayMs;
+  for (let attempt = 1; attempt <= normalized.maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error2) {
+      const shouldRetry = attempt < normalized.maxAttempts && normalized.shouldRetry(error2, {
+        attempt,
+        maxAttempts: normalized.maxAttempts
+      });
+      if (!shouldRetry)
+        throw error2;
+      await normalized.onRetry({
+        attempt,
+        maxAttempts: normalized.maxAttempts,
+        delayMs: nextDelayMs,
+        error: error2
+      });
+      await normalized.sleep(nextDelayMs);
+      nextDelayMs = Math.min(normalized.maxDelayMs, Math.round(nextDelayMs * normalized.backoffMultiplier));
+    }
+  }
+  throw new Error("Retry exhausted without returning or throwing");
+}
+function fullJitterDelayMs(attempt, baseMs = 400, capMs = 5e3, random = Math.random, rounding = "floor") {
+  const ceiling = Math.max(0, Math.min(Math.max(0, capMs), Math.max(0, baseMs) * 2 ** Math.max(0, attempt)));
+  const delay = random() * ceiling;
+  return rounding === "round" ? Math.round(delay) : Math.floor(delay);
+}
+function parseRetryAfterMs(value, nowMs = Date.now()) {
+  const trimmed = value?.trim();
+  if (!trimmed)
+    return void 0;
+  if (/^\d+$/.test(trimmed))
+    return Number(trimmed) * 1e3;
+  const dateMs = Date.parse(trimmed);
+  return Number.isNaN(dateMs) ? void 0 : Math.max(0, dateMs - nowMs);
+}
+function isTransientHttpStatus(status) {
+  return status === 408 || status === 429 || status >= 500;
+}
+var RETRYABLE_GATEWAY_BODY = /ESOCKETTIMEDOUT|ETIMEDOUT|ECONNRESET|serverError|downstream/i;
+function isRetryableGatewayFailure(status, body = "") {
+  return isTransientHttpStatus(status) || RETRYABLE_GATEWAY_BODY.test(body);
+}
+
+// node_modules/@postman-cse/automation-core/dist/http/gateway-client.js
+var DEFAULT_POSTMAN_BIFROST_BASE_URL = "https://bifrost-premium-https-v4.gw.postman.com";
+function isExpiredAuthError(status, body) {
+  return status === 401 || body.includes("UNAUTHENTICATED") || body.includes("authenticationError");
+}
+function asRecord3(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function numericStatus(value) {
+  if (typeof value === "number" && Number.isFinite(value))
+    return value;
+  if (typeof value === "string" && /^\d+$/.test(value))
+    return Number(value);
+  return void 0;
+}
+function defaultSleep(ms) {
+  return new Promise((resolve2) => setTimeout(resolve2, ms));
+}
+function normalizedBaseUrl(value) {
+  return value.replace(/\/+$/, "");
+}
+var AccessTokenGatewayClient = class {
+  tokenProvider;
+  bifrostBaseUrl;
+  teamId;
+  orgMode;
+  fetchImpl;
+  secretMasker;
+  maxRetries;
+  fallbackBaseUrl;
+  fallbackOn;
+  retryBaseDelayMs;
+  retryMaxDelayMs;
+  jitterRounding;
+  requestTimeoutMs;
+  sleepImpl;
+  randomImpl;
+  appVersionProvider;
+  onRetry;
+  onRetryEvent;
+  refreshEmptyToken;
+  refreshOnInnerAuthError;
+  classifyInnerAuthError;
+  defaultInnerErrorStatus;
+  includeFallbackStatusInRetryEvent;
+  constructor(options) {
+    this.tokenProvider = options.tokenProvider;
+    this.bifrostBaseUrl = normalizedBaseUrl(String(options.bifrostBaseUrl || DEFAULT_POSTMAN_BIFROST_BASE_URL));
+    this.teamId = String(options.teamId || "").trim();
+    this.orgMode = options.orgMode ?? false;
+    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.secretMasker = options.secretMasker ?? ((input) => redactSecrets2(input, [this.tokenProvider.current()]));
+    this.maxRetries = Math.max(0, options.maxRetries ?? 3);
+    const fallbackDisabled = (options.env ?? process.env).POSTMAN_ITEM_CREATE_FALLBACK === "off";
+    this.fallbackBaseUrl = fallbackDisabled || !options.fallbackBaseUrl ? void 0 : normalizedBaseUrl(options.fallbackBaseUrl);
+    this.fallbackOn = options.fallbackOn ?? "error";
+    this.retryBaseDelayMs = Math.max(0, options.retryBaseDelayMs ?? 400);
+    this.retryMaxDelayMs = Math.max(0, options.retryMaxDelayMs ?? 5e3);
+    this.jitterRounding = options.jitterRounding ?? "floor";
+    this.requestTimeoutMs = Math.max(0, options.requestTimeoutMs ?? 3e4);
+    this.sleepImpl = options.sleepImpl ?? defaultSleep;
+    this.randomImpl = options.randomImpl ?? Math.random;
+    this.appVersionProvider = options.appVersionProvider;
+    this.onRetry = options.onRetry;
+    this.onRetryEvent = options.onRetryEvent;
+    this.refreshEmptyToken = options.refreshEmptyToken ?? true;
+    this.refreshOnInnerAuthError = options.refreshOnInnerAuthError ?? false;
+    this.classifyInnerAuthError = options.classifyInnerAuthError ?? false;
+    this.defaultInnerErrorStatus = options.defaultInnerErrorStatus ?? 502;
+    this.includeFallbackStatusInRetryEvent = options.includeFallbackStatusInRetryEvent ?? true;
+  }
+  configureTeamContext(teamId, orgMode) {
+    this.teamId = String(teamId || "").trim();
+    this.orgMode = orgMode;
+  }
+  async resolveAppVersion() {
+    if (this.appVersionProvider?.resolve)
+      return this.appVersionProvider.resolve();
+    if (this.appVersionProvider?.get)
+      return this.appVersionProvider.get();
+    return void 0;
+  }
+  async buildHeaders(extra) {
+    const headers = {
+      "Content-Type": "application/json",
+      ...extra ?? {}
+    };
+    headers["x-access-token"] = this.tokenProvider.current();
+    if (this.teamId && this.orgMode)
+      headers["x-entity-team-id"] = this.teamId;
+    const appVersion = await this.resolveAppVersion();
+    if (appVersion)
+      headers["x-app-version"] = appVersion;
+    return headers;
+  }
+  errorHeaders(extra) {
+    return {
+      "Content-Type": "application/json",
+      ...extra ?? {},
+      "x-access-token": this.tokenProvider.current(),
+      ...this.teamId && this.orgMode ? { "x-entity-team-id": this.teamId } : {}
+    };
+  }
+  async send(request, baseUrl = this.bifrostBaseUrl) {
+    return this.fetchWithDeadline(`${baseUrl}/ws/proxy`, {
+      method: "POST",
+      headers: await this.buildHeaders(request.headers),
+      body: JSON.stringify({
+        service: request.service,
+        method: request.method,
+        path: request.path,
+        ...request.query !== void 0 ? { query: request.query } : {},
+        ...request.body !== void 0 ? { body: request.body } : {}
+      })
+    });
+  }
+  async sendDirect(request) {
+    const method = request.method ?? "get";
+    return this.fetchWithDeadline(`${this.bifrostBaseUrl}${request.path}`, {
+      method: method.toUpperCase(),
+      headers: await this.buildHeaders(request.headers),
+      ...request.body === void 0 ? {} : { body: JSON.stringify(request.body) }
+    });
+  }
+  async fetchWithDeadline(url, init) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    try {
+      return await this.fetchImpl(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  detectInnerStatus(body) {
+    const trimmed = body.trim();
+    if (!trimmed)
+      return void 0;
+    let parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return void 0;
+    }
+    const envelope = asRecord3(parsed);
+    if (!envelope)
+      return void 0;
+    const error2 = envelope.error;
+    const errorRecord = asRecord3(error2);
+    const source = errorRecord ?? envelope;
+    const status = numericStatus(source.status) ?? numericStatus(source.statusCode) ?? numericStatus(envelope.status) ?? numericStatus(envelope.statusCode);
+    const hasError = error2 !== void 0 && error2 !== null && !(errorRecord && Object.keys(errorRecord).length === 0) || source.success === false || envelope.success === false || status !== void 0 && status >= 400;
+    if (!hasError)
+      return void 0;
+    if (status !== void 0 && status >= 400)
+      return status;
+    if (this.classifyInnerAuthError && isExpiredAuthError(0, body))
+      return 401;
+    return this.defaultInnerErrorStatus;
+  }
+  async inspect(response) {
+    const body = await response.text().catch(() => "");
+    return {
+      response,
+      body,
+      ...response.ok ? { innerStatus: this.detectInnerStatus(body) } : {}
+    };
+  }
+  resolveRetryMode(request, options) {
+    if (request.retry)
+      return request.retry;
+    if (options.retryTransient !== void 0) {
+      return options.retryTransient ? "safe" : "none";
+    }
+    if (request.maxRetries !== void 0) {
+      return request.maxRetries > 0 ? "safe" : "none";
+    }
+    return request.method === "get" ? "safe" : "none";
+  }
+  shouldRetry(mode, status, body) {
+    if (mode === "rate-limit")
+      return status === 429;
+    return mode === "safe" && isRetryableGatewayFailure(status, body);
+  }
+  retryDelayMs(attempt, retryAfterMs) {
+    if (retryAfterMs !== void 0)
+      return Math.min(this.retryMaxDelayMs, retryAfterMs);
+    return fullJitterDelayMs(attempt, this.retryBaseDelayMs, this.retryMaxDelayMs, this.randomImpl, this.jitterRounding);
+  }
+  emitRetryEvent(event) {
+    this.onRetryEvent?.(event);
+    if (this.onRetry && this.onRetry !== this.onRetryEvent)
+      this.onRetry(event);
+  }
+  fallbackEligible(request, retryMode, transient) {
+    if (!this.fallbackBaseUrl || request.fallback === "none")
+      return false;
+    if (retryMode !== "safe" && request.fallback !== "auto")
+      return false;
+    return this.fallbackOn === "error" || transient;
+  }
+  async attemptFallback(request, retryMode, transient, status) {
+    if (!this.fallbackEligible(request, retryMode, transient))
+      return null;
+    this.emitRetryEvent({
+      class: "fallback",
+      ...this.includeFallbackStatusInRetryEvent && status !== void 0 ? { status } : {},
+      attempt: 1,
+      delay: 0
+    });
+    let inspected;
+    try {
+      inspected = await this.inspect(await this.send(request, this.fallbackBaseUrl));
+    } catch {
+      return null;
+    }
+    const effectiveStatus = inspected.innerStatus ?? inspected.response.status;
+    if (inspected.response.ok && inspected.innerStatus === void 0) {
+      return this.rebuildResponse(inspected.response, inspected.body);
+    }
+    if (isRetryableGatewayFailure(effectiveStatus, inspected.body))
+      return null;
+    if (inspected.innerStatus !== void 0) {
+      throw this.toInnerHttpError(request, inspected.innerStatus, inspected.body);
+    }
+    throw this.toHttpError(request, inspected.response, inspected.body);
+  }
+  async request(request, options = {}) {
+    if (this.refreshEmptyToken && !this.tokenProvider.current() && this.tokenProvider.canRefresh()) {
+      await this.tokenProvider.refresh();
+    }
+    const retryMode = this.resolveRetryMode(request, options);
+    const maxRetries = Math.max(0, request.maxRetries ?? this.maxRetries);
+    let attempt = 0;
+    let authRefreshed = false;
+    for (; ; ) {
+      let inspected;
+      try {
+        inspected = await this.inspect(await this.send(request));
+      } catch (error2) {
+        if (retryMode === "safe" && attempt < maxRetries) {
+          const delay = this.retryDelayMs(attempt);
+          attempt += 1;
+          this.emitRetryEvent({ class: "transport", attempt, delay });
+          await this.sleepImpl(delay);
+          continue;
+        }
+        const fallback2 = await this.attemptFallback(request, retryMode, true);
+        if (fallback2)
+          return fallback2;
+        throw error2;
+      }
+      const effectiveStatus = inspected.innerStatus ?? inspected.response.status;
+      if (inspected.response.ok && inspected.innerStatus === void 0) {
+        return this.rebuildResponse(inspected.response, inspected.body);
+      }
+      const authFailure = isExpiredAuthError(effectiveStatus, inspected.body);
+      const refreshAllowed = inspected.innerStatus === void 0 || this.refreshOnInnerAuthError;
+      if (!authRefreshed && authFailure && refreshAllowed && this.tokenProvider.canRefresh()) {
+        authRefreshed = true;
+        this.emitRetryEvent({
+          class: "auth",
+          status: effectiveStatus,
+          attempt: 1,
+          delay: 0
+        });
+        await this.tokenProvider.refresh();
+        continue;
+      }
+      const transient = isRetryableGatewayFailure(effectiveStatus, inspected.body);
+      if (this.shouldRetry(retryMode, effectiveStatus, inspected.body) && attempt < maxRetries) {
+        const retryAfterMs = inspected.innerStatus === void 0 ? parseRetryAfterMs(inspected.response.headers.get("retry-after")) : void 0;
+        const delay = this.retryDelayMs(attempt, retryAfterMs);
+        attempt += 1;
+        this.emitRetryEvent({
+          class: inspected.innerStatus === void 0 ? "http" : "inner",
+          status: effectiveStatus,
+          attempt,
+          delay
+        });
+        await this.sleepImpl(delay);
+        continue;
+      }
+      const fallback = await this.attemptFallback(request, retryMode, transient, effectiveStatus);
+      if (fallback)
+        return fallback;
+      if (inspected.innerStatus !== void 0) {
+        throw this.toInnerHttpError(request, inspected.innerStatus, inspected.body);
+      }
+      throw this.toHttpError(request, inspected.response, inspected.body);
+    }
+  }
+  async requestJson(request, options = {}) {
+    const response = await this.request(request, options);
+    return this.responseJson(response);
+  }
+  async requestDirectJson(requestOrPath) {
+    const request = typeof requestOrPath === "string" ? { path: requestOrPath, method: "get" } : requestOrPath;
+    if (!request.path.startsWith("/")) {
+      throw new Error(`Direct Bifrost path must start with '/': ${request.path}`);
+    }
+    if (this.refreshEmptyToken && !this.tokenProvider.current() && this.tokenProvider.canRefresh()) {
+      await this.tokenProvider.refresh();
+    }
+    const method = request.method ?? "get";
+    const retryMode = request.retry ?? (method === "get" ? "safe" : "none");
+    const maxRetries = Math.max(0, request.maxRetries ?? this.maxRetries);
+    let attempt = 0;
+    let authRefreshed = false;
+    for (; ; ) {
+      let response;
+      try {
+        response = await this.sendDirect(request);
+      } catch (error2) {
+        if (retryMode === "safe" && attempt < maxRetries) {
+          const delay = this.retryDelayMs(attempt);
+          attempt += 1;
+          this.emitRetryEvent({ class: "transport", attempt, delay });
+          await this.sleepImpl(delay);
+          continue;
+        }
+        throw error2;
+      }
+      const body = await response.text().catch(() => "");
+      if (response.ok)
+        return this.textJson(body);
+      if (!authRefreshed && isExpiredAuthError(response.status, body) && this.tokenProvider.canRefresh()) {
+        authRefreshed = true;
+        this.emitRetryEvent({
+          class: "auth",
+          status: response.status,
+          attempt: 1,
+          delay: 0
+        });
+        await this.tokenProvider.refresh();
+        continue;
+      }
+      if (this.shouldRetry(retryMode, response.status, body) && attempt < maxRetries) {
+        const delay = this.retryDelayMs(attempt, parseRetryAfterMs(response.headers.get("retry-after")));
+        attempt += 1;
+        this.emitRetryEvent({
+          class: "http",
+          status: response.status,
+          attempt,
+          delay
+        });
+        await this.sleepImpl(delay);
+        continue;
+      }
+      throw this.toDirectHttpError(request, response, body);
+    }
+  }
+  async responseJson(response) {
+    return this.textJson(await response.text().catch(() => ""));
+  }
+  textJson(text) {
+    if (!text.trim())
+      return null;
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+  rebuildResponse(response, body) {
+    const nullBody = response.status === 204 || response.status === 205 || response.status === 304;
+    return new Response(nullBody ? null : body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers
+    });
+  }
+  toHttpError(request, response, body) {
+    return new HttpError({
+      method: request.method.toUpperCase(),
+      url: `${this.bifrostBaseUrl}/ws/proxy (${request.service}: ${request.method} ${request.path})`,
+      status: response.status,
+      statusText: response.statusText,
+      requestHeaders: this.errorHeaders(request.headers),
+      responseBody: this.secretMasker(body),
+      secretValues: [this.tokenProvider.current()]
+    });
+  }
+  toInnerHttpError(request, status, body) {
+    return new HttpError({
+      method: request.method.toUpperCase(),
+      url: `${this.bifrostBaseUrl}/ws/proxy (${request.service}: ${request.method} ${request.path}) [inner]`,
+      status,
+      statusText: "Inner Error",
+      requestHeaders: this.errorHeaders(request.headers),
+      responseBody: this.secretMasker(body),
+      secretValues: [this.tokenProvider.current()]
+    });
+  }
+  toDirectHttpError(request, response, body) {
+    return new HttpError({
+      method: (request.method ?? "get").toUpperCase(),
+      url: `${this.bifrostBaseUrl}${request.path}`,
+      status: response.status,
+      statusText: response.statusText,
+      requestHeaders: this.errorHeaders(request.headers),
+      responseBody: this.secretMasker(body),
+      secretValues: [this.tokenProvider.current()]
+    });
+  }
+};
+
 // src/postman/scripts.ts
 function quote(value) {
   return JSON.stringify(value);
@@ -37965,7 +38566,7 @@ function createOAuthPreRequestEvent(authConfig) {
 // src/postman/collection-transform.ts
 var GENERATED_OAUTH_EVENT_MARKER = "[Smoke Flow] Auto-generated OAuth2 client-credentials token cache";
 var LEGACY_SECRETS_RESOLVER_ITEM_NAME = SECRETS_RESOLVER_ITEM_NAME;
-function asRecord3(value) {
+function asRecord4(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function sanitizeForCollectionUpdate(value) {
@@ -37997,7 +38598,7 @@ function setNestedValue(root, dottedKey, value) {
   let cursor = root;
   for (let index = 0; index < segments.length - 1; index += 1) {
     const segment = segments[index];
-    const next = asRecord3(cursor[segment]);
+    const next = asRecord4(cursor[segment]);
     if (next) {
       cursor = next;
       continue;
@@ -38059,7 +38660,7 @@ function updateRequestUrl(request, step) {
     request.url = updateRawUrlQuery(next, step);
     return;
   }
-  const urlRecord = asRecord3(url);
+  const urlRecord = asRecord4(url);
   if (!urlRecord) {
     return;
   }
@@ -38073,7 +38674,7 @@ function updateRequestUrl(request, step) {
   }
   if (Array.isArray(urlRecord.variable)) {
     urlRecord.variable = urlRecord.variable.map((entry) => {
-      const variable = asRecord3(entry) ?? {};
+      const variable = asRecord4(entry) ?? {};
       const key = typeof variable.key === "string" ? variable.key : "";
       if (variableBindings.some((binding) => binding.fieldKey === key)) {
         variable.value = `{{${key}}}`;
@@ -38083,7 +38684,7 @@ function updateRequestUrl(request, step) {
   }
   if (Array.isArray(urlRecord.query)) {
     urlRecord.query = urlRecord.query.flatMap((entry) => {
-      const query = asRecord3(entry) ?? {};
+      const query = asRecord4(entry) ?? {};
       const key = typeof query.key === "string" ? query.key : "";
       const binding = bindingByFieldKey.get(key);
       if (!binding) {
@@ -38098,7 +38699,7 @@ function updateRequestUrl(request, step) {
 }
 function updateRequestBody(request, step) {
   const variableBindings = getVariableBindings(step);
-  const body = asRecord3(request.body);
+  const body = asRecord4(request.body);
   if (!body || body.mode !== "raw" || typeof body.raw !== "string") {
     return;
   }
@@ -38119,11 +38720,11 @@ function updateRequestBody(request, step) {
 }
 function applyFlowScripts(item, step) {
   const existingEvents = Array.isArray(item.event) ? item.event : [];
-  item.event = existingEvents.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)).filter((entry) => entry.listen !== "prerequest" && entry.listen !== "test");
+  item.event = existingEvents.map((entry) => asRecord4(entry)).filter((entry) => Boolean(entry)).filter((entry) => entry.listen !== "prerequest" && entry.listen !== "test");
   item.event.push(createPreRequestEvent(step), createTestEvent(step));
 }
 function removeHeader(request, key) {
-  const headers = Array.isArray(request.header) ? request.header.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)) : [];
+  const headers = Array.isArray(request.header) ? request.header.map((entry) => asRecord4(entry)).filter((entry) => Boolean(entry)) : [];
   request.header = headers.filter((entry) => typeof entry.key !== "string" || entry.key.toLowerCase() !== key.toLowerCase());
 }
 function removeRawUrlQueryParam(rawUrl, key) {
@@ -38144,7 +38745,7 @@ function removeQueryParam(request, key) {
     request.url = removeRawUrlQueryParam(url, key);
     return;
   }
-  const urlRecord = asRecord3(url);
+  const urlRecord = asRecord4(url);
   if (!urlRecord) {
     return;
   }
@@ -38153,7 +38754,7 @@ function removeQueryParam(request, key) {
   }
   if (Array.isArray(urlRecord.query)) {
     urlRecord.query = urlRecord.query.filter((entry) => {
-      const query = asRecord3(entry);
+      const query = asRecord4(entry);
       return !query || typeof query.key !== "string" || query.key.toLowerCase() !== key.toLowerCase();
     });
   }
@@ -38234,7 +38835,7 @@ function applyAuthToRequest(request, authConfig) {
   return true;
 }
 function upsertCollectionVariable(collection, key, value = "") {
-  const variables = Array.isArray(collection.variable) ? collection.variable.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)) : [];
+  const variables = Array.isArray(collection.variable) ? collection.variable.map((entry) => asRecord4(entry)).filter((entry) => Boolean(entry)) : [];
   const existing = variables.find((entry) => entry.key === key);
   if (existing) {
     if (typeof existing.value !== "string") {
@@ -38259,7 +38860,7 @@ function seedApiKeyCollectionVariables(collection, authConfig) {
   upsertCollectionVariable(collection, getApiKeyVariableName(authConfig));
 }
 function getScriptExecText(event) {
-  const script = asRecord3(event.script);
+  const script = asRecord4(event.script);
   const exec2 = script?.exec;
   if (Array.isArray(exec2)) {
     return exec2.map((line) => String(line)).join("\n");
@@ -38277,7 +38878,7 @@ function applyCollectionAuth(collection, authConfig) {
     return;
   }
   const existingEvents = Array.isArray(collection.event) ? collection.event : [];
-  const retainedEvents = existingEvents.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)).filter((entry) => !isGeneratedOAuthEvent(entry));
+  const retainedEvents = existingEvents.map((entry) => asRecord4(entry)).filter((entry) => Boolean(entry)).filter((entry) => !isGeneratedOAuthEvent(entry));
   if (isOAuthAuthConfig(authConfig)) {
     collection.auth = { type: "noauth" };
     seedOAuthCollectionVariables(collection, authConfig);
@@ -38297,12 +38898,12 @@ function applyAuthToCollectionItems(items, authConfig) {
     return 0;
   }
   return items.reduce((count, entry) => {
-    const item = asRecord3(entry);
+    const item = asRecord4(entry);
     if (!item) {
       return count;
     }
     let nextCount = count;
-    const request = asRecord3(item.request);
+    const request = asRecord4(item.request);
     if (request && !isSecretsResolverItem(item) && applyAuthToRequest(request, authConfig)) {
       nextCount += 1;
     }
@@ -38314,7 +38915,7 @@ function getRequestUrlText(request) {
   if (typeof url === "string") {
     return url;
   }
-  const urlRecord = asRecord3(url);
+  const urlRecord = asRecord4(url);
   if (!urlRecord) {
     return "";
   }
@@ -38332,7 +38933,7 @@ function getRequestMethod2(request) {
   return normalizeMatchText(request.method || "GET");
 }
 function getRequestUrlMatchKey(item) {
-  const request = asRecord3(item.request);
+  const request = asRecord4(item.request);
   if (!request) {
     return "";
   }
@@ -38340,7 +38941,7 @@ function getRequestUrlMatchKey(item) {
   return url ? `${getRequestMethod2(request)} ${url}` : "";
 }
 function getRequestNameMatchKey(item) {
-  const request = asRecord3(item.request);
+  const request = asRecord4(item.request);
   if (!request) {
     return "";
   }
@@ -38348,7 +38949,7 @@ function getRequestNameMatchKey(item) {
   return name ? `${getRequestMethod2(request)} ${name}` : "";
 }
 function getRequestEvents(item) {
-  return Array.isArray(item.event) ? item.event.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)) : [];
+  return Array.isArray(item.event) ? item.event.map((entry) => asRecord4(entry)).filter((entry) => Boolean(entry)) : [];
 }
 function indexUniqueRequestEvents(items, getKey) {
   const matches = /* @__PURE__ */ new Map();
@@ -38410,17 +39011,17 @@ function applyCanonicalCollectionIdentity(collection, canonicalCollection) {
   if (!canonicalCollection) {
     return;
   }
-  const canonicalInfo = asRecord3(canonicalCollection.info);
+  const canonicalInfo = asRecord4(canonicalCollection.info);
   if (!canonicalInfo) {
     return;
   }
-  const info2 = asRecord3(collection.info) ?? {};
+  const info2 = asRecord4(collection.info) ?? {};
   const canonicalName = typeof canonicalInfo.name === "string" ? canonicalInfo.name.trim() : "";
   if (canonicalName) {
     info2.name = canonicalName;
   }
   const canonicalDescription = canonicalInfo.description;
-  if (typeof canonicalDescription === "string" || asRecord3(canonicalDescription)) {
+  if (typeof canonicalDescription === "string" || asRecord4(canonicalDescription)) {
     info2.description = canonicalDescription;
   } else {
     delete info2.description;
@@ -38431,8 +39032,8 @@ function buildSecretsResolverItem(provider) {
   const item = createSecretsResolverItem(provider);
   const events2 = Array.isArray(item.event) ? item.event : [];
   for (const entry of events2) {
-    const event = asRecord3(entry);
-    const script = asRecord3(event?.script);
+    const event = asRecord4(entry);
+    const script = asRecord4(event?.script);
     if (script && typeof script.type !== "string") {
       script.type = "text/javascript";
     }
@@ -38444,14 +39045,14 @@ function isSecretsResolverItem(item) {
   if (name === LEGACY_SECRETS_RESOLVER_ITEM_NAME.toLowerCase() || name === "resolve secrets") {
     return true;
   }
-  const request = asRecord3(item.request);
+  const request = asRecord4(item.request);
   if (!request) {
     return false;
   }
-  const auth = asRecord3(request.auth);
+  const auth = asRecord4(request.auth);
   const authType = typeof auth?.type === "string" ? auth.type.toLowerCase() : "";
   const urlText = getRequestUrlText(request).toLowerCase();
-  const headers = Array.isArray(request.header) ? request.header.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)) : [];
+  const headers = Array.isArray(request.header) ? request.header.map((entry) => asRecord4(entry)).filter((entry) => Boolean(entry)) : [];
   const hasSecretsManagerTarget = headers.some(
     (entry) => typeof entry.key === "string" && entry.key.toLowerCase() === "x-amz-target" && String(entry.value ?? "").toLowerCase().includes("secretsmanager.getsecretvalue")
   );
@@ -38465,7 +39066,7 @@ function removeSecretsResolverItems(items) {
     return items;
   }
   return items.map((entry) => {
-    const item = asRecord3(entry);
+    const item = asRecord4(entry);
     if (!item) {
       return entry;
     }
@@ -38474,7 +39075,7 @@ function removeSecretsResolverItems(items) {
     }
     return item;
   }).filter((entry) => {
-    const item = asRecord3(entry);
+    const item = asRecord4(entry);
     return !item || !isSecretsResolverItem(item);
   });
 }
@@ -38483,7 +39084,7 @@ function containsSecretsResolverItem(items) {
     return false;
   }
   return items.some((entry) => {
-    const item = asRecord3(entry);
+    const item = asRecord4(entry);
     if (!item) {
       return false;
     }
@@ -38495,12 +39096,12 @@ function collectSmokeRequestItems(items) {
     return [];
   }
   return items.flatMap((entry) => {
-    const item = asRecord3(entry);
+    const item = asRecord4(entry);
     if (!item) {
       return [];
     }
     const nestedItems = collectSmokeRequestItems(item.item);
-    const request = asRecord3(item.request);
+    const request = asRecord4(item.request);
     if (!request || isSecretsResolverItem(item)) {
       return nestedItems;
     }
@@ -38509,25 +39110,25 @@ function collectSmokeRequestItems(items) {
 }
 function hasGeneratedOAuthEvent(collection) {
   const events2 = Array.isArray(collection.event) ? collection.event : [];
-  return events2.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)).some((entry) => isGeneratedOAuthEvent(entry));
+  return events2.map((entry) => asRecord4(entry)).filter((entry) => Boolean(entry)).some((entry) => isGeneratedOAuthEvent(entry));
 }
 function hasCollectionAuth(collection) {
-  const auth = asRecord3(collection.auth);
+  const auth = asRecord4(collection.auth);
   return Boolean(auth && typeof auth.type === "string" && auth.type !== "" && auth.type !== "noauth");
 }
 function getCollectionVariableKeys(collection) {
   const variables = Array.isArray(collection.variable) ? collection.variable : [];
   return new Set(
-    variables.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)).map((entry) => String(entry.key ?? "")).filter(Boolean)
+    variables.map((entry) => asRecord4(entry)).filter((entry) => Boolean(entry)).map((entry) => String(entry.key ?? "")).filter(Boolean)
   );
 }
 function requestUsesBearerAuth(request, accessTokenVariable) {
-  const auth = asRecord3(request.auth);
+  const auth = asRecord4(request.auth);
   if (!auth || auth.type !== "bearer") {
     return false;
   }
   const bearer = Array.isArray(auth.bearer) ? auth.bearer : [];
-  return bearer.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)).some((entry) => entry.key === "token" && entry.value === `{{${accessTokenVariable}}}`);
+  return bearer.map((entry) => asRecord4(entry)).filter((entry) => Boolean(entry)).some((entry) => entry.key === "token" && entry.value === `{{${accessTokenVariable}}}`);
 }
 function countBearerAuthRequests(items, authConfig) {
   if (!Array.isArray(items)) {
@@ -38535,12 +39136,12 @@ function countBearerAuthRequests(items, authConfig) {
   }
   const variables = getOAuthVariableNames(authConfig);
   return items.reduce((count, entry) => {
-    const item = asRecord3(entry);
+    const item = asRecord4(entry);
     if (!item) {
       return count;
     }
     let nextCount = count;
-    const request = asRecord3(item.request);
+    const request = asRecord4(item.request);
     if (request && !isSecretsResolverItem(item) && requestUsesBearerAuth(request, variables.accessToken)) {
       nextCount += 1;
     }
@@ -38552,26 +39153,26 @@ function authUsesApiKey(auth, authConfig) {
     return false;
   }
   const apiKey = Array.isArray(auth.apikey) ? auth.apikey : [];
-  const entries = apiKey.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry));
+  const entries = apiKey.map((entry) => asRecord4(entry)).filter((entry) => Boolean(entry));
   const valueVariable = getApiKeyVariableName(authConfig);
   const credentialByKey = new Map(entries.map((entry) => [String(entry.key ?? ""), entry.value]));
   return credentialByKey.get("key") === getApiKeyName(authConfig) && credentialByKey.get("value") === `{{${valueVariable}}}` && String(credentialByKey.get("in") ?? "").toLowerCase() === authConfig.in;
 }
 function collectionUsesApiKeyAuth(collection, authConfig) {
-  return authUsesApiKey(asRecord3(collection.auth), authConfig);
+  return authUsesApiKey(asRecord4(collection.auth), authConfig);
 }
 function collectRequestsWithExplicitAuth(items) {
   if (!Array.isArray(items)) {
     return [];
   }
   return items.flatMap((entry) => {
-    const item = asRecord3(entry);
+    const item = asRecord4(entry);
     if (!item) {
       return [];
     }
     const nested = collectRequestsWithExplicitAuth(item.item);
-    const request = asRecord3(item.request);
-    const auth = asRecord3(request?.auth);
+    const request = asRecord4(item.request);
+    const auth = asRecord4(request?.auth);
     if (!request || isSecretsResolverItem(item) || !auth || auth.type === "noauth") {
       return nested;
     }
@@ -38579,10 +39180,10 @@ function collectRequestsWithExplicitAuth(items) {
   });
 }
 function getTopLevelItems(collection) {
-  return Array.isArray(collection.item) ? collection.item.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)) : [];
+  return Array.isArray(collection.item) ? collection.item.map((entry) => asRecord4(entry)).filter((entry) => Boolean(entry)) : [];
 }
 function hasFlowRequestScripts(item) {
-  const events2 = Array.isArray(item.event) ? item.event.map((entry) => asRecord3(entry)).filter((entry) => Boolean(entry)) : [];
+  const events2 = Array.isArray(item.event) ? item.event.map((entry) => asRecord4(entry)).filter((entry) => Boolean(entry)) : [];
   return events2.some((entry) => entry.listen === "prerequest") && events2.some((entry) => entry.listen === "test");
 }
 function verifySmokeCollectionAuth(collection, authConfig, options = {}) {
@@ -38640,7 +39241,7 @@ function verifySmokeCollectionAuth(collection, authConfig, options = {}) {
 function verifyGeneratedSmokeCollection(collection, authConfig, options = {}) {
   const requestItems = collectSmokeRequestItems(collection.item);
   const requestsMissingUrls = requestItems.filter((item) => {
-    const request = asRecord3(item.request);
+    const request = asRecord4(item.request);
     return !request || !getRequestUrlText(request).trim();
   }).map((item) => String(item.name ?? "<unnamed request>"));
   const failures = [];
@@ -38671,7 +39272,7 @@ function verifyGeneratedSmokeCollection(collection, authConfig, options = {}) {
 }
 function verifyCuratedSmokeCollection(collection, flow, authConfig, options = {}) {
   const topLevelItems = getTopLevelItems(collection);
-  const requestItems = topLevelItems.filter((item) => asRecord3(item.request) && !isSecretsResolverItem(item));
+  const requestItems = topLevelItems.filter((item) => asRecord4(item.request) && !isSecretsResolverItem(item));
   const requestNames = requestItems.map((item) => String(item.name ?? ""));
   const expectedRequestNames = flow.steps.map((step) => step.name?.trim() || step.operationId);
   const missingRequests = expectedRequestNames.filter((name) => !requestNames.includes(name));
@@ -38707,7 +39308,7 @@ function verifyCuratedSmokeCollection(collection, flow, authConfig, options = {}
 function curateRequestItem(resolved, authConfig) {
   const item = structuredClone(resolved.item);
   item.name = resolved.step.name?.trim() || resolved.step.operationId;
-  const request = asRecord3(item.request);
+  const request = asRecord4(item.request);
   if (request) {
     updateRequestUrl(request, resolved.step);
     updateRequestBody(request, resolved.step);
@@ -38719,7 +39320,7 @@ function curateRequestItem(resolved, authConfig) {
 function buildGeneratedSmokeCollection(generatedCollection, authConfig, options = {}) {
   const collection = sanitizeForCollectionUpdate(structuredClone(generatedCollection));
   if (options.collectionName) {
-    const info2 = asRecord3(collection.info) ?? {};
+    const info2 = asRecord4(collection.info) ?? {};
     info2.name = options.collectionName;
     collection.info = info2;
   }
@@ -38744,7 +39345,7 @@ function buildGeneratedSmokeCollection(generatedCollection, authConfig, options 
 }
 function buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests, authConfig, secretsResolverProvider = "none", options = {}) {
   const collection = sanitizeForCollectionUpdate(structuredClone(generatedCollection));
-  const info2 = asRecord3(collection.info);
+  const info2 = asRecord4(collection.info);
   if (info2) {
     info2.name = `[Smoke] ${flow.name}`;
   }
@@ -38764,340 +39365,12 @@ function buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests
   };
 }
 
-// src/lib/http-error.ts
-function truncate2(value, limit) {
-  if (value.length <= limit) {
-    return value;
-  }
-  return `${value.slice(0, limit)}...[truncated]`;
-}
-function buildMessage(init) {
-  const method = String(init.method || "GET").toUpperCase();
-  const status = `${init.status}${init.statusText ? ` ${init.statusText}` : ""}`;
-  const url = redactSecrets(init.url, init.secretValues);
-  const body = truncate2(
-    redactSecrets(init.responseBody || "", init.secretValues),
-    Math.max(0, init.bodyLimit ?? 800)
-  );
-  return body ? `${method} ${url} failed: ${status} - ${body}` : `${method} ${url} failed: ${status}`;
-}
-var HttpError = class _HttpError extends Error {
-  method;
-  requestHeaders;
-  responseBody;
-  secretValues;
-  status;
-  statusText;
-  url;
-  constructor(init) {
-    super(buildMessage(init));
-    this.name = "HttpError";
-    this.method = String(init.method || "GET").toUpperCase();
-    this.requestHeaders = init.requestHeaders;
-    this.responseBody = init.responseBody || "";
-    this.secretValues = init.secretValues;
-    this.status = init.status;
-    this.statusText = init.statusText;
-    this.url = init.url;
-  }
-  static async fromResponse(response, init) {
-    const responseBody = init.responseBody ?? await response.text().catch(() => "");
-    return new _HttpError({
-      ...init,
-      responseBody,
-      status: response.status,
-      statusText: response.statusText
-    });
-  }
-  toJSON() {
-    return {
-      method: this.method,
-      name: this.name,
-      requestHeaders: sanitizeHeaders(this.requestHeaders, this.secretValues),
-      responseBody: redactSecrets(this.responseBody, this.secretValues),
-      status: this.status,
-      statusText: this.statusText,
-      url: redactSecrets(this.url, this.secretValues)
-    };
-  }
-};
-
-// src/lib/postman/base-urls.ts
-var POSTMAN_ENDPOINT_PROFILES = {
-  prod: {
-    apiBaseUrl: "https://api.getpostman.com",
-    bifrostBaseUrl: "https://bifrost-premium-https-v4.gw.postman.com",
-    cliInstallUrl: "https://dl-cli.pstmn.io/install/unix.sh",
-    gatewayBaseUrl: "https://gateway.postman.com",
-    iapubBaseUrl: "https://iapub.postman.co"
-  },
-  beta: {
-    apiBaseUrl: "https://api.getpostman-beta.com",
-    bifrostBaseUrl: "https://bifrost-https-v4.gw.postman-beta.com",
-    cliInstallUrl: "https://dl-cli.pstmn-beta.io/install/unix.sh",
-    gatewayBaseUrl: "https://gateway.postman-beta.com",
-    iapubBaseUrl: "https://iapub.postman.co"
-  }
-};
-
-// src/lib/retry.ts
-function sleep(delayMs) {
-  return new Promise((resolve2) => {
-    setTimeout(resolve2, delayMs);
-  });
-}
-function fullJitterDelayMs(attempt, baseDelayMs = 400, maxDelayMs = 5e3, random = Math.random) {
-  const ceiling = Math.min(maxDelayMs, baseDelayMs * 2 ** Math.max(0, attempt));
-  return Math.round(random() * ceiling);
-}
-function parseRetryAfterMs(value, now = Date.now()) {
-  const trimmed = value?.trim();
-  if (!trimmed) return void 0;
-  if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1e3;
-  const date = Date.parse(trimmed);
-  return Number.isNaN(date) ? void 0 : Math.max(0, date - now);
-}
-function normalizeRetryOptions(options) {
-  return {
-    maxAttempts: Math.max(1, options.maxAttempts ?? 3),
-    delayMs: Math.max(0, options.delayMs ?? 2e3),
-    backoffMultiplier: Math.max(1, options.backoffMultiplier ?? 1),
-    maxDelayMs: options.maxDelayMs === void 0 ? Number.POSITIVE_INFINITY : Math.max(0, options.maxDelayMs),
-    onRetry: options.onRetry ?? (async () => void 0),
-    shouldRetry: options.shouldRetry ?? (() => true),
-    sleep: options.sleep ?? sleep
-  };
-}
-async function retry(operation, options = {}) {
-  const normalized = normalizeRetryOptions(options);
-  let nextDelayMs = normalized.delayMs;
-  for (let attempt = 1; attempt <= normalized.maxAttempts; attempt += 1) {
-    try {
-      return await operation();
-    } catch (error2) {
-      const shouldRetry = attempt < normalized.maxAttempts && normalized.shouldRetry(error2, {
-        attempt,
-        maxAttempts: normalized.maxAttempts
-      });
-      if (!shouldRetry) {
-        throw error2;
-      }
-      await normalized.onRetry({
-        attempt,
-        maxAttempts: normalized.maxAttempts,
-        delayMs: nextDelayMs,
-        error: error2
-      });
-      await normalized.sleep(nextDelayMs);
-      nextDelayMs = Math.min(
-        normalized.maxDelayMs,
-        Math.round(nextDelayMs * normalized.backoffMultiplier)
-      );
-    }
-  }
-  throw new Error("Retry exhausted without returning or throwing");
-}
-
-// src/lib/postman/app-version.ts
-var UPDATE_URL = "https://dl.pstmn.io/update/status?currentVersion=12.0.0&platform=osx_arm64";
-var FLOOR_VERSION = "12.0.0";
-var VERSION_RE = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
-var PostmanAppVersionProvider = class {
-  fetchImpl;
-  requestTimeoutMs;
-  memo;
-  constructor(options = {}) {
-    this.fetchImpl = options.fetchImpl ?? fetch;
-    this.requestTimeoutMs = Math.max(1, options.requestTimeoutMs ?? 2e3);
-  }
-  resolve() {
-    if (process.env.POSTMAN_GATEWAY_APP_VERSION === "off") return Promise.resolve(void 0);
-    this.memo ??= this.lookup();
-    return this.memo;
-  }
-  async lookup() {
-    try {
-      const response = await this.fetchImpl(UPDATE_URL, { signal: AbortSignal.timeout(this.requestTimeoutMs) });
-      if (!response.ok) return FLOOR_VERSION;
-      const body = await response.json();
-      const version = typeof body?.version === "string" ? body.version : "";
-      return VERSION_RE.test(version) && !/[\u0000-\u001f\u007f-\u009f]/.test(version) ? version : FLOOR_VERSION;
-    } catch {
-      return FLOOR_VERSION;
-    }
-  }
-};
-var defaultProvider = new PostmanAppVersionProvider();
-function getPostmanAppVersionProvider() {
-  return defaultProvider;
-}
-
-// src/lib/postman/gateway-client.ts
-function isExpiredAuthError(status, body) {
-  return status === 401 || body.includes("UNAUTHENTICATED") || body.includes("authenticationError");
-}
-function isTransientGatewayError(status, body) {
-  return status === 429 || status === 502 || status === 503 || status === 504 || status >= 500 && /ESOCKETTIMEDOUT|ETIMEDOUT|ECONNRESET|serverError|downstream/i.test(body);
-}
-function defaultSleep(ms) {
-  return new Promise((resolve2) => setTimeout(resolve2, ms));
-}
-function extractInnerStatus(body) {
-  try {
-    const payload = JSON.parse(body);
-    const error2 = payload.error;
-    const source = error2 && typeof error2 === "object" ? error2 : payload;
-    const raw = source.status ?? source.statusCode ?? payload.status ?? payload.statusCode;
-    const status = typeof raw === "number" ? raw : Number(raw);
-    if (source.success === false || payload.success === false) return Number.isFinite(status) ? status : 500;
-    if (Number.isFinite(status) && status >= 400) return status;
-    if (error2 !== void 0) {
-      return /UNAUTHENTICATED|authenticationError/i.test(body) ? 401 : 500;
-    }
-    return void 0;
-  } catch {
-    return void 0;
-  }
-}
-var AccessTokenGatewayClient = class {
-  tokenProvider;
-  bifrostBaseUrl;
-  teamId;
-  orgMode;
-  fetchImpl;
-  secretMasker;
-  maxRetries;
-  retryBaseDelayMs;
-  sleepImpl;
-  randomImpl;
-  appVersionProvider;
-  constructor(options) {
-    this.tokenProvider = options.tokenProvider;
-    this.bifrostBaseUrl = String(
-      options.bifrostBaseUrl || POSTMAN_ENDPOINT_PROFILES.prod.bifrostBaseUrl
-    ).replace(/\/+$/, "");
-    this.teamId = String(options.teamId || "").trim();
-    this.orgMode = options.orgMode ?? false;
-    this.fetchImpl = options.fetchImpl ?? fetch;
-    this.secretMasker = options.secretMasker ?? createSecretMasker([this.tokenProvider.current()]);
-    this.maxRetries = options.maxRetries ?? 3;
-    this.retryBaseDelayMs = options.retryBaseDelayMs ?? 400;
-    this.sleepImpl = options.sleepImpl ?? defaultSleep;
-    this.randomImpl = options.randomImpl ?? Math.random;
-    this.appVersionProvider = options.appVersionProvider ?? getPostmanAppVersionProvider();
-  }
-  configureTeamContext(teamId, orgMode) {
-    this.teamId = String(teamId || "").trim();
-    this.orgMode = orgMode;
-  }
-  async buildHeaders(extra) {
-    const headers = {
-      "Content-Type": "application/json",
-      ...extra || {}
-    };
-    headers["x-access-token"] = this.tokenProvider.current();
-    const appVersion = await this.appVersionProvider.resolve();
-    if (appVersion) headers["x-app-version"] = appVersion;
-    if (this.teamId && this.orgMode) {
-      headers["x-entity-team-id"] = this.teamId;
-    }
-    return headers;
-  }
-  async send(request) {
-    const url = `${this.bifrostBaseUrl}/ws/proxy`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 3e4);
-    try {
-      return await this.fetchImpl(url, {
-        method: "POST",
-        headers: await this.buildHeaders(request.headers),
-        signal: controller.signal,
-        body: JSON.stringify({
-          service: request.service,
-          method: request.method,
-          path: request.path,
-          ...request.query !== void 0 ? { query: request.query } : {},
-          ...request.body !== void 0 ? { body: request.body } : {}
-        })
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  /**
-   * Send a gateway request, refreshing the token once after a definitive auth
-   * rejection. Safe GETs retry transient/statusless failures with backoff.
-   * Mutations are single-shot unless a caller explicitly opts in after proving
-   * its fixed-target operation idempotent.
-   */
-  async request(request) {
-    let attempt = 0;
-    const maxRetries = request.maxRetries ?? (request.method === "get" ? this.maxRetries : 0);
-    for (; ; ) {
-      let response;
-      try {
-        response = await this.send(request);
-      } catch (error2) {
-        if (attempt >= maxRetries) throw error2;
-        const delay = fullJitterDelayMs(attempt, this.retryBaseDelayMs, 5e3, this.randomImpl);
-        attempt += 1;
-        await this.sleepImpl(delay);
-        continue;
-      }
-      const body = await response.clone().text().catch(() => "");
-      const innerStatus = response.ok ? extractInnerStatus(body) : void 0;
-      const status = innerStatus ?? response.status;
-      if (response.ok && innerStatus === void 0) return response;
-      if (isExpiredAuthError(status, body) && this.tokenProvider.canRefresh()) {
-        await this.tokenProvider.refresh();
-        response = await this.send(request);
-        const retryBody = await response.clone().text().catch(() => "");
-        const retryInnerStatus = response.ok ? extractInnerStatus(retryBody) : void 0;
-        if (response.ok && retryInnerStatus === void 0) return response;
-        throw this.toHttpError(request, response, retryBody, retryInnerStatus);
-      }
-      if (isTransientGatewayError(status, body) && attempt < maxRetries) {
-        const retryAfter = parseRetryAfterMs(response.headers.get("retry-after"));
-        const delay = retryAfter === void 0 ? fullJitterDelayMs(attempt, this.retryBaseDelayMs, 5e3, this.randomImpl) : Math.min(5e3, retryAfter);
-        attempt += 1;
-        await this.sleepImpl(delay);
-        continue;
-      }
-      throw this.toHttpError(request, response, body, innerStatus);
-    }
-  }
-  /** Send a gateway request and parse the JSON body, or null when empty. */
-  async requestJson(request) {
-    const response = await this.request(request);
-    const text = await response.text().catch(() => "");
-    if (!text.trim()) {
-      return null;
-    }
-    try {
-      return JSON.parse(text);
-    } catch {
-      return null;
-    }
-  }
-  toHttpError(request, response, body, effectiveStatus) {
-    return new HttpError({
-      method: request.method.toUpperCase(),
-      url: `${this.bifrostBaseUrl}/ws/proxy (${request.service}: ${request.method} ${request.path})`,
-      status: effectiveStatus ?? response.status,
-      statusText: response.statusText,
-      requestHeaders: { "Content-Type": "application/json", "x-access-token": this.tokenProvider.current() },
-      responseBody: this.secretMasker(body),
-      secretValues: [this.tokenProvider.current()]
-    });
-  }
-};
-
 // src/postman/postman-gateway-smoke-client.ts
-function asRecord4(value) {
+function asRecord5(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function asArray(value) {
-  return Array.isArray(value) ? value.map(asRecord4).filter((v) => Boolean(v)) : [];
+  return Array.isArray(value) ? value.map(asRecord5).filter((v) => Boolean(v)) : [];
 }
 var SMOKE_BARE_UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 function bareModelId(uid) {
@@ -39122,7 +39395,7 @@ function v3BodyToV2(body) {
   return { mode: "raw", raw: content };
 }
 function v3AuthToV2(auth) {
-  const block = Array.isArray(auth) ? asRecord4(auth[0]) : asRecord4(auth);
+  const block = Array.isArray(auth) ? asRecord5(auth[0]) : asRecord5(auth);
   if (!block) return void 0;
   const type = typeof block.type === "string" ? block.type : "";
   if (!type) return void 0;
@@ -39153,9 +39426,9 @@ function v3NodeToV2Item(node) {
   };
   const headers = Array.isArray(node.headers) ? node.headers : [];
   request.header = headers;
-  const body = v3BodyToV2(asRecord4(node.body));
+  const body = v3BodyToV2(asRecord5(node.body));
   if (body) request.body = body;
-  const auth = v3AuthToV2(asRecord4(node.auth));
+  const auth = v3AuthToV2(asRecord5(node.auth));
   if (auth) request.auth = auth;
   const item = { name, request };
   const events2 = v3ScriptsToV2Events(node.scripts);
@@ -39177,7 +39450,7 @@ function v3ExportToV2Collection(v3) {
 }
 function v2UrlToRaw(url) {
   if (typeof url === "string") return url;
-  const record = asRecord4(url);
+  const record = asRecord5(url);
   if (record && typeof record.raw === "string") return record.raw;
   return "";
 }
@@ -39186,7 +39459,7 @@ function v2AuthToV3(auth) {
   const type = typeof auth.type === "string" ? auth.type : "";
   if (!type || type === "noauth") return void 0;
   const entries = Array.isArray(auth[type]) ? auth[type] : [];
-  const credentials = entries.map(asRecord4).filter((entry) => Boolean(entry)).map((entry) => ({ key: String(entry.key ?? ""), value: entry.value ?? "" }));
+  const credentials = entries.map(asRecord5).filter((entry) => Boolean(entry)).map((entry) => ({ key: String(entry.key ?? ""), value: entry.value ?? "" }));
   return { type, credentials };
 }
 function isNoAuth(auth) {
@@ -39220,7 +39493,7 @@ function v2EventsToV3Scripts(events2) {
     const listen = typeof event.listen === "string" ? event.listen : "";
     const type = listen === "prerequest" ? "beforeRequest" : listen === "test" ? "afterResponse" : "";
     if (!type) return null;
-    const script = asRecord4(event.script);
+    const script = asRecord5(event.script);
     const exec2 = Array.isArray(script?.exec) ? script.exec.map(String) : [];
     return { type, code: exec2.join("\n"), language: "text/javascript" };
   }).filter((script) => Boolean(script));
@@ -39230,7 +39503,7 @@ function v2EventsToV3CollectionScripts(events2) {
     const listen = typeof event.listen === "string" ? event.listen : "";
     const type = listen === "prerequest" ? "http:beforeRequest" : listen === "test" ? "http:afterRequest" : "";
     if (!type) return null;
-    const script = asRecord4(event.script);
+    const script = asRecord5(event.script);
     const exec2 = Array.isArray(script?.exec) ? script.exec.map(String) : [];
     return { type, code: exec2.join("\n"), language: "text/javascript" };
   }).filter((script) => Boolean(script));
@@ -39239,10 +39512,10 @@ function itemParentBareId(item, parentByChildId) {
   const itemId = bareModelId(String(item.id ?? item.uid ?? ""));
   const stubParent = itemId ? parentByChildId.get(itemId) : void 0;
   if (stubParent) return stubParent;
-  const raw = asRecord4(item.position)?.parent;
+  const raw = asRecord5(item.position)?.parent;
   if (raw === void 0 || raw === null || raw === "") return null;
   if (typeof raw === "string") return bareModelId(raw);
-  const record = asRecord4(raw);
+  const record = asRecord5(raw);
   if (record && typeof record.id === "string") return bareModelId(String(record.id));
   return null;
 }
@@ -39270,6 +39543,11 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
       ...options.fetchImpl ? { fetchImpl: options.fetchImpl } : {},
       ...options.sleepImpl ? { sleepImpl: options.sleepImpl } : {},
       ...options.appVersionProvider ? { appVersionProvider: options.appVersionProvider } : {},
+      refreshEmptyToken: false,
+      defaultInnerErrorStatus: 500,
+      classifyInnerAuthError: true,
+      refreshOnInnerAuthError: true,
+      jitterRounding: "round",
       secretMasker: this.secretMasker
     });
     this.sleepImpl = options.sleepImpl ?? sleep2;
@@ -39313,7 +39591,7 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
           path: "/tasks",
           query: { entityId: specId, entityType: "specification", type: "collection-generation" }
         });
-        const status = String(asRecord4(task?.data)?.[taskId] ?? "").toLowerCase();
+        const status = String(asRecord5(task?.data)?.[taskId] ?? "").toLowerCase();
         if (status === "failed" || status === "error") {
           throw new Error(
             `COLLECTION_GENERATION_TASK_FAILED: Collection generation task failed for spec ${specId} task ${taskId} (status=${status}). Inspect the spec generation/task state and permissions, then rerun.`
@@ -39350,7 +39628,7 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
           // Unsafe create: never blind-retry an ambiguous accept.
           maxRetries: 0
         });
-        return String(asRecord4(created?.data)?.taskId ?? "").trim();
+        return String(asRecord5(created?.data)?.taskId ?? "").trim();
       } catch (error2) {
         const locked = error2 instanceof HttpError && error2.status === 423;
         if (!locked || lockedAttempt >= _PostmanGatewaySmokeClient.GENERATION_LOCKED_MAX_RETRIES) {
@@ -39367,7 +39645,7 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
       path: `/specifications/${specId}/collections`
     });
     const uids = [];
-    for (const entry of asArray(asRecord4(list)?.data)) {
+    for (const entry of asArray(asRecord5(list)?.data)) {
       const uid = String(entry.collection ?? entry.collectionId ?? entry.id ?? "").trim();
       if (uid) uids.push(uid);
     }
@@ -39389,7 +39667,7 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
             method: "get",
             path: `/v3/collections/${bareModelId(uid)}/export`
           });
-          const collection = asRecord4(asRecord4(exported?.data)?.collection) ?? asRecord4(exported?.data);
+          const collection = asRecord5(asRecord5(exported?.data)?.collection) ?? asRecord5(exported?.data);
           const name = typeof collection?.name === "string" ? collection.name : "";
           if (name === ownedName) matches.push(uid);
         } catch (error2) {
@@ -39424,7 +39702,7 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
       method: "get",
       path: `/v3/collections/${cid}/export`
     });
-    const v3 = asRecord4(asRecord4(exported?.data)?.collection) ?? asRecord4(exported?.data);
+    const v3 = asRecord5(asRecord5(exported?.data)?.collection) ?? asRecord5(exported?.data);
     if (!v3) {
       throw new Error(`Failed to export collection ${collectionUid}`);
     }
@@ -39433,7 +39711,7 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
   async updateCollection(collectionUid, collection) {
     const itemsCid = collectionItemsId(collectionUid);
     const rootCid = bareModelId(collectionUid);
-    const desired = asRecord4(collection);
+    const desired = asRecord5(collection);
     if (!desired) {
       throw new Error(`updateCollection: invalid collection payload for ${collectionUid}`);
     }
@@ -39443,15 +39721,15 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
       $kind: "collection"
     });
     const ops = [];
-    const info2 = asRecord4(desired.info);
+    const info2 = asRecord5(desired.info);
     const name = typeof info2?.name === "string" ? info2.name : void 0;
     if (name !== void 0) ops.push({ op: "replace", path: "/name", value: name });
-    const desiredAuth = asRecord4(desired.auth);
+    const desiredAuth = asRecord5(desired.auth);
     const collAuth = v2AuthToV3(desiredAuth);
     const clearCollectionAuth = !collAuth && isNoAuth(desiredAuth);
     if (collAuth) ops.push({ op: "add", path: "/auth", value: collAuth });
     if (Array.isArray(desired.variable)) {
-      const variables = desired.variable.map(asRecord4).filter((v) => Boolean(v)).map((v) => ({ key: String(v.key ?? ""), value: v.value ?? "" }));
+      const variables = desired.variable.map(asRecord5).filter((v) => Boolean(v)).map((v) => ({ key: String(v.key ?? ""), value: v.value ?? "" }));
       if (variables.length > 0) ops.push({ op: "add", path: "/variables", value: variables });
     }
     if (ops.length > 0) {
@@ -39496,7 +39774,7 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
       method: "get",
       path: `/v3/collections/?workspace=${encodeURIComponent(this.workspaceId)}`
     });
-    const collections = asArray(asRecord4(listed)?.data ?? listed?.data);
+    const collections = asArray(asRecord5(listed)?.data ?? listed?.data);
     const bare = bareModelId(collectionUid);
     const found = collections.some((entry) => {
       const id = String(entry.id ?? entry.uid ?? "").trim();
@@ -39606,7 +39884,7 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
     const remainingByName = this.assertUniqueNames(refreshed, parent.id, "existing");
     for (const item of desiredArray) {
       const name = typeof item.name === "string" ? item.name : "";
-      const request = asRecord4(item.request);
+      const request = asRecord5(item.request);
       if (request) {
         const existing = remainingByName.get(name);
         if (existing && String(existing.$kind ?? "http-request") === "http-request") {
@@ -39669,9 +39947,9 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
       headers: v2HeadersToV3(request.header),
       position: { parent }
     };
-    const body = v2BodyToV3(asRecord4(request.body));
+    const body = v2BodyToV3(asRecord5(request.body));
     if (body) createBody.body = body;
-    const auth = v2AuthToV3(asRecord4(request.auth));
+    const auth = v2AuthToV3(asRecord5(request.auth));
     if (auth) createBody.auth = auth;
     return createBody;
   }
@@ -39723,7 +40001,7 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         path: `/v3/collections/${cid}/items/${itemId}`,
         headers: { "X-Entity-Type": "http-request" }
       });
-      item = asRecord4(got?.data) ?? asRecord4(got);
+      item = asRecord5(got?.data) ?? asRecord5(got);
     } catch {
       return false;
     }
@@ -39767,7 +40045,7 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         body: createBody,
         maxRetries: 0
       });
-      const data = asRecord4(created?.data);
+      const data = asRecord5(created?.data);
       const folderId = String(data?.id ?? data?.uid ?? "").trim();
       if (!folderId) {
         throw new Error(
@@ -39800,7 +40078,7 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         body: createBody,
         maxRetries: 0
       });
-      const data = asRecord4(created?.data);
+      const data = asRecord5(created?.data);
       newItemId = String(data?.id ?? data?.uid ?? "").trim();
     } catch (error2) {
       if (!isAmbiguousCreateError(error2)) {
@@ -39888,12 +40166,30 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
   }
 };
 
+// src/lib/postman/base-urls.ts
+var POSTMAN_ENDPOINT_PROFILES = {
+  prod: {
+    apiBaseUrl: "https://api.getpostman.com",
+    bifrostBaseUrl: "https://bifrost-premium-https-v4.gw.postman.com",
+    cliInstallUrl: "https://dl-cli.pstmn.io/install/unix.sh",
+    gatewayBaseUrl: "https://gateway.postman.com",
+    iapubBaseUrl: "https://iapub.postman.co"
+  },
+  beta: {
+    apiBaseUrl: "https://api.getpostman-beta.com",
+    bifrostBaseUrl: "https://bifrost-https-v4.gw.postman-beta.com",
+    cliInstallUrl: "https://dl-cli.pstmn-beta.io/install/unix.sh",
+    gatewayBaseUrl: "https://gateway.postman-beta.com",
+    iapubBaseUrl: "https://iapub.postman.co"
+  }
+};
+
 // src/lib/postman/pmak-diagnostics.ts
 var memo = /* @__PURE__ */ new Map();
 function normalizedBase(apiBaseUrl) {
   return new URL(apiBaseUrl.trim()).toString().replace(/\/+$/, "");
 }
-function asRecord5(value) {
+function asRecord6(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
 }
 function maskPmakDiagnostic(message, secrets) {
@@ -39929,8 +40225,8 @@ async function inspect(base, options) {
     });
     if (response.status === 401 || response.status === 403) return { kind: "invalid", status: response.status };
     if (!response.ok) return { kind: "inconclusive", status: response.status };
-    const payload = asRecord5(await response.json().catch(() => void 0));
-    const user = asRecord5(payload?.user);
+    const payload = asRecord6(await response.json().catch(() => void 0));
+    const user = asRecord6(payload?.user);
     if (!user) return { kind: "inconclusive", status: response.status };
     const username = user.username;
     const email = user.email;
@@ -40178,7 +40474,7 @@ function getMemoizedSessionIdentity() {
 function getSessionResolutionFailure() {
   return memoizedSessionFailure;
 }
-function asRecord6(value) {
+function asRecord7(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return void 0;
   }
@@ -40214,7 +40510,7 @@ async function resolvePmakIdentity(opts) {
 async function probePmakIdentity(baseUrl, apiKey, fetchImpl) {
   try {
     const result = await inspectPmakIdentity({ apiBaseUrl: baseUrl, apiKey, fetchImpl });
-    const user = asRecord6(result.payload?.user);
+    const user = asRecord7(result.payload?.user);
     if (!user) {
       return void 0;
     }
@@ -40254,17 +40550,17 @@ async function resolveSessionIdentity(opts) {
 async function parseSessionResponse(response) {
   let payload;
   try {
-    payload = asRecord6(await response.json());
+    payload = asRecord7(await response.json());
   } catch {
     return void 0;
   }
   if (!payload) {
     return void 0;
   }
-  const root = asRecord6(payload.session) ?? payload;
-  const identity = asRecord6(root.identity);
-  const data = asRecord6(root.data);
-  const user = asRecord6(data?.user);
+  const root = asRecord7(payload.session) ?? payload;
+  const identity = asRecord7(root.identity);
+  const data = asRecord7(root.data);
+  const user = asRecord7(data?.user);
   const roleEntries = Array.isArray(user?.roles) ? user.roles.map((entry) => coerceText(entry) ?? coerceId(entry)).filter((entry) => Boolean(entry)) : [];
   const singleRole = coerceText(user?.role);
   const roles = roleEntries.length > 0 ? roleEntries : singleRole ? [singleRole] : void 0;
