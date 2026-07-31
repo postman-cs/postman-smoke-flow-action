@@ -23,12 +23,12 @@ src/
     credential-identity.ts       # iapub session-identity preflight + memoized consumerType for telemetry
   lib/
     cli-args.ts                  # CLI flag parsing
-    errors.ts, error-advice.ts   # Typed errors + user-facing remediation hints
+    errors.ts, error-advice.ts   # ValidationError + user-facing remediation hints
     logging.ts                   # Reporter (stderr logs, stdout JSON in CLI mode)
     paths.ts                     # Path resolution helpers
     postman/
-      gateway-client.ts          # AccessTokenGatewayClient: /ws/proxy envelope transport
       token-provider.ts          # AccessTokenProvider: holds access token, re-mints from PMAK on 401
+  @postman-cse/automation-core   # Shared gateway transport, retry, and HttpError
 tests/
 ```
 
