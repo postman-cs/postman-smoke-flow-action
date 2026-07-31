@@ -19,7 +19,7 @@ import {
 } from '@postman-cse/automation-core';
 
 import { readActionInputs, resolveGatewayTeamContext } from '../src/index.js';
-import { AccessTokenGatewayClient } from '../src/lib/postman/gateway-client.js';
+import { AccessTokenGatewayClient } from '@postman-cse/automation-core';
 import { mintAccessTokenIfNeeded, AccessTokenProvider } from '../src/lib/postman/token-provider.js';
 import { createSecretMasker } from '../src/lib/secrets.js';
 import {
@@ -196,6 +196,11 @@ describe('contract: smoke-flow credential × team-id matrix', () => {
       expect(teamId).toBe(team === 'present' ? TEAM_ID : '');
       const provider = new AccessTokenProvider({ accessToken: expectAccessToken });
       const gateway = new AccessTokenGatewayClient({
+        refreshEmptyToken: false,
+        defaultInnerErrorStatus: 500,
+        classifyInnerAuthError: true,
+        refreshOnInnerAuthError: true,
+        jitterRounding: 'round',
         tokenProvider: provider,
         fetchImpl: spy.fetchImpl,
         ...resolveGatewayTeamContext(inputs.teamId)

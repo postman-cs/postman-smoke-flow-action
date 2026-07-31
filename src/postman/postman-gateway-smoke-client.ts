@@ -1,6 +1,5 @@
-import { HttpError } from '../lib/http-error.js';
+import { AccessTokenGatewayClient, HttpError } from '@postman-cse/automation-core';
 import { summarizeError } from '../lib/logging.js';
-import { AccessTokenGatewayClient } from '../lib/postman/gateway-client.js';
 import type { AccessTokenProvider } from '../lib/postman/token-provider.js';
 import type { PostmanAppVersionProvider } from '../lib/postman/app-version.js';
 import { createSecretMasker, type SecretMasker } from '../lib/secrets.js';
@@ -323,8 +322,13 @@ export class PostmanGatewaySmokeClient {
       ...(options.teamId ? { teamId: options.teamId } : {}),
       ...(options.orgMode !== undefined ? { orgMode: options.orgMode } : {}),
       ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
-       ...(options.sleepImpl ? { sleepImpl: options.sleepImpl } : {}),
-       ...(options.appVersionProvider ? { appVersionProvider: options.appVersionProvider } : {}),
+      ...(options.sleepImpl ? { sleepImpl: options.sleepImpl } : {}),
+      ...(options.appVersionProvider ? { appVersionProvider: options.appVersionProvider } : {}),
+      refreshEmptyToken: false,
+      defaultInnerErrorStatus: 500,
+      classifyInnerAuthError: true,
+      refreshOnInnerAuthError: true,
+      jitterRounding: 'round',
       secretMasker: this.secretMasker
     });
     this.sleepImpl = options.sleepImpl ?? sleep;
