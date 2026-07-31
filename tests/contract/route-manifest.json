@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "routes": [
+    {
+      "id": "collection.delete-collection",
+      "service": "collection",
+      "method": "DELETE",
+      "path": "/v3/collections/{param}",
+      "classification": "live-only",
+      "reason": "Smoke-flow has no committed cassette yet; focused client tests and live probes cover temporary collection cleanup."
+    },
+    {
+      "id": "collection.delete-item",
+      "service": "collection",
+      "method": "DELETE",
+      "path": "/v3/collections/{param}/items/{param}",
+      "classification": "live-only",
+      "reason": "Smoke-flow has no committed cassette yet; focused client tests and live probes cover item deletion."
+    },
+    {
+      "id": "collection.export-collection",
+      "service": "collection",
+      "method": "GET",
+      "path": "/v3/collections/{param}/export",
+      "classification": "live-only",
+      "reason": "Smoke-flow has no committed cassette yet; focused reconciliation and client tests plus live probes cover collection export."
+    },
+    {
+      "id": "collection.get-item",
+      "service": "collection",
+      "method": "GET",
+      "path": "/v3/collections/{param}/items/{param}",
+      "classification": "live-only",
+      "reason": "Smoke-flow has no committed cassette yet; focused reconciliation tests and live probes cover item read-back."
+    },
+    {
+      "id": "collection.list-items",
+      "service": "collection",
+      "method": "GET",
+      "path": "/v3/collections/{param}/items/",
+      "classification": "live-only",
+      "reason": "Smoke-flow has no committed cassette yet; focused client tests and live probes cover item inventory."
+    },
+    {
+      "id": "collection.list-workspace-collections",
+      "service": "collection",
+      "method": "GET",
+      "path": "/v3/collections/?workspace={param}",
+      "classification": "live-only",
+      "reason": "Smoke-flow has no committed cassette yet; focused ownership tests and live probes cover workspace collection inventory."
+    },
+    {
+      "id": "collection.patch-item",
+      "service": "collection",
+      "method": "PATCH",
+      "path": "/v3/collections/{param}/items/{param}",
+      "classification": "live-only",
+      "reason": "Smoke-flow has no committed cassette yet; focused client tests and live probes cover item mutation."
+    },
+    {
+      "id": "collection.patch-collection",
+      "service": "collection",
+      "method": "PATCH",
+      "path": "/v3/collections/{param}",
+      "classification": "live-only",
+      "reason": "Smoke-flow has no committed cassette yet; focused auth-clear and client tests plus live probes cover root collection mutation."
+    },
+    {
+      "id": "collection.create-item",
+      "service": "collection",
+      "method": "POST",
+      "path": "/v3/collections/{param}/items/",
+      "classification": "live-only",
+      "reason": "Smoke-flow has no committed cassette yet; focused create-reconciliation tests and live probes cover item creation."
+    },
+    {
+      "id": "app-version.get-update-status",
+      "service": "dl.pstmn.io",
+      "method": "GET",
+      "path": "/update/status?currentVersion=12.0.0&platform=osx_arm64",
+      "classification": "intentionally-unsimulated",
+      "reason": "The non-critical memoized app-version probe is disabled in deterministic tests so test order cannot alter the observed wire surface."
+    },
+    {
+      "id": "iapub.get-current-session",
+      "service": "iapub",
+      "method": "GET",
+      "path": "/api/sessions/current",
+      "classification": "live-only",
+      "reason": "Smoke-flow has no committed cassette yet; focused credential tests and live probes cover session identity resolution."
+    },
+    {
+      "id": "postman-api.mint-service-account-token",
+      "service": "postman-api",
+      "method": "POST",
+      "path": "/service-account-tokens",
+      "classification": "live-only",
+      "reason": "Smoke-flow has no committed cassette yet; focused credential tests and live probes cover service-account token minting."
+    },
+    {
+      "id": "specification.list-generation-tasks",
+      "service": "specification",
+      "method": "GET",
+      "path": "/tasks",
+      "classification": "live-only",
+      "reason": "Smoke-flow has no committed cassette yet; focused generation-state tests and live probes cover task polling."
+    },
+    {
+      "id": "specification.list-collections",
+      "service": "specification",
+      "method": "GET",
+      "path": "/specifications/{param}/collections",
+      "classification": "live-only",
+      "reason": "Smoke-flow has no committed cassette yet; focused reconciliation tests and live probes cover specification collection inventory."
+    },
+    {
+      "id": "specification.generate-collection",
+      "service": "specification",
+      "method": "POST",
+      "path": "/specifications/{param}/collections",
+      "classification": "live-only",
+      "reason": "Smoke-flow has no committed cassette yet; focused create-reconciliation tests and live probes cover generation requests."
+    }
+  ]
+}
