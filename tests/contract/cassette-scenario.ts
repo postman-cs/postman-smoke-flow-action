@@ -147,7 +147,7 @@ export const SMOKE_FLOW_CASSETTE: SmokeFlowCassetteScenario = {
   },
   fake: {
     smokeCollectionId: '12345678-col-smoke',
-    smokeCollectionName: 'payments Smoke Tests',
+    smokeCollectionName: '[Smoke] payments',
     workspaceId: 'ws-contract',
     specId: 'spec-contract',
     generatedItems: [
