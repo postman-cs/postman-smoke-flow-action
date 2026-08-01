@@ -1,0 +1,255 @@
+{
+  "version": 2,
+  "interactions": [
+    {
+      "key": "POST https://api.getpostman.com/service-account-tokens #body-sha256=14c273078301d540cfbbab0921bd2a4cb08a9319435c242aa6de870151c43ea4",
+      "requestQuery": "",
+      "requestBodySha256": "14c273078301d540cfbbab0921bd2a4cb08a9319435c242aa6de870151c43ea4",
+      "status": 201,
+      "statusText": "",
+      "body": "{\"access_token\":\"cassette-access-token\"}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "GET https://api.getpostman.com/me",
+      "requestQuery": "",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"user\":{\"id\":12345678,\"teamId\":10490519}}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      },
+      "repeatLast": true
+    },
+    {
+      "key": "GET https://iapub.postman.co/api/sessions/current",
+      "requestQuery": "",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"session\":{\"identity\":{\"team\":\"10490519\"},\"consumerType\":\"service_account\"}}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      },
+      "repeatLast": true
+    },
+    {
+      "key": "proxy:collection GET /v3/collections/col-smoke/export",
+      "requestQuery": "",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":{\"collection\":{\"id\":\"12345678-col-smoke\",\"name\":\"payments Smoke Tests\",\"$kind\":\"collection\",\"variables\":[],\"items\":[{\"id\":\"12345678-item-old-0001\",\"$kind\":\"http-request\",\"name\":\"stale request\",\"method\":\"GET\",\"url\":\"https://api.example.com/stale\"}]}}}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:specification GET /specifications/spec-contract/collections",
+      "requestQuery": "",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":[]}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:specification POST /specifications/spec-contract/collections #body-sha256=972b99dc1f3ebfbafe959a41b197c7cfddba90242d26921149cc989cc460182d",
+      "requestQuery": "",
+      "requestBodySha256": "972b99dc1f3ebfbafe959a41b197c7cfddba90242d26921149cc989cc460182d",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":{\"taskId\":\"task-0005\"}}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:specification GET /tasks?entityId=spec-contract&entityType=specification&type=collection-generation",
+      "requestQuery": "entityId=spec-contract&entityType=specification&type=collection-generation",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":{\"task-0005\":\"completed\"}}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:specification GET /specifications/spec-contract/collections",
+      "requestQuery": "",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":[{\"collection\":\"12345678-col-temp-0002\"}]}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:collection GET /v3/collections/col-temp-0002/export",
+      "requestQuery": "",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":{\"collection\":{\"id\":\"12345678-col-temp-0002\",\"name\":\"[Smoke][Temp] payments 1234567-1-cassette-42424242\",\"$kind\":\"collection\",\"variables\":[{\"key\":\"baseUrl\",\"value\":\"https://api.example.com\"}],\"items\":[{\"id\":\"12345678-item-gen-0003\",\"$kind\":\"http-request\",\"name\":\"createPayment\",\"method\":\"POST\",\"url\":\"https://api.example.com/payments\",\"body\":{\"type\":\"json\",\"content\":\"{\\\"amount\\\":100}\"}},{\"id\":\"12345678-item-gen-0004\",\"$kind\":\"http-request\",\"name\":\"getPayment\",\"method\":\"GET\",\"url\":\"https://api.example.com/payments/{paymentId}\"}]}}}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:collection GET /v3/collections/col-temp-0002/export",
+      "requestQuery": "",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":{\"collection\":{\"id\":\"12345678-col-temp-0002\",\"name\":\"[Smoke][Temp] payments 1234567-1-cassette-42424242\",\"$kind\":\"collection\",\"variables\":[{\"key\":\"baseUrl\",\"value\":\"https://api.example.com\"}],\"items\":[{\"id\":\"12345678-item-gen-0003\",\"$kind\":\"http-request\",\"name\":\"createPayment\",\"method\":\"POST\",\"url\":\"https://api.example.com/payments\",\"body\":{\"type\":\"json\",\"content\":\"{\\\"amount\\\":100}\"}},{\"id\":\"12345678-item-gen-0004\",\"$kind\":\"http-request\",\"name\":\"getPayment\",\"method\":\"GET\",\"url\":\"https://api.example.com/payments/{paymentId}\"}]}}}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:collection GET /v3/collections/?workspace=ws-contract",
+      "requestQuery": "workspace=ws-contract",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":[{\"id\":\"12345678-col-smoke\"}]}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:collection GET /v3/collections/12345678-col-smoke/items/",
+      "requestQuery": "",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":[{\"id\":\"12345678-item-old-0001\",\"$kind\":\"http-request\",\"name\":\"stale request\"}]}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:collection DELETE /v3/collections/12345678-col-smoke/items/12345678-item-old-0001",
+      "requestQuery": "",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":{}}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:collection GET /v3/collections/12345678-col-smoke/items/",
+      "requestQuery": "",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":[]}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:collection GET /v3/collections/12345678-col-smoke/items/",
+      "requestQuery": "",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":[]}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:collection POST /v3/collections/12345678-col-smoke/items/ #body-sha256=32337d0018bbe0334e3ab02dc3a6356a1ac69b17e93068ce2b68ffeb2577592f",
+      "requestQuery": "",
+      "requestBodySha256": "32337d0018bbe0334e3ab02dc3a6356a1ac69b17e93068ce2b68ffeb2577592f",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":{\"id\":\"12345678-item-new-0006\"}}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:collection PATCH /v3/collections/12345678-col-smoke/items/12345678-item-new-0006 #body-sha256=4bc3b5b584e82a7a13afd8dfa6cf2503839296cb69205e91d9fbe6ec138fa3be",
+      "requestQuery": "",
+      "requestBodySha256": "4bc3b5b584e82a7a13afd8dfa6cf2503839296cb69205e91d9fbe6ec138fa3be",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":{}}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:collection POST /v3/collections/12345678-col-smoke/items/ #body-sha256=80aa5cbd78cd587459433828ff6b80aee0a0a028cb41b0b566d25809fab0aca7",
+      "requestQuery": "",
+      "requestBodySha256": "80aa5cbd78cd587459433828ff6b80aee0a0a028cb41b0b566d25809fab0aca7",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":{\"id\":\"12345678-item-new-0007\"}}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:collection PATCH /v3/collections/12345678-col-smoke/items/12345678-item-new-0007 #body-sha256=090585d50c9e13cc3ee19a3f669a13583572ec69186d0207b764367baf9cc2ae",
+      "requestQuery": "",
+      "requestBodySha256": "090585d50c9e13cc3ee19a3f669a13583572ec69186d0207b764367baf9cc2ae",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":{}}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:collection PATCH /v3/collections/col-smoke #body-sha256=d681f5944592b680e05fb4350ae717cefe5c9f8b4cc4abdfdccf1bc549291a8a",
+      "requestQuery": "",
+      "requestBodySha256": "d681f5944592b680e05fb4350ae717cefe5c9f8b4cc4abdfdccf1bc549291a8a",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":{}}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:collection GET /v3/collections/col-smoke/export",
+      "requestQuery": "",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":{\"collection\":{\"id\":\"12345678-col-smoke\",\"name\":\"payments Smoke Tests\",\"$kind\":\"collection\",\"variables\":[{\"key\":\"baseUrl\",\"value\":\"https://api.example.com\"}],\"items\":[{\"id\":\"12345678-item-new-0006\",\"$kind\":\"http-request\",\"name\":\"Create a payment\",\"method\":\"POST\",\"url\":\"https://api.example.com/payments\",\"headers\":[],\"body\":{\"type\":\"json\",\"content\":\"{\\n  \\\"amount\\\": 100\\n}\"},\"scripts\":[{\"type\":\"beforeRequest\",\"code\":\"// [Smoke Flow] Auto-generated prerequest script for createPayment\\n// No explicit prerequest bindings were defined for this step.\",\"language\":\"text/javascript\"},{\"type\":\"afterResponse\",\"code\":\"// [Smoke Flow] Auto-generated test script for createPayment\\n\\npm.test('Status code is successful (2xx)', function () {\\n  pm.response.to.be.success;\\n});\\n\\npm.test('Response time is acceptable', function () {\\n  const threshold = parseInt(pm.environment.get('RESPONSE_TIME_THRESHOLD') || '2000', 10);\\n  pm.expect(pm.response.responseTime).to.be.below(threshold);\\n});\\n\\npm.test('Response body is not empty', function () {\\n  if (pm.response.code !== 204) {\\n    pm.expect(pm.response.text().length).to.be.above(0);\\n  }\\n});\\n\\nfunction resolveJsonPath(root, jsonPath) {\\n  if (!jsonPath || !jsonPath.startsWith('$.')) return undefined;\\n  const segments = jsonPath.slice(2).replace(/\\\\[(\\\\d+)\\\\]/g, '.$1').split('.').filter(Boolean);\\n  let cursor = root;\\n  for (const segment of segments) {\\n    if (cursor === null || cursor === undefined) return undefined;\\n    cursor = cursor[segment];\\n  }\\n  return cursor;\\n}\\n\\nlet jsonBody;\\ntry {\\n  jsonBody = pm.response.json();\\n} catch {\\n  jsonBody = undefined;\\n}\\n\\npm.test(\\\"Extract createPayment.paymentId\\\", function () {\\n  const value = resolveJsonPath(jsonBody, \\\"$.id\\\");\\n  pm.expect(value, 'expected extracted value to exist').to.not.be.undefined;\\n  pm.collectionVariables.set(\\\"createPayment.paymentId\\\", typeof value === 'string' ? value : JSON.stringify(value));\\n});\",\"language\":\"text/javascript\"}]},{\"id\":\"12345678-item-new-0007\",\"$kind\":\"http-request\",\"name\":\"Read the payment back\",\"method\":\"GET\",\"url\":\"https://api.example.com/payments/{{paymentId}}\",\"headers\":[],\"scripts\":[{\"type\":\"beforeRequest\",\"code\":\"// [Smoke Flow] Auto-generated prerequest script for getPayment\\npm.collectionVariables.set(\\\"paymentId\\\", pm.collectionVariables.get(\\\"createPayment.paymentId\\\") || '');\",\"language\":\"text/javascript\"},{\"type\":\"afterResponse\",\"code\":\"// [Smoke Flow] Auto-generated test script for getPayment\\n\\npm.test('Status code is successful (2xx)', function () {\\n  pm.response.to.be.success;\\n});\\n\\npm.test('Response time is acceptable', function () {\\n  const threshold = parseInt(pm.environment.get('RESPONSE_TIME_THRESHOLD') || '2000', 10);\\n  pm.expect(pm.response.responseTime).to.be.below(threshold);\\n});\\n\\npm.test('Response body is not empty', function () {\\n  if (pm.response.code !== 204) {\\n    pm.expect(pm.response.text().length).to.be.above(0);\\n  }\\n});\\n\",\"language\":\"text/javascript\"}]}]}}}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:collection GET /v3/collections/col-smoke/export",
+      "requestQuery": "",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":{\"collection\":{\"id\":\"12345678-col-smoke\",\"name\":\"payments Smoke Tests\",\"$kind\":\"collection\",\"variables\":[{\"key\":\"baseUrl\",\"value\":\"https://api.example.com\"}],\"items\":[{\"id\":\"12345678-item-new-0006\",\"$kind\":\"http-request\",\"name\":\"Create a payment\",\"method\":\"POST\",\"url\":\"https://api.example.com/payments\",\"headers\":[],\"body\":{\"type\":\"json\",\"content\":\"{\\n  \\\"amount\\\": 100\\n}\"},\"scripts\":[{\"type\":\"beforeRequest\",\"code\":\"// [Smoke Flow] Auto-generated prerequest script for createPayment\\n// No explicit prerequest bindings were defined for this step.\",\"language\":\"text/javascript\"},{\"type\":\"afterResponse\",\"code\":\"// [Smoke Flow] Auto-generated test script for createPayment\\n\\npm.test('Status code is successful (2xx)', function () {\\n  pm.response.to.be.success;\\n});\\n\\npm.test('Response time is acceptable', function () {\\n  const threshold = parseInt(pm.environment.get('RESPONSE_TIME_THRESHOLD') || '2000', 10);\\n  pm.expect(pm.response.responseTime).to.be.below(threshold);\\n});\\n\\npm.test('Response body is not empty', function () {\\n  if (pm.response.code !== 204) {\\n    pm.expect(pm.response.text().length).to.be.above(0);\\n  }\\n});\\n\\nfunction resolveJsonPath(root, jsonPath) {\\n  if (!jsonPath || !jsonPath.startsWith('$.')) return undefined;\\n  const segments = jsonPath.slice(2).replace(/\\\\[(\\\\d+)\\\\]/g, '.$1').split('.').filter(Boolean);\\n  let cursor = root;\\n  for (const segment of segments) {\\n    if (cursor === null || cursor === undefined) return undefined;\\n    cursor = cursor[segment];\\n  }\\n  return cursor;\\n}\\n\\nlet jsonBody;\\ntry {\\n  jsonBody = pm.response.json();\\n} catch {\\n  jsonBody = undefined;\\n}\\n\\npm.test(\\\"Extract createPayment.paymentId\\\", function () {\\n  const value = resolveJsonPath(jsonBody, \\\"$.id\\\");\\n  pm.expect(value, 'expected extracted value to exist').to.not.be.undefined;\\n  pm.collectionVariables.set(\\\"createPayment.paymentId\\\", typeof value === 'string' ? value : JSON.stringify(value));\\n});\",\"language\":\"text/javascript\"}]},{\"id\":\"12345678-item-new-0007\",\"$kind\":\"http-request\",\"name\":\"Read the payment back\",\"method\":\"GET\",\"url\":\"https://api.example.com/payments/{{paymentId}}\",\"headers\":[],\"scripts\":[{\"type\":\"beforeRequest\",\"code\":\"// [Smoke Flow] Auto-generated prerequest script for getPayment\\npm.collectionVariables.set(\\\"paymentId\\\", pm.collectionVariables.get(\\\"createPayment.paymentId\\\") || '');\",\"language\":\"text/javascript\"},{\"type\":\"afterResponse\",\"code\":\"// [Smoke Flow] Auto-generated test script for getPayment\\n\\npm.test('Status code is successful (2xx)', function () {\\n  pm.response.to.be.success;\\n});\\n\\npm.test('Response time is acceptable', function () {\\n  const threshold = parseInt(pm.environment.get('RESPONSE_TIME_THRESHOLD') || '2000', 10);\\n  pm.expect(pm.response.responseTime).to.be.below(threshold);\\n});\\n\\npm.test('Response body is not empty', function () {\\n  if (pm.response.code !== 204) {\\n    pm.expect(pm.response.text().length).to.be.above(0);\\n  }\\n});\\n\",\"language\":\"text/javascript\"}]}]}}}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:collection GET /v3/collections/col-smoke/export",
+      "requestQuery": "",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":{\"collection\":{\"id\":\"12345678-col-smoke\",\"name\":\"payments Smoke Tests\",\"$kind\":\"collection\",\"variables\":[{\"key\":\"baseUrl\",\"value\":\"https://api.example.com\"}],\"items\":[{\"id\":\"12345678-item-new-0006\",\"$kind\":\"http-request\",\"name\":\"Create a payment\",\"method\":\"POST\",\"url\":\"https://api.example.com/payments\",\"headers\":[],\"body\":{\"type\":\"json\",\"content\":\"{\\n  \\\"amount\\\": 100\\n}\"},\"scripts\":[{\"type\":\"beforeRequest\",\"code\":\"// [Smoke Flow] Auto-generated prerequest script for createPayment\\n// No explicit prerequest bindings were defined for this step.\",\"language\":\"text/javascript\"},{\"type\":\"afterResponse\",\"code\":\"// [Smoke Flow] Auto-generated test script for createPayment\\n\\npm.test('Status code is successful (2xx)', function () {\\n  pm.response.to.be.success;\\n});\\n\\npm.test('Response time is acceptable', function () {\\n  const threshold = parseInt(pm.environment.get('RESPONSE_TIME_THRESHOLD') || '2000', 10);\\n  pm.expect(pm.response.responseTime).to.be.below(threshold);\\n});\\n\\npm.test('Response body is not empty', function () {\\n  if (pm.response.code !== 204) {\\n    pm.expect(pm.response.text().length).to.be.above(0);\\n  }\\n});\\n\\nfunction resolveJsonPath(root, jsonPath) {\\n  if (!jsonPath || !jsonPath.startsWith('$.')) return undefined;\\n  const segments = jsonPath.slice(2).replace(/\\\\[(\\\\d+)\\\\]/g, '.$1').split('.').filter(Boolean);\\n  let cursor = root;\\n  for (const segment of segments) {\\n    if (cursor === null || cursor === undefined) return undefined;\\n    cursor = cursor[segment];\\n  }\\n  return cursor;\\n}\\n\\nlet jsonBody;\\ntry {\\n  jsonBody = pm.response.json();\\n} catch {\\n  jsonBody = undefined;\\n}\\n\\npm.test(\\\"Extract createPayment.paymentId\\\", function () {\\n  const value = resolveJsonPath(jsonBody, \\\"$.id\\\");\\n  pm.expect(value, 'expected extracted value to exist').to.not.be.undefined;\\n  pm.collectionVariables.set(\\\"createPayment.paymentId\\\", typeof value === 'string' ? value : JSON.stringify(value));\\n});\",\"language\":\"text/javascript\"}]},{\"id\":\"12345678-item-new-0007\",\"$kind\":\"http-request\",\"name\":\"Read the payment back\",\"method\":\"GET\",\"url\":\"https://api.example.com/payments/{{paymentId}}\",\"headers\":[],\"scripts\":[{\"type\":\"beforeRequest\",\"code\":\"// [Smoke Flow] Auto-generated prerequest script for getPayment\\npm.collectionVariables.set(\\\"paymentId\\\", pm.collectionVariables.get(\\\"createPayment.paymentId\\\") || '');\",\"language\":\"text/javascript\"},{\"type\":\"afterResponse\",\"code\":\"// [Smoke Flow] Auto-generated test script for getPayment\\n\\npm.test('Status code is successful (2xx)', function () {\\n  pm.response.to.be.success;\\n});\\n\\npm.test('Response time is acceptable', function () {\\n  const threshold = parseInt(pm.environment.get('RESPONSE_TIME_THRESHOLD') || '2000', 10);\\n  pm.expect(pm.response.responseTime).to.be.below(threshold);\\n});\\n\\npm.test('Response body is not empty', function () {\\n  if (pm.response.code !== 204) {\\n    pm.expect(pm.response.text().length).to.be.above(0);\\n  }\\n});\\n\",\"language\":\"text/javascript\"}]}]}}}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "key": "proxy:collection DELETE /v3/collections/col-temp-0002",
+      "requestQuery": "",
+      "status": 200,
+      "statusText": "",
+      "body": "{\"data\":{}}",
+      "responseHeaders": {
+        "content-type": "application/json"
+      }
+    }
+  ],
+  "recordedAt": "2000-01-01T00:00:00.000Z"
+}
