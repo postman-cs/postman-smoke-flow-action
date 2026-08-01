@@ -196,6 +196,7 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
   const endpoints = applyEndpointOverrides(
     {
       apiBaseUrl: resolvePostmanApiBaseUrl(getInput('postman-region', env)),
+      bifrostBaseUrl: 'https://bifrost-premium-https-v4.gw.postman.com',
       iapubBaseUrl: resolvePostmanIapubBaseUrl(getInput('postman-region', env))
     },
     env
@@ -214,6 +215,7 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
     ),
     postmanApiKey: getInput('postman-api-key', env) || env.POSTMAN_API_KEY || '',
     postmanApiBaseUrl: endpoints.apiBaseUrl,
+    postmanBifrostBaseUrl: endpoints.bifrostBaseUrl,
     postmanIapubBaseUrl: endpoints.iapubBaseUrl,
     authConfig: parseAuthConfig(getInput('auth-config-json', env)),
     // Opt-in provider selection. The legacy boolean input is still honoured
@@ -893,6 +895,7 @@ function createSmokeClient(
   const workspaceId = String(inputs.workspaceId ?? '').trim();
   return new PostmanGatewaySmokeClient({
     tokenProvider: provider,
+    bifrostBaseUrl: inputs.postmanBifrostBaseUrl,
     ...resolveGatewayTeamContext(inputs.teamId),
     ...(workspaceId ? { workspaceId } : {}),
     runIdentity: buildSmokeRunIdentity(env),

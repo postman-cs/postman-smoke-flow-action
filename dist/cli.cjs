@@ -40187,6 +40187,7 @@ var EMULATOR_PROFILE_ENV = "POSTMAN_TEST_EMULATOR_PROFILE";
 var EMULATOR_PROFILE_NAME = "emulator";
 var ENDPOINT_OVERRIDE_ENV = {
   apiBaseUrl: "POSTMAN_TEST_API_BASE_URL",
+  bifrostBaseUrl: "POSTMAN_TEST_BIFROST_BASE_URL",
   iapubBaseUrl: "POSTMAN_TEST_IAPUB_BASE_URL"
 };
 var OVERRIDE_FIELDS = Object.keys(ENDPOINT_OVERRIDE_ENV);
@@ -41217,6 +41218,7 @@ function readActionInputs(env = process.env) {
   const endpoints = applyEndpointOverrides(
     {
       apiBaseUrl: resolvePostmanApiBaseUrl(getInput2("postman-region", env)),
+      bifrostBaseUrl: "https://bifrost-premium-https-v4.gw.postman.com",
       iapubBaseUrl: resolvePostmanIapubBaseUrl(getInput2("postman-region", env))
     },
     env
@@ -41235,6 +41237,7 @@ function readActionInputs(env = process.env) {
     ),
     postmanApiKey: getInput2("postman-api-key", env) || env.POSTMAN_API_KEY || "",
     postmanApiBaseUrl: endpoints.apiBaseUrl,
+    postmanBifrostBaseUrl: endpoints.bifrostBaseUrl,
     postmanIapubBaseUrl: endpoints.iapubBaseUrl,
     authConfig: parseAuthConfig(getInput2("auth-config-json", env)),
     // Opt-in provider selection. The legacy boolean input is still honoured
@@ -41773,6 +41776,7 @@ function createSmokeClient(inputs, actionCore, env = process.env) {
   const workspaceId = String(inputs.workspaceId ?? "").trim();
   return new PostmanGatewaySmokeClient({
     tokenProvider: provider,
+    bifrostBaseUrl: inputs.postmanBifrostBaseUrl,
     ...resolveGatewayTeamContext(inputs.teamId),
     ...workspaceId ? { workspaceId } : {},
     runIdentity: buildSmokeRunIdentity(env),

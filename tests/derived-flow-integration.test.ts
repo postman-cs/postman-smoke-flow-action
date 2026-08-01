@@ -104,6 +104,7 @@ function derivedInputs(tempDir: string, overrides: Partial<ActionInputs> = {}): 
     flowAllowDelete: false,
     postmanApiKey: 'PMAK-123',
     postmanApiBaseUrl: 'https://api.getpostman.com',
+    postmanBifrostBaseUrl: 'https://bifrost-premium-https-v4.gw.postman.com',
     postmanIapubBaseUrl: 'https://iapub.postman.co',
     secretsResolverProvider: 'aws',
     specPath: 'openapi.yaml',
