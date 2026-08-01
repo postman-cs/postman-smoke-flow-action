@@ -36,7 +36,7 @@ const tempDirs: string[] = [];
 
 const EXPECTED_PACKAGE_NAME = '@postman-cse/onboarding-smoke-flow';
 const EXPECTED_AUTOMATION_CORE_PACKAGE = '@postman-cse/automation-core';
-const AUTOMATION_CORE_WORKSPACE_ROOT = path.resolve(repoRoot, '../../../automation-telemetry-core');
+const AUTOMATION_CORE_WORKSPACE_ROOT = path.resolve(repoRoot, '../../../automation-core');
 const AUTOMATION_CORE_INSTALLED_ROOT = path.join(
   repoRoot,
   'node_modules',
