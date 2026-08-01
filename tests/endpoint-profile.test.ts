@@ -14,11 +14,13 @@ function armed(overrides: Record<string, string>): Record<string, string | undef
 
 const COMPLETE_OVERRIDES = {
   [ENDPOINT_OVERRIDE_ENV.apiBaseUrl]: 'http://127.0.0.1:8081/api',
+  [ENDPOINT_OVERRIDE_ENV.bifrostBaseUrl]: 'http://127.0.0.1:8082/bifrost',
   [ENDPOINT_OVERRIDE_ENV.iapubBaseUrl]: 'http://127.0.0.1:8083/iapub'
 };
 
 const LIVE = {
   apiBaseUrl: 'https://api.getpostman.com',
+  bifrostBaseUrl: 'https://bifrost-premium-https-v4.gw.postman.com',
   iapubBaseUrl: 'https://iapub.postman.co'
 };
 
@@ -45,6 +47,7 @@ describe('smoke-flow emulator endpoint overrides', () => {
   it('atomically redirects both runtime hosts', () => {
     expect(applyEndpointOverrides(LIVE, armed(COMPLETE_OVERRIDES))).toEqual({
       apiBaseUrl: 'http://127.0.0.1:8081/api',
+      bifrostBaseUrl: 'http://127.0.0.1:8082/bifrost',
       iapubBaseUrl: 'http://127.0.0.1:8083/iapub'
     });
   });
@@ -64,6 +67,7 @@ describe('smoke-flow emulator endpoint overrides', () => {
     );
     expect(applyEndpointOverrides(LIVE, env)).toEqual({
       apiBaseUrl: 'http://127.0.0.1:8081/api',
+      bifrostBaseUrl: 'http://127.0.0.1:8082/bifrost',
       iapubBaseUrl: 'http://127.0.0.1:8083/iapub'
     });
   });

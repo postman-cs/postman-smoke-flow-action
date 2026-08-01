@@ -49,6 +49,7 @@ export type ActionInputs = {
   flowAllowDelete: boolean;
   postmanApiKey: string;
   postmanApiBaseUrl: string;
+  postmanBifrostBaseUrl: string;
   postmanIapubBaseUrl: string;
   authConfig?: SmokeAuthConfig;
   secretsResolverProvider: SecretsResolverProvider;

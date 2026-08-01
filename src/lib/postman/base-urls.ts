@@ -65,13 +65,15 @@ export function resolvePostmanEndpointProfile(
  * env: absent EMULATOR_PROFILE_ENV preserves live hosts, and any override env
  * set while unarmed throws instead of being silently ignored. When armed,
  * EVERY overridable host must be supplied — the emulator profile never falls
- * back to a live host. Smoke-flow's runtime reaches exactly two backends (the
- * public API and iapub), so those are the two overridable hosts.
+ * back to a live host. Smoke-flow's runtime reaches exactly three backends
+ * (the public API, the Bifrost gateway, and iapub), so those are the three
+ * overridable hosts.
  */
 export const EMULATOR_PROFILE_ENV = 'POSTMAN_TEST_EMULATOR_PROFILE';
 export const EMULATOR_PROFILE_NAME = 'emulator';
 export const ENDPOINT_OVERRIDE_ENV = {
   apiBaseUrl: 'POSTMAN_TEST_API_BASE_URL',
+  bifrostBaseUrl: 'POSTMAN_TEST_BIFROST_BASE_URL',
   iapubBaseUrl: 'POSTMAN_TEST_IAPUB_BASE_URL'
 } as const;
 
@@ -121,12 +123,13 @@ function assertNoUnarmedOverrides(env: EndpointEnvironment): void {
 
 export interface OverridableEndpoints {
   apiBaseUrl: string;
+  bifrostBaseUrl: string;
   iapubBaseUrl: string;
 }
 
 /**
- * Resolve the two runtime hosts with the emulator override applied when armed.
- * `live` carries the region-resolved live defaults from the caller.
+ * Resolve the three runtime hosts with the emulator override applied when
+ * armed. `live` carries the region-resolved live defaults from the caller.
  */
 export function applyEndpointOverrides(
   live: OverridableEndpoints,
