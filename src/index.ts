@@ -23,6 +23,7 @@ import {
 import type { SmokeCollectionClient } from './postman/smoke-client-contract.js';
 import { PostmanGatewaySmokeClient } from './postman/postman-gateway-smoke-client.js';
 import { AccessTokenProvider, mintAccessTokenIfNeeded } from './lib/postman/token-provider.js';
+import { applyEndpointOverrides } from './lib/postman/base-urls.js';
 import {
   getMemoizedSessionIdentity,
   runCredentialPreflight
@@ -192,6 +193,13 @@ function parseAuthConfig(value: string): SmokeAuthConfig | undefined {
 }
 
 export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionInputs {
+  const endpoints = applyEndpointOverrides(
+    {
+      apiBaseUrl: resolvePostmanApiBaseUrl(getInput('postman-region', env)),
+      iapubBaseUrl: resolvePostmanIapubBaseUrl(getInput('postman-region', env))
+    },
+    env
+  );
   return {
     projectName: getInput('project-name', env),
     workspaceId: getInput('workspace-id', env),
@@ -205,8 +213,8 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
       false
     ),
     postmanApiKey: getInput('postman-api-key', env) || env.POSTMAN_API_KEY || '',
-    postmanApiBaseUrl: resolvePostmanApiBaseUrl(getInput('postman-region', env)),
-    postmanIapubBaseUrl: resolvePostmanIapubBaseUrl(getInput('postman-region', env)),
+    postmanApiBaseUrl: endpoints.apiBaseUrl,
+    postmanIapubBaseUrl: endpoints.iapubBaseUrl,
     authConfig: parseAuthConfig(getInput('auth-config-json', env)),
     // Opt-in provider selection. The legacy boolean input is still honoured
     // (`true` -> the historical AWS helper) so existing callers keep working.

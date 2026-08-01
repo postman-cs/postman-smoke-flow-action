@@ -40183,6 +40183,69 @@ var POSTMAN_ENDPOINT_PROFILES = {
     iapubBaseUrl: "https://iapub.postman.co"
   }
 };
+var EMULATOR_PROFILE_ENV = "POSTMAN_TEST_EMULATOR_PROFILE";
+var EMULATOR_PROFILE_NAME = "emulator";
+var ENDPOINT_OVERRIDE_ENV = {
+  apiBaseUrl: "POSTMAN_TEST_API_BASE_URL",
+  iapubBaseUrl: "POSTMAN_TEST_IAPUB_BASE_URL"
+};
+var OVERRIDE_FIELDS = Object.keys(ENDPOINT_OVERRIDE_ENV);
+function readEndpointEnv(env, name) {
+  return String(env[name] ?? "").trim();
+}
+function normalizeEndpointOverride(envName, raw) {
+  const invalid = (reason) => new Error(`ENDPOINT_PROFILE_OVERRIDE_INVALID: ${envName} ${reason}`);
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw invalid("must be an absolute http(s) URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw invalid(`must use http or https, got "${parsed.protocol}"`);
+  }
+  if (parsed.username || parsed.password) {
+    throw invalid("must not embed credentials");
+  }
+  if (parsed.search || parsed.hash) {
+    throw invalid("must not carry a query string or fragment");
+  }
+  return `${parsed.origin}${parsed.pathname}`.replace(/\/+$/, "");
+}
+function assertNoUnarmedOverrides(env) {
+  const set = OVERRIDE_FIELDS.map((field) => ENDPOINT_OVERRIDE_ENV[field]).filter(
+    (name) => Object.hasOwn(env, name)
+  );
+  if (set.length > 0) {
+    throw new Error(
+      `ENDPOINT_PROFILE_NOT_ARMED: ${set.join(", ")} set without ${EMULATOR_PROFILE_ENV}=${EMULATOR_PROFILE_NAME}; endpoint overrides are ignored unless the emulator profile is armed, so this would have hit live hosts.`
+    );
+  }
+}
+function applyEndpointOverrides(live, env = process.env) {
+  const profileName = readEndpointEnv(env, EMULATOR_PROFILE_ENV);
+  if (!profileName) {
+    assertNoUnarmedOverrides(env);
+    return live;
+  }
+  if (profileName !== EMULATOR_PROFILE_NAME) {
+    throw new Error(
+      `ENDPOINT_PROFILE_UNKNOWN: ${EMULATOR_PROFILE_ENV}="${profileName}"; supported values: ${EMULATOR_PROFILE_NAME}`
+    );
+  }
+  const resolved = {};
+  for (const field of OVERRIDE_FIELDS) {
+    const envName = ENDPOINT_OVERRIDE_ENV[field];
+    const raw = readEndpointEnv(env, envName);
+    if (!raw) {
+      throw new Error(
+        `ENDPOINT_PROFILE_OVERRIDE_MISSING: ${envName} is required when ${EMULATOR_PROFILE_ENV}=${EMULATOR_PROFILE_NAME}; the emulator profile never falls back to a live host.`
+      );
+    }
+    resolved[field] = normalizeEndpointOverride(envName, raw);
+  }
+  return { ...live, ...resolved };
+}
 
 // src/lib/postman/pmak-diagnostics.ts
 var memo = /* @__PURE__ */ new Map();
@@ -41151,6 +41214,13 @@ function parseAuthConfig(value) {
   throw new Error("Invalid auth-config-json: supported auth types are oauth2 and apiKey.");
 }
 function readActionInputs(env = process.env) {
+  const endpoints = applyEndpointOverrides(
+    {
+      apiBaseUrl: resolvePostmanApiBaseUrl(getInput2("postman-region", env)),
+      iapubBaseUrl: resolvePostmanIapubBaseUrl(getInput2("postman-region", env))
+    },
+    env
+  );
   return {
     projectName: getInput2("project-name", env),
     workspaceId: getInput2("workspace-id", env),
@@ -41164,8 +41234,8 @@ function readActionInputs(env = process.env) {
       false
     ),
     postmanApiKey: getInput2("postman-api-key", env) || env.POSTMAN_API_KEY || "",
-    postmanApiBaseUrl: resolvePostmanApiBaseUrl(getInput2("postman-region", env)),
-    postmanIapubBaseUrl: resolvePostmanIapubBaseUrl(getInput2("postman-region", env)),
+    postmanApiBaseUrl: endpoints.apiBaseUrl,
+    postmanIapubBaseUrl: endpoints.iapubBaseUrl,
     authConfig: parseAuthConfig(getInput2("auth-config-json", env)),
     // Opt-in provider selection. The legacy boolean input is still honoured
     // (`true` -> the historical AWS helper) so existing callers keep working.
