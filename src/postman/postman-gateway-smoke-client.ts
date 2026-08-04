@@ -3,6 +3,11 @@ import { summarizeError } from '../lib/logging.js';
 import type { AccessTokenProvider } from '../lib/postman/token-provider.js';
 import type { PostmanAppVersionProvider } from '../lib/postman/app-version.js';
 import { createSecretMasker, type SecretMasker } from '../lib/secrets.js';
+import {
+  isBareCollectionUuid,
+  isFullPublicCollectionUid,
+  normalizeCollectionModelIdentity
+} from './collection-model-identity.js';
 
 type JsonRecord = Record<string, unknown>;
 type ParentRef = { id: string; $kind: 'collection' };
@@ -19,24 +24,9 @@ function asArray(value: unknown): JsonRecord[] {
   return Array.isArray(value) ? value.map(asRecord).filter((v): v is JsonRecord => Boolean(v)) : [];
 }
 
-/**
- * Collection ROOT routes (GET/PATCH/DELETE `/v3/collections/:id`, `/export`)
- * accept the bare model id. Collection ITEMS routes
- * (`/v3/collections/:id/items/...`) must use the FULL public uid
- * (`<owner>-<uuid>`): bare model ids intermittently 403 on Bifrost
- * (live-proven 2026-07-14 on org and non-org sandboxes).
- */
-const SMOKE_BARE_UUID_RE =
-  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-
+/** Bare model id for export/delete/sync routes that retain bare-model identity. */
 function bareModelId(uid: string): string {
-  const u = String(uid ?? '').trim();
-  // A bare UUID already IS the model id, and it contains hyphens — splitting on
-  // the first hyphen would corrupt it (dropping its first segment). Guard that
-  // case; for a full `<owner>-<uuid>` public uid the owner is a single hyphenless
-  // segment, so stripping up to the first hyphen yields the uuid.
-  if (SMOKE_BARE_UUID_RE.test(u)) return u;
-  return u.includes('-') ? u.slice(u.indexOf('-') + 1) : u;
+  return normalizeCollectionModelIdentity(uid);
 }
 
 /** Collection id for ITEMS routes. Prefer the full public uid. */
@@ -302,6 +292,8 @@ export class PostmanGatewaySmokeClient {
   private static readonly GENERATION_POLL_ATTEMPTS = 90;
   private static readonly GENERATION_POLL_DELAY_MS = 2000;
   private static readonly GENERATION_POLL_TIMEOUT_MS = 180000;
+  /** Bounded inventory polling when a bare model id must become ROOT-addressable. */
+  private static readonly ROOT_UID_RESOLVE_DELAYS_MS = [250, 500, 750, 1000, 1250] as const;
 
   private readonly gateway: AccessTokenGatewayClient;
   private readonly sleepImpl: (ms: number) => Promise<void>;
@@ -510,15 +502,15 @@ export class PostmanGatewaySmokeClient {
   }
 
   async updateCollection(collectionUid: string, collection: unknown): Promise<void> {
-    // Items routes need the full public uid; root PATCH still accepts bare.
-    const itemsCid = collectionItemsId(collectionUid);
-    const rootCid = bareModelId(collectionUid);
     const desired = asRecord(collection);
     if (!desired) {
       throw new Error(`updateCollection: invalid collection payload for ${collectionUid}`);
     }
 
-    await this.assertCanonicalBelongsToWorkspace(collectionUid);
+    const wireUid = await this.resolveWireCollectionUid(collectionUid);
+    await this.assertCanonicalBelongsToWorkspace(wireUid);
+    const itemsCid = collectionItemsId(wireUid);
+    const rootCid = this.collectionRootId(wireUid);
 
     await this.reconcileItemsRecursive(itemsCid, desired.item, {
       id: itemsCid,
@@ -579,26 +571,116 @@ export class PostmanGatewaySmokeClient {
     }
   }
 
+  private async listWorkspaceCollections(): Promise<Array<{ id: string; name: string }>> {
+    if (!this.workspaceId) return [];
+    return this.listWorkspaceCollectionsFor(this.workspaceId);
+  }
+
   private async assertCanonicalBelongsToWorkspace(collectionUid: string): Promise<void> {
     if (!this.workspaceId) {
       return;
     }
-    const listed = await this.gateway.requestJson<JsonRecord>({
-      service: 'collection',
-      method: 'get',
-      path: `/v3/collections/?workspace=${encodeURIComponent(this.workspaceId)}`
-    });
-    const collections = asArray(asRecord(listed)?.data ?? listed?.data);
-    const bare = bareModelId(collectionUid);
+    const collections = await this.listWorkspaceCollections();
+    const targetIdentity = normalizeCollectionModelIdentity(collectionUid);
     const found = collections.some((entry) => {
-      const id = String(entry.id ?? entry.uid ?? '').trim();
-      return id === collectionUid || bareModelId(id) === bare;
+      const id = String(entry.id ?? '').trim();
+      return id === collectionUid || normalizeCollectionModelIdentity(id) === targetIdentity;
     });
     if (!found) {
       throw new Error(
         `Canonical collection ${collectionUid} was absent from workspace ${this.workspaceId} collection list; refusing mutate. Pass the workspace that owns the canonical collection, or the matching collection ID.`
       );
     }
+  }
+
+  /**
+   * Collection id for ROOT routes (`GET`/`PATCH /v3/collections/:id`). Preserve
+   * legacy non-UUID aliases, but reject a known bare UUID locally: production
+   * rejects that shape 403, so callers must resolve it through inventory first.
+   */
+  private collectionRootId(uid: string): string {
+    const id = String(uid ?? '').trim();
+    if (isBareCollectionUuid(id)) {
+      throw new Error(
+        'COLLECTION_ROOT_UID_REQUIRED: a bare collection model id cannot address Collection ROOT'
+      );
+    }
+    return id;
+  }
+
+  /**
+   * Resolve the full public uid used by ITEMS and ROOT routes. A ROOT-addressable
+   * input is returned unchanged. A bare model id is polled through workspace
+   * inventory until the owner-prefixed public uid appears.
+   */
+  private async resolveWireCollectionUid(collectionUid: string): Promise<string> {
+    const id = String(collectionUid ?? '').trim();
+    if (!id) {
+      throw new Error('COLLECTION_ROOT_UID_RESOLUTION_FAILED: collection id is required');
+    }
+    if (isFullPublicCollectionUid(id) || !isBareCollectionUuid(id)) {
+      return id;
+    }
+    if (!this.workspaceId) {
+      throw new Error(
+        'COLLECTION_ROOT_UID_RESOLUTION_FAILED: workspace-id is required to resolve a bare collection model id to a ROOT-addressable public uid'
+      );
+    }
+    const resolved = await this.resolveCollectionRootUid(
+      this.workspaceId,
+      id,
+      PostmanGatewaySmokeClient.ROOT_UID_RESOLVE_DELAYS_MS
+    );
+    if (!resolved) {
+      throw new Error(
+        'COLLECTION_ROOT_UID_RESOLUTION_FAILED: collection did not become inventory-visible with a ROOT-addressable public uid'
+      );
+    }
+    return resolved;
+  }
+
+  /**
+   * Resolve a collection's ROOT-addressable id from workspace inventory — the
+   * only surface that carries the numeric owner prefix.
+   */
+  private async resolveCollectionRootUid(
+    workspaceId: string,
+    collectionId: string,
+    delays: readonly number[]
+  ): Promise<string | undefined> {
+    const id = String(collectionId ?? '').trim();
+    if (!id) return undefined;
+    if (!isBareCollectionUuid(id)) return id;
+    const targetIdentity = normalizeCollectionModelIdentity(id);
+    for (let observation = 0; observation <= delays.length; observation += 1) {
+      try {
+        const inventory = await this.listWorkspaceCollectionsFor(workspaceId);
+        const match = inventory.find(
+          (entry) => normalizeCollectionModelIdentity(entry.id) === targetIdentity
+        );
+        if (match?.id && isFullPublicCollectionUid(match.id)) return match.id;
+      } catch {
+        // Inventory unreadable on this observation; spend the remaining budget.
+      }
+      if (observation < delays.length) await this.sleepImpl(delays[observation]!);
+    }
+    return undefined;
+  }
+
+  private async listWorkspaceCollectionsFor(
+    workspaceId: string
+  ): Promise<Array<{ id: string; name: string }>> {
+    const listed = await this.gateway.requestJson<JsonRecord>({
+      service: 'collection',
+      method: 'get',
+      path: `/v3/collections/?workspace=${encodeURIComponent(workspaceId)}`
+    });
+    return asArray(asRecord(listed)?.data ?? listed?.data)
+      .map((entry) => ({
+        id: String(entry.id ?? entry.uid ?? '').trim(),
+        name: String(entry.name ?? entry.title ?? '').trim()
+      }))
+      .filter((entry) => entry.id);
   }
 
   private async clearCollectionAuth(cid: string): Promise<void> {

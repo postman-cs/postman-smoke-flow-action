@@ -35,7 +35,7 @@
       "repeatLast": true
     },
     {
-      "key": "proxy:collection GET /v3/collections/col-smoke/export",
+      "key": "proxy:collection GET /v3/collections/12345678-col-smoke/export",
       "requestQuery": "",
       "status": 200,
       "statusText": "",
@@ -86,7 +86,7 @@
       }
     },
     {
-      "key": "proxy:collection GET /v3/collections/col-temp-0002/export",
+      "key": "proxy:collection GET /v3/collections/12345678-col-temp-0002/export",
       "requestQuery": "",
       "status": 200,
       "statusText": "",
@@ -96,7 +96,7 @@
       }
     },
     {
-      "key": "proxy:collection GET /v3/collections/col-temp-0002/export",
+      "key": "proxy:collection GET /v3/collections/12345678-col-temp-0002/export",
       "requestQuery": "",
       "status": 200,
       "statusText": "",
@@ -200,7 +200,7 @@
       }
     },
     {
-      "key": "proxy:collection PATCH /v3/collections/col-smoke #body-sha256=badda1177fa52e6f82c67ac6407a7815f9a48e1b7046d983ae9857a94b1d4a67",
+      "key": "proxy:collection PATCH /v3/collections/12345678-col-smoke #body-sha256=badda1177fa52e6f82c67ac6407a7815f9a48e1b7046d983ae9857a94b1d4a67",
       "requestQuery": "",
       "requestBodySha256": "badda1177fa52e6f82c67ac6407a7815f9a48e1b7046d983ae9857a94b1d4a67",
       "status": 200,
@@ -211,7 +211,7 @@
       }
     },
     {
-      "key": "proxy:collection GET /v3/collections/col-smoke/export",
+      "key": "proxy:collection GET /v3/collections/12345678-col-smoke/export",
       "requestQuery": "",
       "status": 200,
       "statusText": "",
@@ -221,7 +221,7 @@
       }
     },
     {
-      "key": "proxy:collection GET /v3/collections/col-smoke/export",
+      "key": "proxy:collection GET /v3/collections/12345678-col-smoke/export",
       "requestQuery": "",
       "status": 200,
       "statusText": "",
@@ -231,7 +231,7 @@
       }
     },
     {
-      "key": "proxy:collection GET /v3/collections/col-smoke/export",
+      "key": "proxy:collection GET /v3/collections/12345678-col-smoke/export",
       "requestQuery": "",
       "status": 200,
       "statusText": "",
@@ -241,7 +241,7 @@
       }
     },
     {
-      "key": "proxy:collection DELETE /v3/collections/col-temp-0002",
+      "key": "proxy:collection DELETE /v3/collections/12345678-col-temp-0002",
       "requestQuery": "",
       "status": 200,
       "statusText": "",
