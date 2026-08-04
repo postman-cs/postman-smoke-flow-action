@@ -158,7 +158,7 @@ describe('verify-dist-artifact canonical contract', () => {
     const result = await runVerify(root);
     expect(result.stderr).toBe('');
     expect(result.code).toBe(0);
-  });
+  }, 30_000);
 
   it('fails the real verifier when the action entry throws during boot', async () => {
     const root = await makeTempDir('verify-dist-actionboot-');

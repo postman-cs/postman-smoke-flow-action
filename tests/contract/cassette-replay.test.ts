@@ -57,4 +57,28 @@ describe('contract: smoke-flow cassette replay', () => {
     );
     expect([...services].sort()).toEqual(['proxy:collection', 'proxy:specification']);
   }, 60_000);
+
+  it('does not inherit ambient team input or emit telemetry', async () => {
+    const cassette = applyRepeatableReads(readCassette(SMOKE_FLOW_CASSETTE.name));
+    const replayFetch = createReplayFetch(cassette);
+    const requestedUrls: string[] = [];
+    const teamHeaders: Array<string | null> = [];
+    const fetchImpl = ((input, init) => {
+      requestedUrls.push(String(input));
+      teamHeaders.push(new Headers(init?.headers).get('x-entity-team-id'));
+      return replayFetch(input, init);
+    }) as typeof fetch;
+    vi.stubEnv('INPUT_TEAM_ID', 'ambient-team-must-not-survive');
+    const result = await runContractAction({
+      inputs: SMOKE_FLOW_CASSETTE.inputs,
+      env: SMOKE_FLOW_CASSETTE.env,
+      files: SMOKE_FLOW_CASSETTE.files,
+      fetchImpl
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.outputs['flow-apply-status']).toBe('success');
+    expect(teamHeaders).not.toContain('ambient-team-must-not-survive');
+    expect(requestedUrls.some((url) => url.includes('telemetry'))).toBe(false);
+  }, 60_000);
 });

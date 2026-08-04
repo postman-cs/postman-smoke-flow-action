@@ -57,6 +57,11 @@ export async function runContractAction(options: ContractRunOptions): Promise<Co
   for (const name of NEUTRALIZED_ENV_VARS) {
     vi.stubEnv(name, '');
   }
+  for (const name of Object.keys(process.env).filter((name) => name.startsWith('INPUT_'))) {
+    vi.stubEnv(name, '');
+  }
+  vi.stubEnv('POSTMAN_ACTIONS_TELEMETRY', 'off');
+  vi.stubEnv('DO_NOT_TRACK', '1');
   // Deterministic run identity: buildSmokeRunIdentity appends 4 random bytes,
   // so GITHUB_* parts alone do not pin the temp-collection name. The random
   // suffix comes from node:crypto randomBytes, which respects this stub when

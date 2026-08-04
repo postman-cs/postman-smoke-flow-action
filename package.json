@@ -22,6 +22,7 @@
     "docs:tables": "node scripts/render-action-tables.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "record:cassettes": "RECORD_FAKE_CASSETTES=1 vitest run tests/contract/record-fake-cassettes.test.ts",
     "test": "vitest run && node --test .github/scripts/dispatch-e2e-monitor.test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

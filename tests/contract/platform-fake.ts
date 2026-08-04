@@ -27,6 +27,18 @@ export const NEUTRALIZED_ENV_VARS = [
   'POSTMAN_WORKSPACE_TEAM_ID'
 ];
 
+function fail(message: string): never {
+  throw new Error(`Unmatched smoke-flow platform fake request: ${message}`);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Object.keys(value).every((key) => keys.includes(key));
+}
+
 export function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -175,18 +187,65 @@ export function createPlatform(options: PlatformOptions = {}) {
     const method = String(payload.method ?? 'get').toLowerCase();
     const parsed = new URL(String(payload.path ?? ''), 'https://smoke-flow-fake.invalid');
     const pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+    const pathQuery = Object.fromEntries(parsed.searchParams.entries());
+    const query = payload.query === undefined ? pathQuery : payload.query;
     state.events.push(`proxy:${payload.service} ${method.toUpperCase()} ${pathname}`);
+
+    const requireQuery = (expected: Record<string, string> = {}) => {
+      if (!isRecord(query) || !hasOnlyKeys(query, Object.keys(expected))) {
+        fail(`proxy query for ${payload.service} ${method.toUpperCase()} ${pathname}`);
+      }
+      for (const [key, value] of Object.entries(expected)) {
+        if (query[key] !== value) fail(`proxy query for ${payload.service} ${method.toUpperCase()} ${pathname}`);
+      }
+      if (Object.keys(pathQuery).length > 0 && JSON.stringify(pathQuery) !== JSON.stringify(expected)) {
+        fail(`proxy path query for ${payload.service} ${method.toUpperCase()} ${pathname}`);
+      }
+    };
+    const requireBody = (keys: readonly string[]) => {
+      if (!isRecord(payload.body) || !hasOnlyKeys(payload.body, keys)) {
+        fail(`proxy body for ${payload.service} ${method.toUpperCase()} ${pathname}`);
+      }
+      return payload.body;
+    };
+    const requireNoBody = () => {
+      if (payload.body !== undefined) fail(`proxy body for ${payload.service} ${method.toUpperCase()} ${pathname}`);
+    };
+    const requirePatch = (paths: readonly string[], validOps: Record<string, readonly string[]>) => {
+      if (!Array.isArray(payload.body) || payload.body.length === 0) {
+        fail(`proxy patch body for ${payload.service} ${method.toUpperCase()} ${pathname}`);
+      }
+      for (const op of payload.body) {
+        if (!isRecord(op) || !hasOnlyKeys(op, ['op', 'path', 'value']) ||
+          typeof op.op !== 'string' || typeof op.path !== 'string' || !paths.includes(op.path) ||
+          !validOps[op.path]?.includes(op.op) || (op.op === 'remove' ? 'value' in op : !('value' in op))) {
+          fail(`proxy patch body for ${payload.service} ${method.toUpperCase()} ${pathname}`);
+        }
+        if (op.op !== 'remove' && (
+          (op.path === '/name' || op.path === '/method' || op.path === '/url') && typeof op.value !== 'string' ||
+          (op.path === '/headers' || op.path === '/variables' || op.path === '/scripts') && !Array.isArray(op.value) ||
+          (op.path === '/position' || op.path === '/body' || op.path === '/auth') && !isRecord(op.value)
+        )) fail(`proxy patch body for ${payload.service} ${method.toUpperCase()} ${pathname}`);
+      }
+    };
 
     if (payload.service === 'specification') {
       if (method === 'get' && pathname === `/specifications/${specId}/collections`) {
+        requireQuery();
+        requireNoBody();
         const data = state.generatedCollectionId && !state.tempCollectionDeleted
           ? [{ collection: state.generatedCollectionId }]
           : [];
         return json({ data });
       }
       if (method === 'post' && pathname === `/specifications/${specId}/collections`) {
-        const body = payload.body as { name?: unknown } | undefined;
-        const requestedName = String(body?.name ?? '');
+        requireQuery();
+        const body = requireBody(['name', 'options']);
+        if (typeof body.name !== 'string' || !isRecord(body.options) ||
+          !hasOnlyKeys(body.options, ['requestNameSource']) || body.options.requestNameSource !== 'Fallback') {
+          fail(`proxy body for ${payload.service} ${method.toUpperCase()} ${pathname}`);
+        }
+        const requestedName = body.name;
         const generated: FakeCollection = {
           id: nextId('12345678-col-temp'),
           name: requestedName,
@@ -211,6 +270,8 @@ export function createPlatform(options: PlatformOptions = {}) {
         return json({ data: { taskId: generationTask.id } });
       }
       if (method === 'get' && pathname === '/tasks') {
+        requireQuery({ entityId: specId, entityType: 'specification', type: 'collection-generation' });
+        requireNoBody();
         if (!generationTask) return json({ data: {} });
         generationTask.polls += 1;
         return json({ data: { [generationTask.id]: 'completed' } });
@@ -220,16 +281,22 @@ export function createPlatform(options: PlatformOptions = {}) {
     if (payload.service === 'collection') {
       const exportMatch = pathname.match(/^\/v3\/collections\/([^/]+)\/export$/);
       if (method === 'get' && exportMatch) {
+        requireQuery();
+        requireNoBody();
         const collection = resolveCollection(String(exportMatch[1]));
         if (!collection) return json({ error: 'not found' }, 404);
         return json(exportCollection(collection));
       }
       if (method === 'get' && pathname === '/v3/collections') {
+        requireQuery({ workspace: workspaceId });
+        requireNoBody();
         // Workspace ownership gate: the canonical collection lives in the workspace.
         return json({ data: [{ id: smokeCollectionId }] });
       }
       const itemsMatch = pathname.match(/^\/v3\/collections\/([^/]+)\/items$/);
       if (method === 'get' && itemsMatch) {
+        requireQuery();
+        requireNoBody();
         const collection = resolveCollection(String(itemsMatch[1]));
         if (!collection) return json({ error: 'not found' }, 404);
         return json({
@@ -241,9 +308,16 @@ export function createPlatform(options: PlatformOptions = {}) {
         });
       }
       if (method === 'post' && itemsMatch) {
+        requireQuery();
         const collection = resolveCollection(String(itemsMatch[1]));
         if (!collection) return json({ error: 'not found' }, 404);
-        const body = payload.body as Record<string, unknown>;
+        const body = requireBody(['$kind', 'name', 'method', 'url', 'headers', 'position', 'body', 'auth']);
+        if (body.$kind !== 'http-request' || typeof body.name !== 'string' ||
+          typeof body.method !== 'string' || typeof body.url !== 'string' || !Array.isArray(body.headers) ||
+          !isRecord(body.position) || !('parent' in body.position) ||
+          (body.body !== undefined && !isRecord(body.body)) || (body.auth !== undefined && !isRecord(body.auth))) {
+          fail(`proxy body for ${payload.service} ${method.toUpperCase()} ${pathname}`);
+        }
         const created: FakeItem = {
           id: nextId('12345678-item-new'),
           $kind: String(body.$kind ?? 'http-request'),
@@ -266,6 +340,8 @@ export function createPlatform(options: PlatformOptions = {}) {
           collection.items.get(itemId) ??
           [...collection.items.values()].find((entry) => entry.id.endsWith(itemId));
         if (method === 'get') {
+          requireQuery();
+          requireNoBody();
           if (!item) return json({ error: 'not found' }, 404);
           return json({
             data: {
@@ -281,10 +357,21 @@ export function createPlatform(options: PlatformOptions = {}) {
           });
         }
         if (method === 'delete') {
+          requireQuery();
+          requireNoBody();
           if (item) collection.items.delete(item.id);
           return json({ data: {} });
         }
         if (method === 'patch') {
+          requireQuery();
+          requirePatch(
+            ['/name', '/method', '/url', '/headers', '/position', '/body', '/auth', '/scripts'],
+            {
+              '/name': ['add'], '/method': ['add'], '/url': ['add'], '/headers': ['add'],
+              '/position': ['add'], '/body': ['add', 'remove'], '/auth': ['add', 'remove'],
+              '/scripts': ['add']
+            }
+          );
           if (!item) return json({ error: 'not found' }, 404);
           for (const op of (payload.body as Array<Record<string, unknown>>) ?? []) {
             const path = String(op.path ?? '');
@@ -302,6 +389,11 @@ export function createPlatform(options: PlatformOptions = {}) {
       if (collMatch) {
         const collection = resolveCollection(String(collMatch[1]));
         if (method === 'patch') {
+          requireQuery();
+          requirePatch(
+            ['/name', '/auth', '/variables', '/scripts'],
+            { '/name': ['replace'], '/auth': ['add', 'remove'], '/variables': ['add'], '/scripts': ['add'] }
+          );
           if (!collection) return json({ error: 'not found' }, 404);
           for (const op of (payload.body as Array<Record<string, unknown>>) ?? []) {
             const path = String(op.path ?? '');
@@ -315,6 +407,8 @@ export function createPlatform(options: PlatformOptions = {}) {
           return json({ data: {} });
         }
         if (method === 'delete') {
+          requireQuery();
+          requireNoBody();
           if (collection && collection.id === state.generatedCollectionId) {
             state.tempCollectionDeleted = true;
             collections.delete(collection.id);
@@ -324,9 +418,7 @@ export function createPlatform(options: PlatformOptions = {}) {
       }
     }
 
-    throw new Error(
-      `Unmatched smoke-flow platform fake proxy request: ${payload.service} ${method.toUpperCase()} ${pathname}`
-    );
+    fail(`proxy ${payload.service} ${method.toUpperCase()} ${pathname}`);
   }
 
   function resolveCollection(candidate: string): FakeCollection | undefined {
@@ -352,10 +444,10 @@ export function createPlatform(options: PlatformOptions = {}) {
       state.mintCount += 1;
       return json({ access_token: 'access-token-test' }, 201);
     }
-    if (url === `${hosts.api}/me`) {
+    if (url === `${hosts.api}/me` && method === 'GET') {
       return json({ user: { id: userId, teamId } });
     }
-    if (url === `${hosts.iapub}/api/sessions/current`) {
+    if (url === `${hosts.iapub}/api/sessions/current` && method === 'GET') {
       return json({
         session: { identity: { team: String(teamId) }, consumerType: 'service_account' }
       });
@@ -379,7 +471,7 @@ export function createPlatform(options: PlatformOptions = {}) {
       });
     }
 
-    throw new Error(`Unmatched smoke-flow platform fake request: ${method} ${url}`);
+    fail(`${method} ${url}`);
   }) as typeof fetch;
 
   return { fetch: fetchImpl, state, collections, workspaceId, specId, smokeCollectionId };
