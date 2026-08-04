@@ -6,6 +6,10 @@ import { createSecretMasker } from '../src/lib/secrets.js';
 
 type J = Record<string, unknown>;
 
+const OWNER = '55363555';
+const UUID = '6b9b8a7c-1111-4222-8333-444455556666';
+const FULL = `${OWNER}-${UUID}`;
+
 interface Envelope {
   service: string;
   method: string;
@@ -90,7 +94,7 @@ describe('PostmanGatewaySmokeClient', () => {
       return jsonResponse({});
     });
 
-    const v2 = await client.getCollection('55363555-abc');
+    const v2 = await client.getCollection(FULL);
     expect((v2.info as J).name).toBe('Exp Collection');
     const folder = (v2.item as J[])[0];
     expect(folder.name).toBe('Group');
@@ -121,7 +125,7 @@ describe('PostmanGatewaySmokeClient', () => {
       return jsonResponse({});
     });
 
-    await client.updateCollection('55363555-cid', {
+    await client.updateCollection(FULL, {
       info: { name: '[Smoke] Reshaped' },
       auth: { type: 'bearer', bearer: [{ key: 'token', value: '{{access_token}}', type: 'string' }] },
       variable: [{ key: 'access_token', value: '', type: 'string' }],
@@ -146,7 +150,7 @@ describe('PostmanGatewaySmokeClient', () => {
 
     // delete the pre-existing item (FULL public uid in items path)
     const del = calls.find((c) => c.method === 'delete' && c.path.includes('/items/'));
-    expect(del?.path).toBe('/v3/collections/55363555-cid/items/55363555-old');
+    expect(del?.path).toBe(`/v3/collections/${FULL}/items/55363555-old`);
 
     // create the curated leaf with ROOT-level v3 IR fields (no payload wrapper)
     const create = calls.find((c) => c.method === 'post' && c.path.endsWith('/items/'));
@@ -169,7 +173,7 @@ describe('PostmanGatewaySmokeClient', () => {
     expect(scripts).toEqual(['beforeRequest', 'afterResponse']);
 
     // collection-level patch: name + auth (v3 IR credentials) + variables
-    const collPatch = calls.find((c) => c.method === 'patch' && /\/v3\/collections\/cid$/.test(c.path) && Array.isArray(c.body) && (c.body as J[]).some((o) => o.path === '/name'));
+    const collPatch = calls.find((c) => c.method === 'patch' && c.path === `/v3/collections/${FULL}` && Array.isArray(c.body) && (c.body as J[]).some((o) => o.path === '/name'));
     const ops = collPatch?.body as J[];
     expect(ops.find((o) => o.path === '/name')?.value).toBe('[Smoke] Reshaped');
     const authOp = ops.find((o) => o.path === '/auth')?.value as J;
@@ -177,7 +181,7 @@ describe('PostmanGatewaySmokeClient', () => {
     expect(Array.isArray(authOp.credentials)).toBe(true);
 
     // collection-level OAuth pre-request script in its OWN patch, http: root type
-    const collScriptPatch = calls.find((c) => c.method === 'patch' && /\/v3\/collections\/cid$/.test(c.path) && Array.isArray(c.body) && (c.body as J[]).some((o) => o.path === '/scripts'));
+    const collScriptPatch = calls.find((c) => c.method === 'patch' && c.path === `/v3/collections/${FULL}` && Array.isArray(c.body) && (c.body as J[]).some((o) => o.path === '/scripts'));
     const collScripts = (collScriptPatch?.body as J[])[0].value as J[];
     expect(collScripts[0].type).toBe('http:beforeRequest');
   });
@@ -199,7 +203,7 @@ describe('PostmanGatewaySmokeClient', () => {
       return jsonResponse({});
     });
 
-    await client.updateCollection('55363555-cid', {
+    await client.updateCollection(FULL, {
       info: { name: '[Smoke] Generated' },
       item: [
         {
@@ -241,9 +245,9 @@ describe('PostmanGatewaySmokeClient', () => {
       ['collection', 'v1'],
       ['http-request', 'List widgets']
     ]);
-    expect((createdItems[0]?.position as J).parent).toEqual({ id: '55363555-cid', $kind: 'collection' });
+    expect((createdItems[0]?.position as J).parent).toEqual({ id: FULL, $kind: 'collection' });
     expect((createdItems[1]?.position as J).parent).toEqual({ id: '55363555-folder-health', $kind: 'collection' });
-    expect((createdItems[2]?.position as J).parent).toEqual({ id: '55363555-cid', $kind: 'collection' });
+    expect((createdItems[2]?.position as J).parent).toEqual({ id: FULL, $kind: 'collection' });
     expect((createdItems[3]?.position as J).parent).toEqual({ id: '55363555-folder-v1', $kind: 'collection' });
     expect(createdItems[1]?.url).toBe('{{baseUrl}}/health');
     expect(createdItems[3]?.url).toBe('{{baseUrl}}/v1/widgets');
@@ -258,13 +262,13 @@ describe('PostmanGatewaySmokeClient', () => {
       return jsonResponse({});
     });
 
-    await client.updateCollection('55363555-cid', {
+    await client.updateCollection(FULL, {
       info: { name: '[Smoke] OAuth Runtime' },
       auth: { type: 'noauth' },
       item: []
     });
 
-    const collPatches = calls.filter((c) => c.method === 'patch' && /\/v3\/collections\/cid$/.test(c.path));
+    const collPatches = calls.filter((c) => c.method === 'patch' && c.path === `/v3/collections/${FULL}`);
     expect(collPatches.map((c) => c.body)).toEqual([
       [{ op: 'replace', path: '/name', value: '[Smoke] OAuth Runtime' }],
       [{ op: 'remove', path: '/auth' }]
@@ -291,14 +295,14 @@ describe('PostmanGatewaySmokeClient', () => {
       return jsonResponse({});
     });
 
-    await expect(client.updateCollection('55363555-cid', {
+    await expect(client.updateCollection(FULL, {
       info: { name: '[Smoke] OAuth Runtime' },
       auth: { type: 'noauth' },
       variable: [{ key: 'access_token', value: '', type: 'string' }],
       item: []
     })).resolves.toBeUndefined();
 
-    const collPatches = calls.filter((c) => c.method === 'patch' && /\/v3\/collections\/cid$/.test(c.path));
+    const collPatches = calls.filter((c) => c.method === 'patch' && c.path === `/v3/collections/${FULL}`);
     expect(collPatches.map((c) => c.body)).toEqual([
       [
         { op: 'replace', path: '/name', value: '[Smoke] OAuth Runtime' },
@@ -326,7 +330,7 @@ describe('PostmanGatewaySmokeClient', () => {
     const provider = new AccessTokenProvider({ accessToken: 'tok' });
     const client = new PostmanGatewaySmokeClient({ tokenProvider: provider, fetchImpl, sleepImpl: sleep });
 
-    await client.updateCollection('55363555-cid', {
+    await client.updateCollection(FULL, {
       info: { name: '[Smoke] Reshaped' },
       item: [
         {
@@ -360,7 +364,7 @@ describe('PostmanGatewaySmokeClient', () => {
     const client = new PostmanGatewaySmokeClient({ tokenProvider: provider, fetchImpl, sleepImpl: sleep });
 
     await expect(
-      client.updateCollection('55363555-cid', {
+      client.updateCollection(FULL, {
         info: { name: '[Smoke] Reshaped' },
         item: [
           {
@@ -379,7 +383,7 @@ describe('PostmanGatewaySmokeClient', () => {
     let scriptPatchAttempts = 0;
     const { client } = makeClient((env) => {
       if (env.method === 'get' && env.path.endsWith('/items/')) return jsonResponse({ data: [] });
-      if (env.method === 'patch' && /\/v3\/collections\/cid$/.test(env.path)) {
+      if (env.method === 'patch' && env.path === `/v3/collections/${FULL}`) {
         const ops = env.body as J[];
         if (ops.some((op) => op.path === '/scripts')) {
           scriptPatchAttempts += 1;
@@ -390,7 +394,7 @@ describe('PostmanGatewaySmokeClient', () => {
       return jsonResponse({ data: {} });
     });
 
-    await expect(client.updateCollection('55363555-cid', {
+    await expect(client.updateCollection(FULL, {
       info: { name: '[Smoke] Reshaped' },
       event: [{ listen: 'prerequest', script: { exec: ['console.log("x");'] } }],
       item: []
@@ -405,7 +409,7 @@ describe('PostmanGatewaySmokeClient', () => {
     const { client } = makeClient(
       (env) => {
         if (env.method === 'get' && env.path.endsWith('/items/')) return jsonResponse({ data: [] });
-        if (env.method === 'patch' && /\/v3\/collections\/cid$/.test(env.path)) {
+        if (env.method === 'patch' && env.path === `/v3/collections/${FULL}`) {
           const ops = env.body as J[];
           if (ops.some((op) => op.path === '/scripts')) {
             scriptPatchAttempts += 1;
@@ -426,7 +430,7 @@ describe('PostmanGatewaySmokeClient', () => {
     );
 
     await expect(
-      client.updateCollection('55363555-cid', {
+      client.updateCollection(FULL, {
         info: { name: '[Smoke] Reshaped' },
         event: [{ listen: 'prerequest', script: { exec: ['console.log("x");'] } }],
         item: []
@@ -436,7 +440,7 @@ describe('PostmanGatewaySmokeClient', () => {
     expect(scriptPatchAttempts).toBe(1);
     expect(warning).toHaveBeenCalledTimes(1);
     const warned = String(warning.mock.calls[0]?.[0] ?? '');
-    expect(warned).toContain('Failed collection-level runtime-script patch for collection 55363555-cid');
+    expect(warned).toContain(`Failed collection-level runtime-script patch for collection ${FULL}`);
     expect(warned).toContain('400');
     expect(warned).toContain('Collection update continued, but required runtime scripts may be absent');
     expect(warned).toContain('verify collection-script support/permissions');
@@ -449,8 +453,8 @@ describe('PostmanGatewaySmokeClient', () => {
       if (env.method === 'delete') return jsonResponse({ error: 'not found' }, 404);
       return jsonResponse({});
     });
-    await expect(client.deleteCollection('55363555-gone')).resolves.toBeUndefined();
-    expect(calls[0]?.path).toBe('/v3/collections/gone');
+    await expect(client.deleteCollection(UUID)).resolves.toBeUndefined();
+    expect(calls[0]?.path).toBe(`/v3/collections/${UUID}`);
   });
 
   it('deleteCollection propagates a permanent authorization error without retrying', async () => {
@@ -524,7 +528,7 @@ describe('PostmanGatewaySmokeClient', () => {
       method: 'POST',
       url: 'https://x/post',
       headers: [] as J[],
-      position: { parent: { id: '55363555-cid', $kind: 'collection' } }
+      position: { parent: { id: FULL, $kind: 'collection' } }
     };
 
     it('swallows the already-applied 400 only after a readback confirms the committed end state', async () => {
@@ -547,5 +551,5 @@ describe('PostmanGatewaySmokeClient', () => {
 });
 
 function client_run(client: PostmanGatewaySmokeClient, desired: unknown): Promise<void> {
-  return client.updateCollection('55363555-cid', desired);
+  return client.updateCollection(FULL, desired);
 }

@@ -39241,6 +39241,21 @@ function buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests
   };
 }
 
+// src/postman/collection-model-identity.ts
+var BARE_COLLECTION_UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+var PUBLIC_COLLECTION_UID_RE = /^\d+-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/;
+function normalizeCollectionModelIdentity(value) {
+  const id = String(value ?? "").trim();
+  if (BARE_COLLECTION_UUID_RE.test(id)) return id.toLowerCase();
+  return PUBLIC_COLLECTION_UID_RE.exec(id)?.[1]?.toLowerCase() ?? id;
+}
+function isBareCollectionUuid(value) {
+  return BARE_COLLECTION_UUID_RE.test(String(value ?? "").trim());
+}
+function isFullPublicCollectionUid(value) {
+  return PUBLIC_COLLECTION_UID_RE.test(String(value ?? "").trim());
+}
+
 // src/postman/postman-gateway-smoke-client.ts
 function asRecord5(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
@@ -39248,11 +39263,8 @@ function asRecord5(value) {
 function asArray(value) {
   return Array.isArray(value) ? value.map(asRecord5).filter((v) => Boolean(v)) : [];
 }
-var SMOKE_BARE_UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 function bareModelId(uid) {
-  const u = String(uid ?? "").trim();
-  if (SMOKE_BARE_UUID_RE.test(u)) return u;
-  return u.includes("-") ? u.slice(u.indexOf("-") + 1) : u;
+  return normalizeCollectionModelIdentity(uid);
 }
 function collectionItemsId(uid) {
   return String(uid ?? "").trim();
@@ -39400,6 +39412,8 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
   static GENERATION_POLL_ATTEMPTS = 90;
   static GENERATION_POLL_DELAY_MS = 2e3;
   static GENERATION_POLL_TIMEOUT_MS = 18e4;
+  /** Bounded inventory polling when a bare model id must become ROOT-addressable. */
+  static ROOT_UID_RESOLVE_DELAYS_MS = [250, 500, 750, 1e3, 1250];
   gateway;
   sleepImpl;
   now;
@@ -39585,13 +39599,14 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
     return v3ExportToV2Collection(v3);
   }
   async updateCollection(collectionUid, collection) {
-    const itemsCid = collectionItemsId(collectionUid);
-    const rootCid = bareModelId(collectionUid);
     const desired = asRecord5(collection);
     if (!desired) {
       throw new Error(`updateCollection: invalid collection payload for ${collectionUid}`);
     }
-    await this.assertCanonicalBelongsToWorkspace(collectionUid);
+    const wireUid = await this.resolveWireCollectionUid(collectionUid);
+    await this.assertCanonicalBelongsToWorkspace(wireUid);
+    const itemsCid = collectionItemsId(wireUid);
+    const rootCid = this.collectionRootId(wireUid);
     await this.reconcileItemsRecursive(itemsCid, desired.item, {
       id: itemsCid,
       $kind: "collection"
@@ -39641,26 +39656,102 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
       }
     }
   }
+  async listWorkspaceCollections() {
+    if (!this.workspaceId) return [];
+    return this.listWorkspaceCollectionsFor(this.workspaceId);
+  }
   async assertCanonicalBelongsToWorkspace(collectionUid) {
     if (!this.workspaceId) {
       return;
     }
-    const listed = await this.gateway.requestJson({
-      service: "collection",
-      method: "get",
-      path: `/v3/collections/?workspace=${encodeURIComponent(this.workspaceId)}`
-    });
-    const collections = asArray(asRecord5(listed)?.data ?? listed?.data);
-    const bare = bareModelId(collectionUid);
+    const collections = await this.listWorkspaceCollections();
+    const targetIdentity = normalizeCollectionModelIdentity(collectionUid);
     const found = collections.some((entry) => {
-      const id = String(entry.id ?? entry.uid ?? "").trim();
-      return id === collectionUid || bareModelId(id) === bare;
+      const id = String(entry.id ?? "").trim();
+      return id === collectionUid || normalizeCollectionModelIdentity(id) === targetIdentity;
     });
     if (!found) {
       throw new Error(
         `Canonical collection ${collectionUid} was absent from workspace ${this.workspaceId} collection list; refusing mutate. Pass the workspace that owns the canonical collection, or the matching collection ID.`
       );
     }
+  }
+  /**
+   * Collection id for ROOT routes (`GET`/`PATCH /v3/collections/:id`). Preserve
+   * legacy non-UUID aliases, but reject a known bare UUID locally: production
+   * rejects that shape 403, so callers must resolve it through inventory first.
+   */
+  collectionRootId(uid) {
+    const id = String(uid ?? "").trim();
+    if (isBareCollectionUuid(id)) {
+      throw new Error(
+        "COLLECTION_ROOT_UID_REQUIRED: a bare collection model id cannot address Collection ROOT"
+      );
+    }
+    return id;
+  }
+  /**
+   * Resolve the full public uid used by ITEMS and ROOT routes. A ROOT-addressable
+   * input is returned unchanged. A bare model id is polled through workspace
+   * inventory until the owner-prefixed public uid appears.
+   */
+  async resolveWireCollectionUid(collectionUid) {
+    const id = String(collectionUid ?? "").trim();
+    if (!id) {
+      throw new Error("COLLECTION_ROOT_UID_RESOLUTION_FAILED: collection id is required");
+    }
+    if (isFullPublicCollectionUid(id) || !isBareCollectionUuid(id)) {
+      return id;
+    }
+    if (!this.workspaceId) {
+      throw new Error(
+        "COLLECTION_ROOT_UID_RESOLUTION_FAILED: workspace-id is required to resolve a bare collection model id to a ROOT-addressable public uid"
+      );
+    }
+    const resolved = await this.resolveCollectionRootUid(
+      this.workspaceId,
+      id,
+      _PostmanGatewaySmokeClient.ROOT_UID_RESOLVE_DELAYS_MS
+    );
+    if (!resolved) {
+      throw new Error(
+        "COLLECTION_ROOT_UID_RESOLUTION_FAILED: collection did not become inventory-visible with a ROOT-addressable public uid"
+      );
+    }
+    return resolved;
+  }
+  /**
+   * Resolve a collection's ROOT-addressable id from workspace inventory — the
+   * only surface that carries the numeric owner prefix.
+   */
+  async resolveCollectionRootUid(workspaceId, collectionId, delays) {
+    const id = String(collectionId ?? "").trim();
+    if (!id) return void 0;
+    if (!isBareCollectionUuid(id)) return id;
+    const targetIdentity = normalizeCollectionModelIdentity(id);
+    for (let observation = 0; observation <= delays.length; observation += 1) {
+      try {
+        const inventory = await this.listWorkspaceCollectionsFor(workspaceId);
+        const match = inventory.find(
+          (entry) => normalizeCollectionModelIdentity(entry.id) === targetIdentity
+        );
+        if (match?.id && isFullPublicCollectionUid(match.id)) return match.id;
+      } catch {
+      }
+      if (observation < delays.length) await this.sleepImpl(delays[observation]);
+    }
+    return void 0;
+  }
+  async listWorkspaceCollectionsFor(workspaceId) {
+    const listed = await this.gateway.requestJson({
+      service: "collection",
+      method: "get",
+      path: `/v3/collections/?workspace=${encodeURIComponent(workspaceId)}`
+    });
+    return asArray(asRecord5(listed)?.data ?? listed?.data).map((entry) => ({
+      id: String(entry.id ?? entry.uid ?? "").trim(),
+      name: String(entry.name ?? entry.title ?? "").trim()
+    })).filter((entry) => entry.id);
   }
   async clearCollectionAuth(cid) {
     try {

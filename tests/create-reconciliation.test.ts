@@ -5,6 +5,10 @@ import { AccessTokenProvider } from '../src/lib/postman/token-provider.js';
 
 type J = Record<string, unknown>;
 
+const OWNER = '55363555';
+const UUID = '6b9b8a7c-1111-4222-8333-444455556666';
+const FULL = `${OWNER}-${UUID}`;
+
 interface Envelope {
   service: string;
   method: string;
@@ -93,11 +97,11 @@ describe('Wave 2 create reconciliation', () => {
         return jsonResponse({ data: { 'task-owned': 'completed' } });
       }
       if (env.service === 'collection' && env.method === 'get' && env.path.endsWith('/export')) {
-        const bare = env.path.split('/')[3];
-        if (bare === 'owned-temp') return collectionExport(ownedName, ownedUid);
-        if (bare === 'foreign-temp') return collectionExport('[Smoke][Temp] payments run-other', foreignUid);
-        if (bare === 'old-temp') return collectionExport('[Smoke][Temp] payments stale', preExisting);
-        return collectionExport('unknown', bare);
+        const exportId = env.path.split('/')[3];
+        if (exportId === ownedUid) return collectionExport(ownedName, ownedUid);
+        if (exportId === foreignUid) return collectionExport('[Smoke][Temp] payments run-other', foreignUid);
+        if (exportId === preExisting) return collectionExport('[Smoke][Temp] payments stale', preExisting);
+        return collectionExport('unknown', String(exportId ?? ''));
       }
       return jsonResponse({});
     });
@@ -138,10 +142,10 @@ describe('Wave 2 create reconciliation', () => {
           return jsonResponse({ data: { [`task-${runIdentity}`]: 'completed' } });
         }
         if (env.service === 'collection' && env.method === 'get' && env.path.endsWith('/export')) {
-          const bare = env.path.split('/')[3];
-          if (bare === 'run-a') return collectionExport('[Smoke][Temp] payments run-a', aOwned);
-          if (bare === 'run-b') return collectionExport('[Smoke][Temp] payments run-b', bOwned);
-          return collectionExport('other', bare);
+          const exportId = env.path.split('/')[3];
+          if (exportId === aOwned) return collectionExport('[Smoke][Temp] payments run-a', aOwned);
+          if (exportId === bOwned) return collectionExport('[Smoke][Temp] payments run-b', bOwned);
+          return collectionExport('other', String(exportId ?? ''));
         }
         if (env.service === 'collection' && env.method === 'delete') {
           deleted.push(env.path.split('/').pop() ?? '');
@@ -165,7 +169,7 @@ describe('Wave 2 create reconciliation', () => {
 
     await a.client.deleteCollection(uidA);
     await expect(a.client.deleteCollection(uidB)).rejects.toThrow(/not owned|positively owned|refusing to delete/i);
-    expect(deleted).toEqual(['run-a']);
+    expect(deleted).toEqual([aOwned]);
   });
 
   it('refuses the first canonical delete/patch when the collection is not in the supplied workspace', async () => {
@@ -274,7 +278,7 @@ describe('Wave 2 create reconciliation', () => {
   it('fails closed on duplicate item names instead of picking one during reconcile', async () => {
     const { client } = makeClient((env) => {
       if (env.service === 'collection' && env.method === 'get' && env.path.startsWith('/v3/collections/?workspace=')) {
-        return jsonResponse({ data: [{ id: '55363555-cid', name: '[Smoke] payments' }] });
+        return jsonResponse({ data: [{ id: FULL, name: '[Smoke] payments' }] });
       }
       if (env.method === 'get' && env.path.endsWith('/items/')) {
         return jsonResponse({
@@ -288,7 +292,7 @@ describe('Wave 2 create reconciliation', () => {
     });
 
     await expect(
-      client.updateCollection('55363555-cid', {
+      client.updateCollection(FULL, {
         info: { name: '[Smoke] payments' },
         item: [{ name: 'Echo', request: { method: 'GET', url: 'https://example.com/a' } }]
       })
@@ -303,7 +307,7 @@ describe('Wave 2 create reconciliation', () => {
 
     const { client, calls } = makeClient((env) => {
       if (env.service === 'collection' && env.method === 'get' && env.path.startsWith('/v3/collections/?workspace=')) {
-        return jsonResponse({ data: [{ id: '55363555-cid', name: '[Smoke] payments' }] });
+        return jsonResponse({ data: [{ id: FULL, name: '[Smoke] payments' }] });
       }
       if (env.method === 'get' && env.path.endsWith('/items/')) {
         return jsonResponse({ data: [...items.values()] });
@@ -335,15 +339,15 @@ describe('Wave 2 create reconciliation', () => {
       ]
     };
 
-    await client.updateCollection('55363555-cid', desired);
+    await client.updateCollection(FULL, desired);
     const createsAfterFirst = createCount;
     const echoNamesAfterFirst = [...items.values()].filter((i) => i.name === 'Echo');
     expect(echoNamesAfterFirst).toHaveLength(1);
 
-    await client.updateCollection('55363555-cid', desired);
+    await client.updateCollection(FULL, desired);
     expect([...items.values()].filter((i) => i.name === 'Echo')).toHaveLength(1);
     expect(createCount).toBe(createsAfterFirst);
-    const rootDeletes = calls.filter((c) => c.method === 'delete' && /\/v3\/collections\/cid$/.test(c.path));
+    const rootDeletes = calls.filter((c) => c.method === 'delete' && c.path === `/v3/collections/${FULL}`);
     expect(rootDeletes).toHaveLength(0);
   });
 
@@ -376,14 +380,14 @@ describe('Wave 2 create reconciliation', () => {
     ];
     const { client, calls } = makeClient((env) => {
       if (env.service === 'collection' && env.method === 'get' && env.path.startsWith('/v3/collections/?workspace=')) {
-        return jsonResponse({ data: [{ id: '55363555-cid' }] });
+        return jsonResponse({ data: [{ id: FULL }] });
       }
       if (env.method === 'get' && env.path.endsWith('/items/')) return jsonResponse({ data: listedItems });
       if (env.method === 'patch') return jsonResponse({ data: {} });
       return jsonResponse({ data: {} });
     });
 
-    await client.updateCollection('55363555-cid', {
+    await client.updateCollection(FULL, {
       info: { name: '[Smoke] payments' },
       item: [
         {
@@ -401,8 +405,8 @@ describe('Wave 2 create reconciliation', () => {
     const itemPatchPaths = calls
       .filter((call) => call.method === 'patch' && call.path.includes('/items/'))
       .map((call) => call.path);
-    expect(itemPatchPaths).toContain('/v3/collections/55363555-cid/items/55363555-health-check');
-    expect(itemPatchPaths).toContain('/v3/collections/55363555-cid/items/55363555-admin-check');
+    expect(itemPatchPaths).toContain(`/v3/collections/${FULL}/items/55363555-health-check`);
+    expect(itemPatchPaths).toContain(`/v3/collections/${FULL}/items/55363555-admin-check`);
   });
 
   it('ambiguous nested request create adopts only the flat response item referenced by the requested parent stub', async () => {
@@ -429,7 +433,7 @@ describe('Wave 2 create reconciliation', () => {
     ];
     const { client, calls } = makeClient((env) => {
       if (env.service === 'collection' && env.method === 'get' && env.path.startsWith('/v3/collections/?workspace=')) {
-        return jsonResponse({ data: [{ id: '55363555-cid' }] });
+        return jsonResponse({ data: [{ id: FULL }] });
       }
       if (env.method === 'get' && env.path.endsWith('/items/')) return jsonResponse({ data: listedItems });
       if (env.method === 'post' && env.path.endsWith('/items/')) {
@@ -448,7 +452,7 @@ describe('Wave 2 create reconciliation', () => {
       return jsonResponse({ data: {} });
     });
 
-    await client.updateCollection('55363555-cid', {
+    await client.updateCollection(FULL, {
       info: { name: '[Smoke] payments' },
       item: [
         {
@@ -488,14 +492,14 @@ describe('Wave 2 create reconciliation', () => {
     ];
     const { client, calls } = makeClient((env) => {
       if (env.service === 'collection' && env.method === 'get' && env.path.startsWith('/v3/collections/?workspace=')) {
-        return jsonResponse({ data: [{ id: '55363555-cid' }] });
+        return jsonResponse({ data: [{ id: FULL }] });
       }
       if (env.method === 'get' && env.path.endsWith('/items/')) return jsonResponse({ data: listedItems });
       if (env.method === 'patch') return jsonResponse({ data: {} });
       return jsonResponse({ data: {} });
     });
 
-    await expect(client.updateCollection('55363555-cid', {
+    await expect(client.updateCollection(FULL, {
       info: { name: '[Smoke] nested' },
       item: [
         {
@@ -520,7 +524,7 @@ describe('Wave 2 create reconciliation', () => {
 
     const { client } = makeClient((env) => {
       if (env.service === 'collection' && env.method === 'get' && env.path.startsWith('/v3/collections/?workspace=')) {
-        return jsonResponse({ data: [{ id: '55363555-cid', name: '[Smoke] payments' }] });
+        return jsonResponse({ data: [{ id: FULL, name: '[Smoke] payments' }] });
       }
       if (env.method === 'get' && env.path.endsWith('/items/')) {
         return jsonResponse({ data: items });
@@ -559,7 +563,7 @@ describe('Wave 2 create reconciliation', () => {
       return jsonResponse({});
     });
 
-    await client.updateCollection('55363555-cid', {
+    await client.updateCollection(FULL, {
       info: { name: '[Smoke] payments' },
       item: [
         {
@@ -592,7 +596,7 @@ describe('Wave 2 create reconciliation', () => {
     const nested: J[] = [];
     const { client } = makeClient((env) => {
       if (env.service === 'collection' && env.method === 'get' && env.path.startsWith('/v3/collections/?workspace=')) {
-        return jsonResponse({ data: [{ id: '55363555-cid' }] });
+        return jsonResponse({ data: [{ id: FULL }] });
       }
       if (env.method === 'get' && env.path.endsWith('/items/')) return jsonResponse({ data: nested });
       if (env.method === 'post' && env.path.endsWith('/items/')) {
@@ -614,7 +618,7 @@ describe('Wave 2 create reconciliation', () => {
       return jsonResponse({ data: {} });
     });
 
-    await client.updateCollection('55363555-cid', {
+    await client.updateCollection(FULL, {
       info: { name: '[Smoke] payments' },
       item: [{ name: 'Check', request: { method: 'GET', url: '{{baseUrl}}/health' } }]
     });
@@ -626,7 +630,7 @@ describe('Wave 2 create reconciliation', () => {
     let postCount = 0;
     const { client } = makeClient((env) => {
       if (env.service === 'collection' && env.method === 'get' && env.path.startsWith('/v3/collections/?workspace=')) {
-        return jsonResponse({ data: [{ id: '55363555-cid' }] });
+        return jsonResponse({ data: [{ id: FULL }] });
       }
       if (env.method === 'get' && env.path.endsWith('/items/')) {
         itemListReads += 1;
@@ -639,7 +643,7 @@ describe('Wave 2 create reconciliation', () => {
       return jsonResponse({ data: {} });
     });
 
-    await expect(client.updateCollection('55363555-cid', {
+    await expect(client.updateCollection(FULL, {
       info: { name: '[Smoke] payments' },
       item: [{ name: 'Check', request: { method: 'GET', url: '{{baseUrl}}/health' } }]
     })).rejects.toThrow(String(status));
@@ -657,7 +661,7 @@ describe('Wave 2 create reconciliation', () => {
     };
     const { client } = makeClient((env) => {
       if (env.service === 'collection' && env.method === 'get' && env.path.startsWith('/v3/collections/?workspace=')) {
-        return jsonResponse({ data: [{ id: '55363555-cid' }] });
+        return jsonResponse({ data: [{ id: FULL }] });
       }
       if (env.method === 'get' && env.path.endsWith('/items/')) return jsonResponse({ data: [item] });
       if (env.method === 'delete' && env.path.includes('/items/')) {
@@ -667,7 +671,7 @@ describe('Wave 2 create reconciliation', () => {
       return jsonResponse({ data: {} });
     });
 
-    await expect(client.updateCollection('55363555-cid', {
+    await expect(client.updateCollection(FULL, {
       info: { name: '[Smoke] payments' },
       item: []
     })).rejects.toThrow('403');
