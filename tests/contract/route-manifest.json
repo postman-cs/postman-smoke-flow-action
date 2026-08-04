@@ -6,24 +6,24 @@
       "service": "collection",
       "method": "DELETE",
       "path": "/v3/collections/{param}",
-      "classification": "live-only",
-      "reason": "Smoke-flow has no committed cassette yet; focused client tests and live probes cover temporary collection cleanup."
+      "classification": "simulated",
+      "cassettes": ["tests/contract/cassettes/smoke-flow-wire.json"]
     },
     {
       "id": "collection.delete-item",
       "service": "collection",
       "method": "DELETE",
       "path": "/v3/collections/{param}/items/{param}",
-      "classification": "live-only",
-      "reason": "Smoke-flow has no committed cassette yet; focused client tests and live probes cover item deletion."
+      "classification": "simulated",
+      "cassettes": ["tests/contract/cassettes/smoke-flow-wire.json"]
     },
     {
       "id": "collection.export-collection",
       "service": "collection",
       "method": "GET",
       "path": "/v3/collections/{param}/export",
-      "classification": "live-only",
-      "reason": "Smoke-flow has no committed cassette yet; focused reconciliation and client tests plus live probes cover collection export."
+      "classification": "simulated",
+      "cassettes": ["tests/contract/cassettes/smoke-flow-wire.json"]
     },
     {
       "id": "collection.get-item",
@@ -31,47 +31,47 @@
       "method": "GET",
       "path": "/v3/collections/{param}/items/{param}",
       "classification": "live-only",
-      "reason": "Smoke-flow has no committed cassette yet; focused reconciliation tests and live probes cover item read-back."
+      "reason": "The cassette scenario creates new items and does not exercise item read-back; focused reconciliation tests cover ambiguous patch recovery."
     },
     {
       "id": "collection.list-items",
       "service": "collection",
       "method": "GET",
       "path": "/v3/collections/{param}/items",
-      "classification": "live-only",
-      "reason": "Smoke-flow has no committed cassette yet; focused client tests and live probes cover item inventory."
+      "classification": "simulated",
+      "cassettes": ["tests/contract/cassettes/smoke-flow-wire.json"]
     },
     {
       "id": "collection.list-workspace-collections",
       "service": "collection",
       "method": "GET",
       "path": "/v3/collections",
-      "classification": "live-only",
-      "reason": "Smoke-flow has no committed cassette yet; focused ownership tests and live probes cover workspace collection inventory."
+      "classification": "simulated",
+      "cassettes": ["tests/contract/cassettes/smoke-flow-wire.json"]
     },
     {
       "id": "collection.patch-item",
       "service": "collection",
       "method": "PATCH",
       "path": "/v3/collections/{param}/items/{param}",
-      "classification": "live-only",
-      "reason": "Smoke-flow has no committed cassette yet; focused client tests and live probes cover item mutation."
+      "classification": "simulated",
+      "cassettes": ["tests/contract/cassettes/smoke-flow-wire.json"]
     },
     {
       "id": "collection.patch-collection",
       "service": "collection",
       "method": "PATCH",
       "path": "/v3/collections/{param}",
-      "classification": "live-only",
-      "reason": "Smoke-flow has no committed cassette yet; focused auth-clear and client tests plus live probes cover root collection mutation."
+      "classification": "simulated",
+      "cassettes": ["tests/contract/cassettes/smoke-flow-wire.json"]
     },
     {
       "id": "collection.create-item",
       "service": "collection",
       "method": "POST",
       "path": "/v3/collections/{param}/items",
-      "classification": "live-only",
-      "reason": "Smoke-flow has no committed cassette yet; focused create-reconciliation tests and live probes cover item creation."
+      "classification": "simulated",
+      "cassettes": ["tests/contract/cassettes/smoke-flow-wire.json"]
     },
     {
       "id": "app-version.get-update-status",
@@ -86,40 +86,40 @@
       "service": "iapub",
       "method": "GET",
       "path": "/api/sessions/current",
-      "classification": "live-only",
-      "reason": "Smoke-flow has no committed cassette yet; focused credential tests and live probes cover session identity resolution."
+      "classification": "simulated",
+      "cassettes": ["tests/contract/cassettes/smoke-flow-wire.json"]
     },
     {
       "id": "postman-api.mint-service-account-token",
       "service": "postman-api",
       "method": "POST",
       "path": "/service-account-tokens",
-      "classification": "live-only",
-      "reason": "Smoke-flow has no committed cassette yet; focused credential tests and live probes cover service-account token minting."
+      "classification": "simulated",
+      "cassettes": ["tests/contract/cassettes/smoke-flow-wire.json"]
     },
     {
       "id": "specification.list-generation-tasks",
       "service": "specification",
       "method": "GET",
       "path": "/tasks",
-      "classification": "live-only",
-      "reason": "Smoke-flow has no committed cassette yet; focused generation-state tests and live probes cover task polling."
+      "classification": "simulated",
+      "cassettes": ["tests/contract/cassettes/smoke-flow-wire.json"]
     },
     {
       "id": "specification.list-collections",
       "service": "specification",
       "method": "GET",
       "path": "/specifications/{param}/collections",
-      "classification": "live-only",
-      "reason": "Smoke-flow has no committed cassette yet; focused reconciliation tests and live probes cover specification collection inventory."
+      "classification": "simulated",
+      "cassettes": ["tests/contract/cassettes/smoke-flow-wire.json"]
     },
     {
       "id": "specification.generate-collection",
       "service": "specification",
       "method": "POST",
       "path": "/specifications/{param}/collections",
-      "classification": "live-only",
-      "reason": "Smoke-flow has no committed cassette yet; focused create-reconciliation tests and live probes cover generation requests."
+      "classification": "simulated",
+      "cassettes": ["tests/contract/cassettes/smoke-flow-wire.json"]
     }
   ]
 }

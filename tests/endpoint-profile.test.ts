@@ -32,12 +32,14 @@ describe('smoke-flow endpoint defaults', () => {
   it('threads the live defaults through the input reader untouched', () => {
     expect(readActionInputs({})).toMatchObject({
       postmanApiBaseUrl: 'https://api.getpostman.com',
+      postmanBifrostBaseUrl: 'https://bifrost-premium-https-v4.gw.postman.com',
       postmanIapubBaseUrl: 'https://iapub.postman.co'
     });
     expect(
       readActionInputs({ 'INPUT_POSTMAN-REGION': 'eu' } as NodeJS.ProcessEnv)
     ).toMatchObject({
       postmanApiBaseUrl: 'https://api.eu.postman.com',
+      postmanBifrostBaseUrl: 'https://bifrost-premium-https-v4.gw.postman.com',
       postmanIapubBaseUrl: 'https://iapub.postman.co'
     });
   });
@@ -55,6 +57,7 @@ describe('smoke-flow emulator endpoint overrides', () => {
   it('threads the armed profile through the action input reader', () => {
     expect(readActionInputs(armed(COMPLETE_OVERRIDES) as NodeJS.ProcessEnv)).toMatchObject({
       postmanApiBaseUrl: 'http://127.0.0.1:8081/api',
+      postmanBifrostBaseUrl: 'http://127.0.0.1:8082/bifrost',
       postmanIapubBaseUrl: 'http://127.0.0.1:8083/iapub'
     });
   });
