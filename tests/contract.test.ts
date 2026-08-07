@@ -146,6 +146,8 @@ describe('postman-smoke-flow-action contract', () => {
     expect(packageJson.scripts).toMatchObject({
       bundle: expect.any(String),
       build: expect.any(String),
+      'verify:dist:shape': 'node scripts/verify-dist-artifact.mjs',
+      'verify:dist:parity': 'git diff --ignore-space-at-eol --text --exit-code -- dist',
       'verify:dist:assert': expect.any(String),
       'verify:dist': expect.any(String),
       lint: 'eslint .',
@@ -159,7 +161,7 @@ describe('postman-smoke-flow-action contract', () => {
     expect(packageJson.scripts.bundle).not.toContain('typecheck');
     expect(packageJson.scripts.build).toMatch(/npm run typecheck && npm run bundle/);
     expect(packageJson.scripts['verify:dist:assert']).toBe(
-      'git diff --ignore-space-at-eol --text --exit-code -- dist && node scripts/verify-dist-artifact.mjs'
+      'npm run verify:dist:shape && npm run verify:dist:parity'
     );
     expect(packageJson.scripts['verify:dist']).toBe('npm run build && npm run verify:dist:assert');
   });
