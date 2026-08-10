@@ -36,7 +36,7 @@ function gatewayFetch(handler: (env: Envelope) => Response | Promise<Response>):
 
 function makeClient(
   handler: (env: Envelope) => Response | Promise<Response>,
-  options: { workspaceId?: string; runIdentity?: string; teamId?: string } = {}
+  options: { workspaceId?: string; runIdentity?: string; teamId?: string; warning?: (message: string) => void } = {}
 ): { client: PostmanGatewaySmokeClient; calls: Envelope[]; sleep: ReturnType<typeof vi.fn> } {
   const { fetchImpl, calls } = gatewayFetch(handler);
   const sleep = vi.fn(async () => undefined);
@@ -47,6 +47,7 @@ function makeClient(
     sleepImpl: sleep,
     workspaceId: options.workspaceId ?? 'ws-owned',
     runIdentity: options.runIdentity ?? 'run-abc',
+    ...(options.warning ? { warning: options.warning } : {}),
     ...(options.teamId ? { teamId: options.teamId, orgMode: true } : {})
   });
   return { client, calls, sleep };
@@ -115,6 +116,28 @@ describe('Wave 2 create reconciliation', () => {
     expect(posts).toHaveLength(1);
     expect((posts[0]?.body as J).name).toBe(ownedName);
     expect(taskPolls).toBeGreaterThanOrEqual(0);
+  });
+
+  it('does not retry an ambiguous generation create when read-back cannot reconcile it', async () => {
+    let generationPosts = 0;
+    const { client, calls } = makeClient((env) => {
+      if (env.service === 'specification' && env.method === 'get' && env.path === '/specifications/spec-1/collections') {
+        return jsonResponse({ data: [] });
+      }
+      if (env.service === 'specification' && env.method === 'post' && env.path === '/specifications/spec-1/collections') {
+        generationPosts += 1;
+        return jsonResponse({ error: { name: 'serverError', message: 'ESOCKETTIMEDOUT' } }, 503);
+      }
+      return jsonResponse({});
+    });
+
+    await expect(client.generateCollection('spec-1', 'payments', '[Smoke][Temp]')).rejects.toThrow('503');
+    expect(generationPosts).toBe(1);
+    const posts = calls.filter(
+      (c) => c.service === 'specification' && c.method === 'post' && c.path.endsWith('/collections')
+    );
+    expect(posts).toHaveLength(1);
+    expect((posts[0]?.body as J).name).toBe('[Smoke][Temp] payments run-abc');
   });
 
   it('overlapping generation/cleanup only deletes the positively owned temporary collection', async () => {
@@ -196,7 +219,7 @@ describe('Wave 2 create reconciliation', () => {
     expect(calls.some((c) => c.method === 'post' && c.path.endsWith('/items/'))).toBe(false);
   });
 
-  it('fails generation with remediation when the task reports failed', async () => {
+  it('fails generation with remediation when a failed task leaves no run-owned temp to clean up', async () => {
     let generationPosts = 0;
     const { client, calls } = makeClient((env) => {
       if (env.service === 'specification' && env.method === 'get' && env.path === '/specifications/spec-1/collections') {
@@ -221,6 +244,56 @@ describe('Wave 2 create reconciliation', () => {
     ).toHaveLength(1);
   });
 
+  it('retries a failed generation task after cleaning up a late-created owned temp', async () => {
+    const firstUid = 'aaaaaaaa-1111-4222-8333-444455556666';
+    const secondUid = 'bbbbbbbb-1111-4222-8333-444455556666';
+    const baseName = '[Smoke][Temp] payments run-abc';
+    const retryName = '[Smoke][Temp] payments run-abc retry-2';
+    const deleted: string[] = [];
+    const warnings: string[] = [];
+    let generationPosts = 0;
+
+    const { client, calls } = makeClient((env) => {
+      if (env.service === 'specification' && env.method === 'get' && env.path === '/specifications/spec-1/collections') {
+        const data: Array<{ collection: string; state: string }> = [];
+        if (generationPosts >= 1 && !deleted.includes(firstUid)) data.push({ collection: firstUid, state: 'failed' });
+        if (generationPosts >= 2) data.push({ collection: secondUid, state: 'in-sync' });
+        return jsonResponse({ data });
+      }
+      if (env.service === 'specification' && env.method === 'post' && env.path === '/specifications/spec-1/collections') {
+        generationPosts += 1;
+        return jsonResponse({ data: { taskId: generationPosts === 1 ? 'task-failed-1' : 'task-ok-2' } });
+      }
+      if (env.service === 'specification' && env.method === 'get' && env.path === '/tasks') {
+        return jsonResponse({
+          data: generationPosts === 1 ? { 'task-failed-1': 'failed' } : { 'task-ok-2': 'completed' }
+        });
+      }
+      if (env.service === 'collection' && env.method === 'get' && env.path.endsWith('/export')) {
+        const exportId = env.path.split('/')[3];
+        if (exportId === firstUid) return collectionExport(baseName, firstUid);
+        if (exportId === secondUid) return collectionExport(retryName, secondUid);
+      }
+      if (env.service === 'collection' && env.method === 'delete') {
+        deleted.push(env.path.split('/').pop() ?? '');
+        return jsonResponse({});
+      }
+      return jsonResponse({});
+    }, { warning: (message) => warnings.push(message) });
+
+    await expect(client.generateCollection('spec-1', 'payments', '[Smoke][Temp]')).resolves.toBe(secondUid);
+    expect(generationPosts).toBe(2);
+    expect(deleted).toEqual([firstUid]);
+    const posts = calls.filter(
+      (c) => c.service === 'specification' && c.method === 'post' && c.path.endsWith('/collections')
+    );
+    expect(posts).toHaveLength(2);
+    expect((posts[0]?.body as J).name).toBe(baseName);
+    expect((posts[1]?.body as J).name).toBe(retryName);
+    expect(warnings.some((message) => message.includes('task-failed-1'))).toBe(true);
+    expect(warnings.some((message) => message.includes('Retrying'))).toBe(true);
+  });
+
   it('fails generation with remediation when no run-owned temporary UID is found', async () => {
     let generationPosts = 0;
     const { client, calls } = makeClient((env) => {
@@ -241,7 +314,7 @@ describe('Wave 2 create reconciliation', () => {
     });
 
     await expect(client.generateCollection('spec-1', 'payments', '[Smoke][Temp]')).rejects.toThrow(
-      /Collection generation for spec spec-1 did not yield a run-owned temporary collection named \[Smoke\]\[Temp\] payments run-abc.*Inspect the spec generation\/task state and permissions, then rerun/
+      /COLLECTION_GENERATION_RECONCILE_FAILED: Collection generation for spec spec-1 did not yield a run-owned temporary collection named \[Smoke\]\[Temp\] payments run-abc.*Inspect the spec generation\/task state and permissions, then rerun/
     );
     expect(generationPosts).toBe(1);
     expect(
@@ -273,6 +346,76 @@ describe('Wave 2 create reconciliation', () => {
       calls.filter((c) => c.service === 'specification' && c.method === 'post' && c.path.endsWith('/collections'))
     ).toHaveLength(1);
     expect(sleep).toHaveBeenCalled();
+  });
+
+  it('does not retry when task polling fails after generation create was accepted', async () => {
+    let generationPosts = 0;
+    const { client, calls } = makeClient((env) => {
+      if (env.service === 'specification' && env.method === 'get' && env.path === '/specifications/spec-1/collections') {
+        return jsonResponse({ data: [] });
+      }
+      if (env.service === 'specification' && env.method === 'post' && env.path === '/specifications/spec-1/collections') {
+        generationPosts += 1;
+        return jsonResponse({ data: { taskId: 'task-poll-flake' } });
+      }
+      if (env.service === 'specification' && env.method === 'get' && env.path === '/tasks') {
+        return jsonResponse({ error: { message: 'task poll unavailable' } }, 503);
+      }
+      return jsonResponse({});
+    });
+
+    await expect(client.generateCollection('spec-1', 'payments', '[Smoke][Temp]')).rejects.toThrow('503');
+    expect(generationPosts).toBe(1);
+    expect(
+      calls.filter((c) => c.service === 'specification' && c.method === 'post' && c.path.endsWith('/collections'))
+    ).toHaveLength(1);
+  });
+
+  it('does not retry when generated collection export fails after the task completes', async () => {
+    const uid = 'aaaaaaaa-1111-4222-8333-444455556666';
+    let generationPosts = 0;
+    const { client, calls } = makeClient((env) => {
+      if (env.service === 'specification' && env.method === 'get' && env.path === '/specifications/spec-1/collections') {
+        return jsonResponse({ data: generationPosts > 0 ? [{ collection: uid, state: 'in-sync' }] : [] });
+      }
+      if (env.service === 'specification' && env.method === 'post' && env.path === '/specifications/spec-1/collections') {
+        generationPosts += 1;
+        return jsonResponse({ data: { taskId: 'task-ok-1' } });
+      }
+      if (env.service === 'specification' && env.method === 'get' && env.path === '/tasks') {
+        return jsonResponse({ data: { 'task-ok-1': 'completed' } });
+      }
+      if (env.service === 'collection' && env.method === 'get' && env.path.endsWith('/export')) {
+        return jsonResponse({ error: { message: 'export unavailable' } }, 503);
+      }
+      return jsonResponse({});
+    });
+
+    await expect(client.generateCollection('spec-1', 'payments', '[Smoke][Temp]')).rejects.toThrow('503');
+    expect(generationPosts).toBe(1);
+    expect(
+      calls.filter((c) => c.service === 'specification' && c.method === 'post' && c.path.endsWith('/collections'))
+    ).toHaveLength(1);
+  });
+
+  it('does not retry non-transient generation create authorization failures', async () => {
+    let generationPosts = 0;
+    const { client, calls } = makeClient((env) => {
+      if (env.service === 'specification' && env.method === 'get' && env.path === '/specifications/spec-1/collections') {
+        return jsonResponse({ data: [] });
+      }
+      if (env.service === 'specification' && env.method === 'post' && env.path === '/specifications/spec-1/collections') {
+        generationPosts += 1;
+        return jsonResponse({ error: { message: 'forbidden' } }, 403);
+      }
+      return jsonResponse({});
+    });
+
+    await expect(client.generateCollection('spec-1', 'payments', '[Smoke][Temp]')).rejects.toThrow();
+    expect(generationPosts).toBe(1);
+    expect(
+      calls.filter((c) => c.service === 'specification' && c.method === 'post' && c.path.endsWith('/collections'))
+    ).toHaveLength(1);
   });
 
   it('fails closed on duplicate item names instead of picking one during reconcile', async () => {

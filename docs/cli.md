@@ -75,6 +75,8 @@ Temporary collection generation and folder/request creates do not blind-retry
 statusless transport failures, HTTP 408/429, or 5xx responses. Instead the
 client reconciles by run-owned name / pre-run snapshot (generation) or by
 parent folder identity plus sibling item name (folder/request creates).
+Terminal failed generation tasks are retried only after the failed attempt's
+run-owned temporary collection is positively reconciled and deleted.
 Cleanup deletes only temporary collection IDs positively owned by the current
 process.
 
