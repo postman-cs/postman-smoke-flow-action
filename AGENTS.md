@@ -42,7 +42,7 @@ npm run verify:dist         # rebuild + git diff + assert
 
 ## Key Behaviors
 
-- **Gateway reshape**: `postman-access-token` required. Temp gets unique run name. Create sends once. Ambiguous result uses read-back. Canonical must belong to workspace. Item listing flat; parent `items` stubs define direct children. Adoption needs parent + name. Duplicates fail. Cleanup deletes owned temp only. `postman-api-key` only refreshes token.
+- **Gateway reshape**: `postman-access-token` required. Temp gets unique run name. Create sends once except when a terminal failed generation task leaves a run-owned temp that is positively reconciled and deleted before retry. Ambiguous result uses read-back. Canonical must belong to workspace. Item listing flat; parent `items` stubs define direct children. Adoption needs parent + name. Duplicates fail. Cleanup deletes owned temp only. `postman-api-key` only refreshes token.
 - **Flow apply**: Loads curated `flow.yaml`, resolves each step against generated Smoke collection, rewrites canonical collection so request order, chaining, variables match flow.
 - **OAuth2 (optional)**: When configured, seeds collection variables + pre-request script that mints `client_credentials` bearer token, applies token as per-request bearer auth so smoke run authenticates before exercising endpoints.
 - **Idempotent reshape**: Canonical changes in place. API has no cross-process lease. Workflow must use `concurrency` key from canonical collection id.
