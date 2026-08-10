@@ -289,6 +289,9 @@ export interface PostmanGatewaySmokeClientOptions {
  */
 export class PostmanGatewaySmokeClient {
   private static readonly GENERATION_LOCKED_MAX_RETRIES = 5;
+  private static readonly GENERATION_MAX_ATTEMPTS = 3;
+  private static readonly GENERATION_RETRY_BASE_DELAY_MS = 1000;
+  private static readonly GENERATION_RETRY_MAX_DELAY_MS = 10000;
   private static readonly GENERATION_POLL_ATTEMPTS = 90;
   private static readonly GENERATION_POLL_DELAY_MS = 2000;
   private static readonly GENERATION_POLL_TIMEOUT_MS = 180000;
@@ -332,25 +335,71 @@ export class PostmanGatewaySmokeClient {
   }
 
   async generateCollection(specId: string, projectName: string, prefix: string): Promise<string> {
-    const ownedName = [prefix.trim(), projectName.trim(), this.runIdentity].filter(Boolean).join(' ');
-    const body = { name: ownedName, options: { requestNameSource: 'Fallback' } };
-    const preSnapshot = await this.listSpecCollectionUids(specId);
+    let lastError: unknown;
+    for (let generationAttempt = 1; generationAttempt <= PostmanGatewaySmokeClient.GENERATION_MAX_ATTEMPTS; generationAttempt += 1) {
+      const ownedName = this.buildGenerationAttemptName(prefix, projectName, generationAttempt);
+      const body = { name: ownedName, options: { requestNameSource: 'Fallback' } };
+      const preSnapshot = await this.listSpecCollectionUids(specId);
+      let ambiguousCreateUnreconciled = false;
 
-    let taskId: string;
-    try {
-      taskId = await this.postGenerationWithLockRetry(specId, body);
-    } catch (error) {
-      if (!isAmbiguousCreateError(error)) {
-        throw error;
+      try {
+        let taskId: string;
+        try {
+          taskId = await this.postGenerationWithLockRetry(specId, body);
+        } catch (error) {
+          if (!isAmbiguousCreateError(error)) {
+            throw error;
+          }
+          const reconciled = await this.reconcileGeneratedCollection(specId, ownedName, preSnapshot);
+          if (!reconciled) {
+            ambiguousCreateUnreconciled = true;
+            throw error;
+          }
+          this.rememberOwnedTemporaryCollection(reconciled);
+          return reconciled;
+        }
+
+        if (taskId) {
+          await this.waitForGenerationTask(specId, taskId);
+        }
+
+        const owned = await this.reconcileGeneratedCollection(specId, ownedName, preSnapshot);
+        if (!owned) {
+          throw new Error(
+            `COLLECTION_GENERATION_RECONCILE_FAILED: Collection generation for spec ${specId} did not yield a run-owned temporary collection named ${ownedName}. Inspect the spec generation/task state and permissions, then rerun.`
+          );
+        }
+        this.rememberOwnedTemporaryCollection(owned);
+        return owned;
+      } catch (error) {
+        lastError = error;
+        if (
+          ambiguousCreateUnreconciled ||
+          !this.isRetryableGenerationError(error)
+        ) {
+          throw error;
+        }
+        const cleanedUpFailedAttempt = await this.cleanupFailedGenerationAttempt(specId, ownedName, preSnapshot);
+        if (!cleanedUpFailedAttempt || generationAttempt >= PostmanGatewaySmokeClient.GENERATION_MAX_ATTEMPTS) {
+          throw error;
+        }
+        const delay = this.generationRetryDelayMs(generationAttempt);
+        this.warning?.(
+          `Collection generation attempt ${generationAttempt}/${PostmanGatewaySmokeClient.GENERATION_MAX_ATTEMPTS} for spec ${specId} failed after creating and deleting a run-owned temporary collection: ${this.secretMasker(summarizeError(error))}. Retrying in ${delay}ms.`
+        );
+        await this.sleepImpl(delay);
       }
-      const reconciled = await this.reconcileGeneratedCollection(specId, ownedName, preSnapshot);
-      if (!reconciled) {
-        throw error;
-      }
-      this.rememberOwnedTemporaryCollection(reconciled);
-      return reconciled;
     }
 
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+
+  private buildGenerationAttemptName(prefix: string, projectName: string, generationAttempt: number): string {
+    const base = [prefix.trim(), projectName.trim(), this.runIdentity].filter(Boolean).join(' ');
+    return generationAttempt === 1 ? base : [base, `retry-${generationAttempt}`].filter(Boolean).join(' ');
+  }
+
+  private async waitForGenerationTask(specId: string, taskId: string): Promise<void> {
     if (taskId) {
       const startedAt = this.now();
       for (let attempt = 0; attempt < PostmanGatewaySmokeClient.GENERATION_POLL_ATTEMPTS; attempt += 1) {
@@ -371,6 +420,9 @@ export class PostmanGatewaySmokeClient {
         });
         const status = String(asRecord(task?.data)?.[taskId] ?? '').toLowerCase();
         if (status === 'failed' || status === 'error') {
+          this.warning?.(
+            `Collection generation task response for spec ${specId} task ${taskId}: ${this.secretMasker(JSON.stringify(task))}`
+          );
           throw new Error(
             `COLLECTION_GENERATION_TASK_FAILED: Collection generation task failed for spec ${specId} task ${taskId} (status=${status}). Inspect the spec generation/task state and permissions, then rerun.`
           );
@@ -385,15 +437,41 @@ export class PostmanGatewaySmokeClient {
         }
       }
     }
+  }
 
-    const owned = await this.reconcileGeneratedCollection(specId, ownedName, preSnapshot);
-    if (!owned) {
-      throw new Error(
-        `Collection generation for spec ${specId} did not yield a run-owned temporary collection named ${ownedName}. Inspect the spec generation/task state and permissions, then rerun.`
+  private async cleanupFailedGenerationAttempt(
+    specId: string,
+    ownedName: string,
+    preSnapshot: readonly string[]
+  ): Promise<boolean> {
+    try {
+      const reconciled = await this.reconcileGeneratedCollection(specId, ownedName, preSnapshot);
+      if (!reconciled) return false;
+      this.rememberOwnedTemporaryCollection(reconciled);
+      await this.deleteCollection(reconciled);
+      this.warning?.(`Deleted temporary Smoke collection ${reconciled} from failed generation attempt.`);
+      return true;
+    } catch (error) {
+      this.warning?.(
+        `Failed to clean up temporary Smoke collection from failed generation attempt: ${this.secretMasker(summarizeError(error))}`
       );
+      return false;
     }
-    this.rememberOwnedTemporaryCollection(owned);
-    return owned;
+  }
+
+  private isRetryableGenerationError(error: unknown): boolean {
+    // Retrying is only considered after the service reports a terminal failed
+    // task; the caller also requires positive cleanup of that attempt's temp.
+    const message = summarizeError(error);
+    return message.includes('COLLECTION_GENERATION_TASK_FAILED');
+  }
+
+  private generationRetryDelayMs(generationAttempt: number): number {
+    const ceiling = Math.min(
+      PostmanGatewaySmokeClient.GENERATION_RETRY_MAX_DELAY_MS,
+      PostmanGatewaySmokeClient.GENERATION_RETRY_BASE_DELAY_MS * 2 ** Math.max(0, generationAttempt - 1)
+    );
+    return Math.floor(Math.random() * Math.max(1, ceiling));
   }
 
   /** POST the generation request, retrying a 423-locked spec; returns the task id. */
