@@ -107,10 +107,10 @@ describe('derived extract provenance', () => {
     ]);
   });
 
-  it('nullable-array payload plus unconsumed error id yields zero extracts (Clean Harbors Drum API shape)', () => {
-    // Clean Harbors Drum API shape that made a shared Postman mock gate red.
+  it('nullable-array payload plus unconsumed error id yields zero extracts', () => {
+    // Regression shape: nullable array payload with an unrelated error id should not create extracts.
     const result = deriveFlowFromSpec(
-      spec('Drum API', {
+      spec('Example Fixture API', {
         '/GenerateDrumNumber': {
           post: {
             operationId: 'generateDrumNumber',
