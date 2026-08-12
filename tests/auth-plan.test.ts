@@ -84,4 +84,30 @@ describe('auth plan validation', () => {
       })
     ).toThrow('variables.expiresAt must be a non-empty string');
   });
+
+  it('rejects OAuth profiles that would share a runtime token cache', () => {
+    const profile = {
+      type: 'oauth2',
+      grantType: 'client_credentials',
+      clientAuthentication: 'body',
+      tokenUrl: '{{ENTRA_ID_URL}}',
+      variables: {
+        clientId: 'APIM_CLIENT_ID',
+        clientSecret: 'APIM_CLIENT_SECRET',
+        accessToken: 'SHARED_TOKEN',
+        expiresAt: 'SHARED_TOKEN_EXPIRES_AT'
+      }
+    };
+
+    expect(() =>
+      validateAuthPlan({
+        version: 1,
+        profiles: { first: profile, second: profile },
+        targets: [
+          { operationId: 'getFirst', profile: 'first' },
+          { operationId: 'getSecond', profile: 'second' }
+        ]
+      })
+    ).toThrow('share runtime cache variable "SHARED_TOKEN"');
+  });
 });

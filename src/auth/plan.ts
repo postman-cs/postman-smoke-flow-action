@@ -154,6 +154,22 @@ export function validateAuthPlan(value: unknown): SmokeAuthPlan {
     ])
   );
 
+  const oauthCacheVariables = new Map<string, string>();
+  for (const [profileName, profile] of Object.entries(profiles)) {
+    if (profile.type !== 'oauth2') {
+      continue;
+    }
+    for (const variableName of [profile.variables.accessToken, profile.variables.expiresAt]) {
+      const owner = oauthCacheVariables.get(variableName);
+      if (owner) {
+        throw new Error(
+          `Invalid auth plan: OAuth profiles "${owner}" and "${profileName}" share runtime cache variable "${variableName}".`
+        );
+      }
+      oauthCacheVariables.set(variableName, profileName);
+    }
+  }
+
   if (!Array.isArray(document.targets) || document.targets.length === 0) {
     throw new Error('Invalid auth plan: targets must contain at least one operation mapping.');
   }
