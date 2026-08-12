@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { applySmokeCollectionAuth, buildCuratedSmokeCollection, buildGeneratedSmokeCollection } from '../src/postman/collection-transform.js';
-import type { FlowDefinition, ResolvedRequest, SmokeAuthConfig } from '../src/types.js';
+import {
+  applySmokeCollectionAuth,
+  buildCuratedSmokeCollection,
+  buildGeneratedSmokeCollection,
+  verifyGeneratedSmokeCollection
+} from '../src/postman/collection-transform.js';
+import type { FlowDefinition, ResolvedRequest, SmokeAuthConfig, SmokeAuthPlan } from '../src/types.js';
 
 const flow: FlowDefinition = {
   name: 'Payments API happy path',
@@ -1100,5 +1105,161 @@ describe('collection transform', () => {
       type: 'bearer',
       bearer: [{ key: 'token', value: '{{AZURE_ACCESS_TOKEN}}' }]
     });
+  });
+
+  it('applies a mixed auth plan at request level with isolated OAuth token caches', () => {
+    const authPlan: SmokeAuthPlan = {
+      version: 1,
+      profiles: {
+        serviceA: {
+          type: 'oauth2',
+          grantType: 'client_credentials',
+          clientAuthentication: 'body',
+          tokenUrl: '{{ENTRA_ID_URL}}',
+          scope: '{{SERVICE_A_CLIENT_ID}}/.default',
+          variables: {
+            clientId: 'APIM_CLIENT_ID',
+            clientSecret: 'APIM_CLIENT_SECRET',
+            accessToken: 'SERVICE_A_TOKEN',
+            expiresAt: 'SERVICE_A_TOKEN_EXPIRES_AT'
+          }
+        },
+        serviceB: {
+          type: 'oauth2',
+          grantType: 'client_credentials',
+          clientAuthentication: 'body',
+          tokenUrl: '{{ENTRA_ID_URL}}',
+          scope: '{{SERVICE_B_CLIENT_ID}}/.default',
+          variables: {
+            clientId: 'APIM_CLIENT_ID',
+            clientSecret: 'APIM_CLIENT_SECRET',
+            accessToken: 'SERVICE_B_TOKEN',
+            expiresAt: 'SERVICE_B_TOKEN_EXPIRES_AT'
+          }
+        },
+        serviceKey: {
+          type: 'apiKey',
+          in: 'header',
+          name: 'X-API-Key',
+          variables: { apiKey: 'SERVICE_KEY_APIKEY' }
+        },
+        public: { type: 'noauth' }
+      },
+      targets: [
+        { operationId: 'getServiceA', profile: 'serviceA' },
+        { operationId: 'getServiceB', profile: 'serviceB' },
+        { operationId: 'getByApiKey', profile: 'serviceKey' },
+        { operationId: 'getPublic', profile: 'public' }
+      ]
+    };
+    const generatedCollection = {
+      info: { name: '[Smoke][Temp] Mixed API' },
+      auth: { type: 'bearer' },
+      event: [
+        {
+          listen: 'prerequest',
+          script: {
+            exec: ['// [Smoke Flow] Auto-generated OAuth2 client-credentials token cache.']
+          }
+        }
+      ],
+      item: authPlan.targets.map((target) => ({
+        name: target.operationId,
+        request: {
+          method: 'GET',
+          header: [{ key: 'Authorization', value: 'stale' }],
+          url: `{{baseUrl}}/${target.operationId}`
+        }
+      }))
+    };
+
+    const result = buildGeneratedSmokeCollection(generatedCollection, undefined, { authPlan });
+    const collection = result.collection;
+    const items = collection.item as Array<Record<string, unknown>>;
+    const serviceA = items[0]!;
+    const serviceB = items[1]!;
+    const apiKey = items[2]!;
+    const publicRequest = items[3]!;
+
+    expect(result.authRequestCount).toBe(4);
+    expect(collection.auth).toEqual({ type: 'noauth' });
+    expect(collection.event).toBeUndefined();
+    expect(JSON.stringify((serviceA.request as Record<string, unknown>).auth)).toContain('{{SERVICE_A_TOKEN}}');
+    expect(JSON.stringify((serviceB.request as Record<string, unknown>).auth)).toContain('{{SERVICE_B_TOKEN}}');
+    expect(JSON.stringify(serviceA.event)).toContain('{{SERVICE_A_CLIENT_ID}}/.default');
+    expect(JSON.stringify(serviceA.event)).toContain("pm.variables.set(accessTokenVariable, accessToken)");
+    expect(JSON.stringify(serviceA.event)).toContain('cachedExpiresAt');
+    expect(JSON.stringify(apiKey.request)).toContain('{{SERVICE_KEY_APIKEY}}');
+    expect((publicRequest.request as Record<string, unknown>).auth).toEqual({ type: 'noauth' });
+    expect(JSON.stringify(collection)).not.toContain('actual-access-token');
+    expect(
+      verifyGeneratedSmokeCollection(collection, undefined, { authPlan })
+    ).toEqual({ ok: true, summary: 'generated Smoke collection persisted with 4 request(s)' });
+  });
+
+  it('rejects an auth plan that leaves an active generated request unmapped', () => {
+    const authPlan: SmokeAuthPlan = {
+      version: 1,
+      profiles: { public: { type: 'noauth' } },
+      targets: [{ operationId: 'getMapped', profile: 'public' }]
+    };
+
+    expect(() =>
+      buildGeneratedSmokeCollection(
+        {
+          info: { name: '[Smoke][Temp] Incomplete API' },
+          item: [
+            { name: 'getMapped', request: { method: 'GET', url: '{{baseUrl}}/mapped' } },
+            { name: 'getMissing', request: { method: 'GET', url: '{{baseUrl}}/missing' } }
+          ]
+        },
+        undefined,
+        { authPlan }
+      )
+    ).toThrow('does not assign a profile to 1 active Smoke request');
+  });
+
+  it('allows curated flows to omit otherwise valid auth plan targets', () => {
+    const authPlan: SmokeAuthPlan = {
+      version: 1,
+      profiles: {
+        entra: {
+          type: 'oauth2',
+          grantType: 'client_credentials',
+          clientAuthentication: 'body',
+          tokenUrl: '{{ENTRA_ID_URL}}',
+          variables: {
+            clientId: 'APIM_CLIENT_ID',
+            clientSecret: 'APIM_CLIENT_SECRET',
+            accessToken: 'PAYMENTS_TOKEN',
+            expiresAt: 'PAYMENTS_TOKEN_EXPIRES_AT'
+          }
+        }
+      },
+      targets: [
+        { operationId: 'createPayment', profile: 'entra' },
+        { operationId: 'getPaymentById', profile: 'entra' }
+      ]
+    };
+    const result = buildCuratedSmokeCollection(
+      { info: { name: '[Smoke][Temp] Payments API' }, item: [] },
+      { ...flow, steps: [flow.steps[0]!] },
+      [
+        {
+          step: flow.steps[0]!,
+          item: {
+            name: 'createPayment',
+            request: { method: 'POST', url: '{{baseUrl}}/payments' }
+          }
+        }
+      ],
+      undefined,
+      'none',
+      { authPlan }
+    );
+    const requestItem = (result.collection.item as Array<Record<string, unknown>>)[0]!;
+
+    expect(JSON.stringify(requestItem.event)).toContain('Auto-generated OAuth2');
+    expect(JSON.stringify(requestItem.event)).toContain('Auto-generated prerequest script');
   });
 });

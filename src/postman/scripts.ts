@@ -1,4 +1,4 @@
-import type { FlowStep, SmokeOAuthConfig } from '../types.js';
+import type { FlowStep, SmokeOAuthSettings } from '../types.js';
 
 function quote(value: string): string {
   return JSON.stringify(value);
@@ -103,7 +103,7 @@ export function createPreRequestEvent(step: FlowStep): Record<string, unknown> {
   };
 }
 
-function getAuthVariableNames(authConfig: SmokeOAuthConfig): Required<NonNullable<SmokeOAuthConfig['variables']>> {
+function getAuthVariableNames(authConfig: SmokeOAuthSettings): Required<NonNullable<SmokeOAuthSettings['variables']>> {
   return {
     tokenUrl: authConfig.variables?.tokenUrl || 'auth_token_url',
     scope: authConfig.variables?.scope || 'auth_scope',
@@ -114,10 +114,16 @@ function getAuthVariableNames(authConfig: SmokeOAuthConfig): Required<NonNullabl
   };
 }
 
-export function buildOAuthPreRequestScript(authConfig: SmokeOAuthConfig): string[] {
+export function buildOAuthPreRequestScript(
+  authConfig: SmokeOAuthSettings,
+  options: { scopeTemplate?: string } = {}
+): string[] {
   const variables = getAuthVariableNames(authConfig);
   const refreshSkewSeconds = authConfig.cache?.refreshSkewSeconds ?? 60;
   const tokenUrlTemplate = authConfig.tokenUrl || `{{${variables.tokenUrl}}}`;
+  const scopeExpression = options.scopeTemplate
+    ? `pm.variables.replaceIn(${quote(options.scopeTemplate)})`
+    : `pm.variables.get(${quote(variables.scope)}) || ''`;
   const contentType = authConfig.request?.contentType || 'application/x-www-form-urlencoded';
 
   return [
@@ -134,7 +140,7 @@ export function buildOAuthPreRequestScript(authConfig: SmokeOAuthConfig): string
     `const tokenUrl = pm.variables.replaceIn(${quote(tokenUrlTemplate)});`,
     `const clientId = pm.variables.get(${quote(variables.clientId)});`,
     `const clientSecret = pm.variables.get(${quote(variables.clientSecret)});`,
-    `const scope = pm.variables.get(${quote(variables.scope)}) || '';`,
+    `const scope = ${scopeExpression};`,
     "if (!tokenUrl || tokenUrl.includes('{{')) {",
     "  throw new Error('Smoke OAuth is enabled, but auth_token_url is missing.');",
     '}',
@@ -178,13 +184,15 @@ export function buildOAuthPreRequestScript(authConfig: SmokeOAuthConfig): string
   ];
 }
 
-export function createOAuthPreRequestEvent(authConfig: SmokeOAuthConfig): Record<string, unknown> {
+export function createOAuthPreRequestEvent(
+  authConfig: SmokeOAuthSettings,
+  options: { scopeTemplate?: string } = {}
+): Record<string, unknown> {
   return {
     listen: 'prerequest',
     script: {
       type: 'text/javascript',
-      exec: buildOAuthPreRequestScript(authConfig)
+      exec: buildOAuthPreRequestScript(authConfig, options)
     }
   };
 }
-

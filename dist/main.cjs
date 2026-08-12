@@ -34453,7 +34453,7 @@ var require_public_api = __commonJS({
       }
       return doc;
     }
-    function parse4(src, reviver, options) {
+    function parse5(src, reviver, options) {
       let _reviver = void 0;
       if (typeof reviver === "function") {
         _reviver = reviver;
@@ -34494,7 +34494,7 @@ var require_public_api = __commonJS({
         return value.toString(options);
       return new Document.Document(value, _replacer, options).toString(options);
     }
-    exports2.parse = parse4;
+    exports2.parse = parse5;
     exports2.parseAllDocuments = parseAllDocuments;
     exports2.parseDocument = parseDocument;
     exports2.stringify = stringify2;
@@ -36828,7 +36828,7 @@ function getIDToken(aud) {
 
 // src/index.ts
 var import_node_crypto2 = require("node:crypto");
-var import_node_fs7 = require("node:fs");
+var import_node_fs8 = require("node:fs");
 var import_node_path3 = __toESM(require("node:path"), 1);
 
 // src/contracts.ts
@@ -36844,6 +36844,7 @@ var smokeFlowActionContract = {
     "postman-api-key": { required: false },
     "postman-region": { required: false, default: "us" },
     "auth-config-json": { required: false },
+    "auth-plan-path": { required: false },
     "secrets-resolver": { required: false, default: "none" },
     "secrets-resolver-enabled": { required: false },
     "spec-path": { required: false },
@@ -37579,6 +37580,41 @@ function matchesOperationByRequestShape(item, operationMatch) {
     return false;
   }
   return getRequestMethod(item) === operationMatch.method && getRequestPath(item) === operationMatch.path;
+}
+function resolveOperationRequestTargets(operationIds, generatedCollection, specPath, options = {}) {
+  const requestItems = flattenRequestItems(generatedCollection);
+  const operationMatches = loadOperationMatches(specPath);
+  const resolved = /* @__PURE__ */ new Map();
+  for (const operationId of operationIds) {
+    const nameMatches = requestItems.filter((item) => matchesByName(item, operationId));
+    if (nameMatches.length > 1) {
+      throw new ValidationError(
+        `Auth plan operationId "${operationId}" is ambiguous: ${nameMatches.length} requests match by name.`
+      );
+    }
+    if (nameMatches.length === 1) {
+      resolved.set(operationId, nameMatches[0]);
+      continue;
+    }
+    const requestShapeMatches = requestItems.filter(
+      (item) => matchesOperationByRequestShape(item, operationMatches.get(operationId))
+    );
+    if (requestShapeMatches.length > 1) {
+      throw new ValidationError(
+        `Auth plan operationId "${operationId}" is ambiguous: ${requestShapeMatches.length} requests match its method and path.`
+      );
+    }
+    if (requestShapeMatches.length === 1) {
+      resolved.set(operationId, requestShapeMatches[0]);
+      continue;
+    }
+    if (!options.allowMissing) {
+      throw new ValidationError(
+        `Could not resolve auth plan operationId "${operationId}" in the generated temporary Smoke collection.`
+      );
+    }
+  }
+  return resolved;
 }
 function resolveFlowRequests(flow, generatedCollection, specPath, onWarning) {
   const requestItems = flattenRequestItems(generatedCollection);
@@ -39194,10 +39230,11 @@ function getAuthVariableNames(authConfig) {
     expiresAt: authConfig.variables?.expiresAt || "access_token_expires_at"
   };
 }
-function buildOAuthPreRequestScript(authConfig) {
+function buildOAuthPreRequestScript(authConfig, options = {}) {
   const variables = getAuthVariableNames(authConfig);
   const refreshSkewSeconds = authConfig.cache?.refreshSkewSeconds ?? 60;
   const tokenUrlTemplate = authConfig.tokenUrl || `{{${variables.tokenUrl}}}`;
+  const scopeExpression = options.scopeTemplate ? `pm.variables.replaceIn(${quote(options.scopeTemplate)})` : `pm.variables.get(${quote(variables.scope)}) || ''`;
   const contentType = authConfig.request?.contentType || "application/x-www-form-urlencoded";
   return [
     "// [Smoke Flow] Auto-generated OAuth2 client-credentials token cache.",
@@ -39213,7 +39250,7 @@ function buildOAuthPreRequestScript(authConfig) {
     `const tokenUrl = pm.variables.replaceIn(${quote(tokenUrlTemplate)});`,
     `const clientId = pm.variables.get(${quote(variables.clientId)});`,
     `const clientSecret = pm.variables.get(${quote(variables.clientSecret)});`,
-    `const scope = pm.variables.get(${quote(variables.scope)}) || '';`,
+    `const scope = ${scopeExpression};`,
     "if (!tokenUrl || tokenUrl.includes('{{')) {",
     "  throw new Error('Smoke OAuth is enabled, but auth_token_url is missing.');",
     "}",
@@ -39256,12 +39293,12 @@ function buildOAuthPreRequestScript(authConfig) {
     "});"
   ];
 }
-function createOAuthPreRequestEvent(authConfig) {
+function createOAuthPreRequestEvent(authConfig, options = {}) {
   return {
     listen: "prerequest",
     script: {
       type: "text/javascript",
-      exec: buildOAuthPreRequestScript(authConfig)
+      exec: buildOAuthPreRequestScript(authConfig, options)
     }
   };
 }
@@ -39562,6 +39599,33 @@ function seedOAuthCollectionVariables(collection, authConfig) {
 function seedApiKeyCollectionVariables(collection, authConfig) {
   upsertCollectionVariable(collection, getApiKeyVariableName(authConfig));
 }
+function getTemplateVariableNames(template) {
+  if (!template) {
+    return [];
+  }
+  return [...template.matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)].map((match) => match[1]?.trim() ?? "").filter(Boolean);
+}
+function seedAuthPlanVariables(collection, authPlan) {
+  for (const profile of Object.values(authPlan.profiles)) {
+    if (profile.type === "oauth2") {
+      const variables = profile.variables;
+      for (const variableName of [
+        variables.clientId,
+        variables.clientSecret,
+        variables.accessToken,
+        variables.expiresAt,
+        ...getTemplateVariableNames(profile.tokenUrl),
+        ...getTemplateVariableNames(profile.scope)
+      ]) {
+        upsertCollectionVariable(collection, variableName);
+      }
+      continue;
+    }
+    if (profile.type === "apiKey") {
+      upsertCollectionVariable(collection, profile.variables.apiKey);
+    }
+  }
+}
 function getScriptExecText(event) {
   const script = asRecord4(event.script);
   const exec2 = script?.exec;
@@ -39575,6 +39639,56 @@ function getScriptExecText(event) {
 }
 function isGeneratedOAuthEvent(event) {
   return event.listen === "prerequest" && getScriptExecText(event).includes(GENERATED_OAUTH_EVENT_MARKER);
+}
+function setRequestEvents(item, events2) {
+  if (events2.length > 0) {
+    item.event = events2;
+  } else {
+    delete item.event;
+  }
+}
+function removeGeneratedOAuthEventsFromItem(item) {
+  const events2 = Array.isArray(item.event) ? item.event : [];
+  return events2.map((entry) => asRecord4(entry)).filter((entry) => Boolean(entry)).filter((entry) => !isGeneratedOAuthEvent(entry));
+}
+function applyAuthProfileToItem(item, profile) {
+  const request = asRecord4(item.request);
+  if (!request) {
+    return;
+  }
+  const retainedEvents = removeGeneratedOAuthEventsFromItem(item);
+  if (profile.type === "oauth2") {
+    setRequestBearerAuth(request, profile);
+    setRequestEvents(item, [
+      ...retainedEvents,
+      createOAuthPreRequestEvent(profile, { scopeTemplate: profile.scope })
+    ]);
+    return;
+  }
+  if (profile.type === "apiKey") {
+    request.auth = createApiKeyAuth(profile);
+    if (profile.in === "header") {
+      removeHeader(request, profile.name);
+    } else {
+      removeQueryParam(request, profile.name);
+    }
+    setRequestEvents(item, retainedEvents);
+    return;
+  }
+  request.auth = { type: "noauth" };
+  removeHeader(request, "Authorization");
+  setRequestEvents(item, retainedEvents);
+}
+function prepareCollectionForAuthPlan(collection, authPlan) {
+  collection.auth = { type: "noauth" };
+  const existingEvents = Array.isArray(collection.event) ? collection.event : [];
+  const retainedEvents = existingEvents.map((entry) => asRecord4(entry)).filter((entry) => Boolean(entry)).filter((entry) => !isGeneratedOAuthEvent(entry));
+  if (retainedEvents.length > 0) {
+    collection.event = retainedEvents;
+  } else {
+    delete collection.event;
+  }
+  seedAuthPlanVariables(collection, authPlan);
 }
 function applyCollectionAuth(collection, authConfig) {
   if (!authConfig?.enabled) {
@@ -39811,6 +39925,49 @@ function collectSmokeRequestItems(items) {
     return [item, ...nestedItems];
   });
 }
+function getAuthPlanTargetMap(authPlan) {
+  return new Map(authPlan.targets.map((target) => [target.operationId, target.profile]));
+}
+function applyAuthPlanToGeneratedCollection(collection, authPlan, specPath) {
+  prepareCollectionForAuthPlan(collection, authPlan);
+  const targets = resolveOperationRequestTargets(
+    authPlan.targets.map((target) => target.operationId),
+    collection,
+    specPath
+  );
+  const assignedItems = /* @__PURE__ */ new Set();
+  for (const target of authPlan.targets) {
+    const item = targets.get(target.operationId);
+    if (!item) {
+      continue;
+    }
+    if (assignedItems.has(item)) {
+      throw new Error(
+        `Auth plan operationId "${target.operationId}" resolves to a request that is already assigned to another profile.`
+      );
+    }
+    applyAuthProfileToItem(item, authPlan.profiles[target.profile]);
+    assignedItems.add(item);
+  }
+  const missingItems = collectSmokeRequestItems(collection.item).filter((item) => !assignedItems.has(item));
+  if (missingItems.length > 0) {
+    const names = missingItems.slice(0, 5).map((item) => String(item.name ?? "<unnamed request>"));
+    const suffix = missingItems.length > 5 ? `, and ${missingItems.length - 5} more` : "";
+    throw new Error(
+      `Auth plan does not assign a profile to ${missingItems.length} active Smoke request(s): ${names.join(", ")}${suffix}. Add an operationId target for every request, using noauth when authentication is intentionally absent.`
+    );
+  }
+  return assignedItems.size;
+}
+function resolveCuratedAuthProfile(authPlan, operationId) {
+  const profileName = getAuthPlanTargetMap(authPlan).get(operationId);
+  if (!profileName) {
+    throw new Error(
+      `Auth plan does not assign a profile to active Smoke operationId "${operationId}".`
+    );
+  }
+  return authPlan.profiles[profileName];
+}
 function hasGeneratedOAuthEvent(collection) {
   const events2 = Array.isArray(collection.event) ? collection.event : [];
   return events2.map((entry) => asRecord4(entry)).filter((entry) => Boolean(entry)).some((entry) => isGeneratedOAuthEvent(entry));
@@ -39888,6 +40045,132 @@ function getTopLevelItems(collection) {
 function hasFlowRequestScripts(item) {
   const events2 = Array.isArray(item.event) ? item.event.map((entry) => asRecord4(entry)).filter((entry) => Boolean(entry)) : [];
   return events2.some((entry) => entry.listen === "prerequest") && events2.some((entry) => entry.listen === "test");
+}
+function itemHasGeneratedOAuthEvent(item) {
+  return getRequestEvents(item).some((event) => isGeneratedOAuthEvent(event));
+}
+function verifyAuthPlanAssignment(item, profile, variableKeys) {
+  const request = asRecord4(item.request);
+  if (!request) {
+    return ["request body is missing"];
+  }
+  const failures = [];
+  if (profile.type === "oauth2") {
+    const requiredVariables = [
+      profile.variables.clientId,
+      profile.variables.clientSecret,
+      profile.variables.accessToken,
+      profile.variables.expiresAt,
+      ...getTemplateVariableNames(profile.tokenUrl),
+      ...getTemplateVariableNames(profile.scope)
+    ];
+    const missingVariables = requiredVariables.filter((name) => !variableKeys.has(name));
+    if (!requestUsesBearerAuth(request, profile.variables.accessToken)) {
+      failures.push(`missing bearer auth for {{${profile.variables.accessToken}}}`);
+    }
+    if (!itemHasGeneratedOAuthEvent(item)) {
+      failures.push("missing request-level OAuth token script");
+    }
+    if (missingVariables.length > 0) {
+      failures.push(`missing variable(s): ${missingVariables.join(", ")}`);
+    }
+    return failures;
+  }
+  if (profile.type === "apiKey") {
+    if (!authUsesApiKey(asRecord4(request.auth), profile)) {
+      failures.push(`missing request-level ${profile.in} API key auth`);
+    }
+    if (!variableKeys.has(profile.variables.apiKey)) {
+      failures.push(`missing API key variable: ${profile.variables.apiKey}`);
+    }
+    if (itemHasGeneratedOAuthEvent(item)) {
+      failures.push("unexpected OAuth token script");
+    }
+    return failures;
+  }
+  const auth = asRecord4(request.auth);
+  if (auth?.type !== "noauth") {
+    failures.push("missing explicit noauth request setting");
+  }
+  if (itemHasGeneratedOAuthEvent(item)) {
+    failures.push("unexpected OAuth token script");
+  }
+  return failures;
+}
+function verifySmokeCollectionAuthPlan(collection, authPlan, options = {}) {
+  const failures = [];
+  const variableKeys = getCollectionVariableKeys(collection);
+  const collectionAuth = asRecord4(collection.auth);
+  if (collectionAuth?.type !== "noauth") {
+    failures.push("collection-level auth must be noauth when an auth plan is active");
+  }
+  if (hasGeneratedOAuthEvent(collection)) {
+    failures.push("OAuth token acquisition must be request-level when an auth plan is active");
+  }
+  const assignments = [];
+  try {
+    if (options.flow) {
+      const itemsByName = new Map(
+        getTopLevelItems(collection).filter((item) => asRecord4(item.request) && !isSecretsResolverItem(item)).map((item) => [String(item.name ?? ""), item])
+      );
+      const targetMap = getAuthPlanTargetMap(authPlan);
+      for (const step of options.flow.steps) {
+        const itemName = step.name?.trim() || step.operationId;
+        const item = itemsByName.get(itemName);
+        const profileName = targetMap.get(step.operationId);
+        if (!item || !profileName) {
+          failures.push(`active operationId "${step.operationId}" has no persisted auth profile`);
+          continue;
+        }
+        assignments.push({ item, profile: authPlan.profiles[profileName], operationId: step.operationId });
+      }
+    } else {
+      const resolved = resolveOperationRequestTargets(
+        authPlan.targets.map((target) => target.operationId),
+        collection,
+        options.specPath
+      );
+      const assignedItems = /* @__PURE__ */ new Set();
+      for (const target of authPlan.targets) {
+        const item = resolved.get(target.operationId);
+        if (!item) {
+          continue;
+        }
+        if (assignedItems.has(item)) {
+          failures.push(`operationId "${target.operationId}" resolves to an already assigned request`);
+          continue;
+        }
+        assignedItems.add(item);
+        assignments.push({
+          item,
+          profile: authPlan.profiles[target.profile],
+          operationId: target.operationId
+        });
+      }
+      const missingItems = collectSmokeRequestItems(collection.item).filter((item) => !assignedItems.has(item));
+      if (missingItems.length > 0) {
+        failures.push(`${missingItems.length} active request(s) have no auth profile`);
+      }
+    }
+  } catch (error2) {
+    failures.push(error2 instanceof Error ? error2.message : String(error2));
+  }
+  for (const assignment of assignments) {
+    const assignmentFailures = verifyAuthPlanAssignment(
+      assignment.item,
+      assignment.profile,
+      variableKeys
+    );
+    failures.push(
+      ...assignmentFailures.map(
+        (failure) => `operationId "${assignment.operationId}": ${failure}`
+      )
+    );
+  }
+  return {
+    ok: failures.length === 0,
+    summary: failures.length > 0 ? failures.join("; ") : `auth plan persisted on ${assignments.length} request(s)`
+  };
 }
 function verifySmokeCollectionAuth(collection, authConfig, options = {}) {
   const variableKeys = getCollectionVariableKeys(collection);
@@ -39968,6 +40251,14 @@ function verifyGeneratedSmokeCollection(collection, authConfig, options = {}) {
       failures.push(authVerification.summary);
     }
   }
+  if (options.authPlan) {
+    const authVerification = verifySmokeCollectionAuthPlan(collection, options.authPlan, {
+      specPath: options.specPath
+    });
+    if (!authVerification.ok) {
+      failures.push(authVerification.summary);
+    }
+  }
   return {
     ok: failures.length === 0,
     summary: failures.length > 0 ? failures.join("; ") : `generated Smoke collection persisted with ${requestItems.length} request(s)`
@@ -40003,21 +40294,33 @@ function verifyCuratedSmokeCollection(collection, flow, authConfig, options = {}
       failures.push(authVerification.summary);
     }
   }
+  if (options.authPlan) {
+    const authVerification = verifySmokeCollectionAuthPlan(collection, options.authPlan, { flow });
+    if (!authVerification.ok) {
+      failures.push(authVerification.summary);
+    }
+  }
   return {
     ok: failures.length === 0,
     summary: failures.length > 0 ? failures.join("; ") : `curated flow persisted with ${requestItems.length} request(s)`
   };
 }
-function curateRequestItem(resolved, authConfig) {
+function curateRequestItem(resolved, authConfig, authProfile) {
   const item = structuredClone(resolved.item);
   item.name = resolved.step.name?.trim() || resolved.step.operationId;
   const request = asRecord4(item.request);
   if (request) {
     updateRequestUrl(request, resolved.step);
     updateRequestBody(request, resolved.step);
-    applyAuthToRequest(request, authConfig);
   }
   applyFlowScripts(item, resolved.step);
+  const curatedRequest = asRecord4(item.request);
+  if (curatedRequest) {
+    applyAuthToRequest(curatedRequest, authConfig);
+  }
+  if (authProfile) {
+    applyAuthProfileToItem(item, authProfile);
+  }
   return item;
 }
 function buildGeneratedSmokeCollection(generatedCollection, authConfig, options = {}) {
@@ -40039,6 +40342,12 @@ function buildGeneratedSmokeCollection(generatedCollection, authConfig, options 
   if (authConfig?.enabled) {
     applyCollectionAuth(collection, authConfig);
     authRequestCount = applyAuthToCollectionItems(collection.item, authConfig);
+  } else if (options.authPlan) {
+    authRequestCount = applyAuthPlanToGeneratedCollection(
+      collection,
+      options.authPlan,
+      options.specPath
+    );
   }
   return {
     collection: sanitizeForCollectionUpdate(collection),
@@ -40053,8 +40362,18 @@ function buildCuratedSmokeCollection(generatedCollection, flow, resolvedRequests
     info2.name = `[Smoke] ${flow.name}`;
   }
   applyCanonicalCollectionIdentity(collection, options.canonicalCollection);
-  applyCollectionAuth(collection, authConfig);
-  const requestItems = resolvedRequests.map((request) => curateRequestItem(request, authConfig));
+  if (options.authPlan) {
+    prepareCollectionForAuthPlan(collection, options.authPlan);
+  } else {
+    applyCollectionAuth(collection, authConfig);
+  }
+  const requestItems = resolvedRequests.map(
+    (request) => curateRequestItem(
+      request,
+      authConfig,
+      options.authPlan ? resolveCuratedAuthProfile(options.authPlan, request.step.operationId) : void 0
+    )
+  );
   collection.item = isSecretsResolverEnabled(secretsResolverProvider) ? [buildSecretsResolverItem(secretsResolverProvider), ...requestItems] : requestItems;
   const sanitizedCollection = sanitizeForCollectionUpdate(collection);
   const bindingCount = flow.steps.reduce((sum, step) => sum + step.bindings.length, 0);
@@ -41984,6 +42303,169 @@ function resolveActionVersion2() {
   }
 }
 
+// src/auth/plan.ts
+var import_node_fs7 = require("node:fs");
+var import_yaml5 = __toESM(require_dist(), 1);
+function asRecord8(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function requireNonEmptyString(value, field) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`Invalid auth plan: ${field} must be a non-empty string.`);
+  }
+  return value.trim();
+}
+function readOptionalNonEmptyString(value, field) {
+  if (value === void 0) {
+    return void 0;
+  }
+  return requireNonEmptyString(value, field);
+}
+function parseOAuthProfile(profileName, value) {
+  if (value.grantType !== "client_credentials") {
+    throw new Error(
+      `Invalid auth plan: profiles.${profileName}.grantType must be client_credentials.`
+    );
+  }
+  if (value.clientAuthentication !== "body") {
+    throw new Error(
+      `Invalid auth plan: profiles.${profileName}.clientAuthentication must be body.`
+    );
+  }
+  const variables = asRecord8(value.variables);
+  if (!variables) {
+    throw new Error(`Invalid auth plan: profiles.${profileName}.variables must be an object.`);
+  }
+  const request = value.request === void 0 ? void 0 : asRecord8(value.request);
+  if (value.request !== void 0 && !request) {
+    throw new Error(`Invalid auth plan: profiles.${profileName}.request must be an object.`);
+  }
+  if (request?.contentType !== void 0 && request.contentType !== "application/x-www-form-urlencoded") {
+    throw new Error(
+      `Invalid auth plan: profiles.${profileName}.request.contentType must be application/x-www-form-urlencoded.`
+    );
+  }
+  const cache = value.cache === void 0 ? void 0 : asRecord8(value.cache);
+  if (value.cache !== void 0 && !cache) {
+    throw new Error(`Invalid auth plan: profiles.${profileName}.cache must be an object.`);
+  }
+  const refreshSkewSeconds = cache?.refreshSkewSeconds;
+  if (refreshSkewSeconds !== void 0 && (!Number.isInteger(refreshSkewSeconds) || Number(refreshSkewSeconds) < 0)) {
+    throw new Error(
+      `Invalid auth plan: profiles.${profileName}.cache.refreshSkewSeconds must be a non-negative integer.`
+    );
+  }
+  return {
+    type: "oauth2",
+    grantType: "client_credentials",
+    tokenUrl: requireNonEmptyString(value.tokenUrl, `profiles.${profileName}.tokenUrl`),
+    scope: readOptionalNonEmptyString(value.scope, `profiles.${profileName}.scope`),
+    clientAuthentication: "body",
+    request: request ? { contentType: request.contentType } : void 0,
+    cache: cache ? { refreshSkewSeconds } : void 0,
+    variables: {
+      clientId: requireNonEmptyString(variables.clientId, `profiles.${profileName}.variables.clientId`),
+      clientSecret: requireNonEmptyString(
+        variables.clientSecret,
+        `profiles.${profileName}.variables.clientSecret`
+      ),
+      accessToken: requireNonEmptyString(
+        variables.accessToken,
+        `profiles.${profileName}.variables.accessToken`
+      ),
+      expiresAt: requireNonEmptyString(variables.expiresAt, `profiles.${profileName}.variables.expiresAt`)
+    }
+  };
+}
+function parseApiKeyProfile(profileName, value) {
+  if (value.in !== "header" && value.in !== "query") {
+    throw new Error(`Invalid auth plan: profiles.${profileName}.in must be header or query.`);
+  }
+  const variables = asRecord8(value.variables);
+  if (!variables) {
+    throw new Error(`Invalid auth plan: profiles.${profileName}.variables must be an object.`);
+  }
+  return {
+    type: "apiKey",
+    in: value.in,
+    name: requireNonEmptyString(value.name, `profiles.${profileName}.name`),
+    variables: {
+      apiKey: requireNonEmptyString(variables.apiKey, `profiles.${profileName}.variables.apiKey`)
+    }
+  };
+}
+function parseProfile(profileName, value) {
+  const profile = asRecord8(value);
+  if (!profile) {
+    throw new Error(`Invalid auth plan: profiles.${profileName} must be an object.`);
+  }
+  if (profile.type === "oauth2") {
+    return parseOAuthProfile(profileName, profile);
+  }
+  if (profile.type === "apiKey") {
+    return parseApiKeyProfile(profileName, profile);
+  }
+  if (profile.type === "noauth") {
+    return { type: "noauth" };
+  }
+  throw new Error(
+    `Invalid auth plan: profiles.${profileName}.type must be oauth2, apiKey, or noauth.`
+  );
+}
+function validateAuthPlan(value) {
+  const document = asRecord8(value);
+  if (!document) {
+    throw new Error("Invalid auth plan: expected a YAML object.");
+  }
+  if (document.version !== 1) {
+    throw new Error("Invalid auth plan: version must be 1.");
+  }
+  const rawProfiles = asRecord8(document.profiles);
+  if (!rawProfiles || Object.keys(rawProfiles).length === 0) {
+    throw new Error("Invalid auth plan: profiles must contain at least one profile.");
+  }
+  const profiles = Object.fromEntries(
+    Object.entries(rawProfiles).map(([name, profile]) => [
+      requireNonEmptyString(name, "profile name"),
+      parseProfile(name, profile)
+    ])
+  );
+  if (!Array.isArray(document.targets) || document.targets.length === 0) {
+    throw new Error("Invalid auth plan: targets must contain at least one operation mapping.");
+  }
+  const seenOperationIds = /* @__PURE__ */ new Set();
+  const targets = document.targets.map((entry, index) => {
+    const target = asRecord8(entry);
+    if (!target) {
+      throw new Error(`Invalid auth plan: targets[${index}] must be an object.`);
+    }
+    const operationId = requireNonEmptyString(target.operationId, `targets[${index}].operationId`);
+    const profile = requireNonEmptyString(target.profile, `targets[${index}].profile`);
+    if (seenOperationIds.has(operationId)) {
+      throw new Error(`Invalid auth plan: operationId "${operationId}" is mapped more than once.`);
+    }
+    if (!profiles[profile]) {
+      throw new Error(
+        `Invalid auth plan: targets[${index}] references unknown profile "${profile}".`
+      );
+    }
+    seenOperationIds.add(operationId);
+    return { operationId, profile };
+  });
+  return { version: 1, profiles, targets };
+}
+function loadAuthPlan(authPlanPath) {
+  const resolvedPath = resolveWorkspaceRegularFile(authPlanPath, "auth-plan-path");
+  let document;
+  try {
+    document = (0, import_yaml5.parse)((0, import_node_fs7.readFileSync)(resolvedPath, "utf8"));
+  } catch (error2) {
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    throw new Error(`Invalid auth plan at ${authPlanPath}: ${message}`, { cause: error2 });
+  }
+  return validateAuthPlan(document);
+}
+
 // src/index.ts
 var STABLE_COLLECTION_UPDATE_MAX_ATTEMPTS = 6;
 var STABLE_COLLECTION_UPDATE_VERIFY_COUNT = 3;
@@ -42087,6 +42569,11 @@ function parseAuthConfig(value) {
   throw new Error("Invalid auth-config-json: supported auth types are oauth2 and apiKey.");
 }
 function readActionInputs(env = process.env) {
+  const authConfigValue = getInput2("auth-config-json", env);
+  const authPlanPath = getInput2("auth-plan-path", env) || void 0;
+  if (authConfigValue && authPlanPath) {
+    throw new Error("auth-config-json and auth-plan-path are mutually exclusive; provide only one.");
+  }
   const endpoints = applyEndpointOverrides(
     {
       apiBaseUrl: resolvePostmanApiBaseUrl(getInput2("postman-region", env)),
@@ -42111,7 +42598,9 @@ function readActionInputs(env = process.env) {
     postmanApiBaseUrl: endpoints.apiBaseUrl,
     postmanBifrostBaseUrl: endpoints.bifrostBaseUrl,
     postmanIapubBaseUrl: endpoints.iapubBaseUrl,
-    authConfig: parseAuthConfig(getInput2("auth-config-json", env)),
+    authConfig: parseAuthConfig(authConfigValue),
+    authPlanPath,
+    authPlan: authPlanPath ? loadAuthPlan(authPlanPath) : void 0,
     // Opt-in provider selection. The legacy boolean input is still honoured
     // (`true` -> the historical AWS helper) so existing callers keep working.
     secretsResolverProvider: parseSecretsResolverProvider(
@@ -42148,8 +42637,8 @@ function writeDebugDump(debugDumpPath, collection, actionCore) {
     return;
   }
   const resolvedPath = import_node_path3.default.isAbsolute(debugDumpPath) ? debugDumpPath : import_node_path3.default.resolve(process.cwd(), debugDumpPath);
-  (0, import_node_fs7.mkdirSync)(import_node_path3.default.dirname(resolvedPath), { recursive: true });
-  (0, import_node_fs7.writeFileSync)(resolvedPath, `${JSON.stringify(collection, null, 2)}
+  (0, import_node_fs8.mkdirSync)(import_node_path3.default.dirname(resolvedPath), { recursive: true });
+  (0, import_node_fs8.writeFileSync)(resolvedPath, `${JSON.stringify(collection, null, 2)}
 `, "utf8");
   actionCore.info(`Wrote transformed collection debug dump to ${resolvedPath}`);
 }
@@ -42230,6 +42719,9 @@ function ensureRequiredInputs(inputs) {
 }
 function validateInputsBeforeSideEffects(inputs) {
   ensureRequiredInputs(inputs);
+  if (inputs.authConfig && inputs.authPlan) {
+    throw new Error("auth-config-json and auth-plan-path are mutually exclusive; provide only one.");
+  }
   if (inputs.collectionSyncMode !== "refresh") {
     throw new Error(
       `collection-sync-mode=refresh is the only supported mode for postman-smoke-flow-action; received ${inputs.collectionSyncMode}.`
@@ -42278,6 +42770,12 @@ function createOutputs(summary2, derivedFlowPath) {
 function describeAuthConfig(authConfig) {
   return authConfig.type === "apiKey" ? "API key" : "OAuth";
 }
+function hasRuntimeAuth(inputs) {
+  return Boolean(inputs.authConfig?.enabled || inputs.authPlan);
+}
+function describeRuntimeAuth(inputs) {
+  return inputs.authPlan ? "mixed auth plan" : `${describeAuthConfig(inputs.authConfig)} auth`;
+}
 function getCollectionName(collection) {
   const info2 = isRecord(collection.info) ? collection.info : void 0;
   const name = typeof info2?.name === "string" ? info2.name.trim() : "";
@@ -42290,14 +42788,14 @@ async function runWithoutFlowManifest(inputs, dependencies, extraWarnings = []) 
       `Flow derivation produced ${extraWarnings.length} warning(s) and fail-on-flow-warning=true; refusing the uncurated canonical Smoke refresh.`
     );
   }
-  const authApplied = Boolean(inputs.authConfig?.enabled);
+  const authApplied = hasRuntimeAuth(inputs);
   const secretMasker = createInputSecretMasker(inputs);
   let tempCollectionId = "";
   let tempCollectionDeleted = false;
   let runFailed = false;
   const warnings = [
     ...extraWarnings,
-    authApplied ? `flow-path was not provided; refreshed canonical Smoke collection from the generated spec collection and applied ${describeAuthConfig(inputs.authConfig)} auth without flow curation.` : "flow-path was not provided; refreshed canonical Smoke collection from the generated spec collection without flow curation."
+    authApplied ? `flow-path was not provided; refreshed canonical Smoke collection from the generated spec collection and applied ${describeRuntimeAuth(inputs)} without flow curation.` : "flow-path was not provided; refreshed canonical Smoke collection from the generated spec collection without flow curation."
   ];
   try {
     const existingCollection = await dependencies.postman.getCollection(inputs.smokeCollectionId);
@@ -42314,13 +42812,17 @@ async function runWithoutFlowManifest(inputs, dependencies, extraWarnings = []) 
         secretsResolverProvider: inputs.secretsResolverProvider,
         collectionName: canonicalCollectionName,
         scriptSourceCollection: existingCollection,
-        canonicalCollection: existingCollection
+        canonicalCollection: existingCollection,
+        authPlan: inputs.authPlan,
+        specPath: inputs.specPath
       }),
       verifyCollection: (collection) => verifyGeneratedSmokeCollection(collection, inputs.authConfig, {
-        secretsResolverProvider: inputs.secretsResolverProvider
+        secretsResolverProvider: inputs.secretsResolverProvider,
+        authPlan: inputs.authPlan,
+        specPath: inputs.specPath
       })
     });
-    const authDescription = authApplied ? ` with Smoke ${describeAuthConfig(inputs.authConfig)} auth on ${transformed.authRequestCount} request(s)` : "";
+    const authDescription = authApplied ? ` with Smoke ${describeRuntimeAuth(inputs)} on ${transformed.authRequestCount} request(s)` : "";
     dependencies.core.info(
       `Updated canonical Smoke collection ${inputs.smokeCollectionId} from generated spec collection${authDescription}.`
     );
@@ -42524,11 +43026,12 @@ async function runWithFlowDefinition(inputs, dependencies, flow, warningMessages
           resolvedRequests2,
           inputs.authConfig,
           inputs.secretsResolverProvider,
-          { canonicalCollection }
+          { canonicalCollection, authPlan: inputs.authPlan }
         );
       },
       verifyCollection: (collection) => verifyCuratedSmokeCollection(collection, flow, inputs.authConfig, {
-        secretsResolverProvider: inputs.secretsResolverProvider
+        secretsResolverProvider: inputs.secretsResolverProvider,
+        authPlan: inputs.authPlan
       })
     });
     dependencies.core.info(`Updated canonical Smoke collection ${inputs.smokeCollectionId} from ${flowSource} flow.`);
@@ -42550,7 +43053,7 @@ async function runWithFlowDefinition(inputs, dependencies, flow, warningMessages
       derivation,
       temporaryCollectionId: tempCollectionId,
       canonicalSmokeCollectionId: inputs.smokeCollectionId,
-      authApplied: Boolean(inputs.authConfig?.enabled),
+      authApplied: hasRuntimeAuth(inputs),
       stepCount: flow.steps.length,
       resolvedOperationCount: resolvedRequests.length,
       appliedBindingCount: transformed.bindingCount,
@@ -42574,7 +43077,7 @@ async function runWithFlowDefinition(inputs, dependencies, flow, warningMessages
       derivation,
       temporaryCollectionId: tempCollectionId || void 0,
       canonicalSmokeCollectionId: inputs.smokeCollectionId,
-      authApplied: Boolean(inputs.authConfig?.enabled),
+      authApplied: hasRuntimeAuth(inputs),
       stepCount: 0,
       resolvedOperationCount: 0,
       appliedBindingCount: 0,

@@ -45,6 +45,7 @@ import {
   type Logger
 } from '@postman-cse/automation-core';
 import { resolveActionVersion } from './action-version.js';
+import { loadAuthPlan } from './auth/plan.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -193,6 +194,11 @@ function parseAuthConfig(value: string): SmokeAuthConfig | undefined {
 }
 
 export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionInputs {
+  const authConfigValue = getInput('auth-config-json', env);
+  const authPlanPath = getInput('auth-plan-path', env) || undefined;
+  if (authConfigValue && authPlanPath) {
+    throw new Error('auth-config-json and auth-plan-path are mutually exclusive; provide only one.');
+  }
   const endpoints = applyEndpointOverrides(
     {
       apiBaseUrl: resolvePostmanApiBaseUrl(getInput('postman-region', env)),
@@ -217,7 +223,9 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
     postmanApiBaseUrl: endpoints.apiBaseUrl,
     postmanBifrostBaseUrl: endpoints.bifrostBaseUrl,
     postmanIapubBaseUrl: endpoints.iapubBaseUrl,
-    authConfig: parseAuthConfig(getInput('auth-config-json', env)),
+    authConfig: parseAuthConfig(authConfigValue),
+    authPlanPath,
+    authPlan: authPlanPath ? loadAuthPlan(authPlanPath) : undefined,
     // Opt-in provider selection. The legacy boolean input is still honoured
     // (`true` -> the historical AWS helper) so existing callers keep working.
     secretsResolverProvider: parseSecretsResolverProvider(
@@ -361,6 +369,9 @@ function ensureRequiredInputs(inputs: ActionInputs): void {
 
 export function validateInputsBeforeSideEffects(inputs: ActionInputs): void {
   ensureRequiredInputs(inputs);
+  if (inputs.authConfig && inputs.authPlan) {
+    throw new Error('auth-config-json and auth-plan-path are mutually exclusive; provide only one.');
+  }
   if (inputs.collectionSyncMode !== 'refresh') {
     throw new Error(
       `collection-sync-mode=refresh is the only supported mode for postman-smoke-flow-action; received ${inputs.collectionSyncMode}.`
@@ -414,6 +425,14 @@ function describeAuthConfig(authConfig: SmokeAuthConfig): string {
   return authConfig.type === 'apiKey' ? 'API key' : 'OAuth';
 }
 
+function hasRuntimeAuth(inputs: ActionInputs): boolean {
+  return Boolean(inputs.authConfig?.enabled || inputs.authPlan);
+}
+
+function describeRuntimeAuth(inputs: ActionInputs): string {
+  return inputs.authPlan ? 'mixed auth plan' : `${describeAuthConfig(inputs.authConfig!)} auth`;
+}
+
 function getCollectionName(collection: JsonRecord): string | undefined {
   const info = isRecord(collection.info) ? collection.info : undefined;
   const name = typeof info?.name === 'string' ? info.name.trim() : '';
@@ -433,7 +452,7 @@ async function runWithoutFlowManifest(
       `Flow derivation produced ${extraWarnings.length} warning(s) and fail-on-flow-warning=true; refusing the uncurated canonical Smoke refresh.`
     );
   }
-  const authApplied = Boolean(inputs.authConfig?.enabled);
+  const authApplied = hasRuntimeAuth(inputs);
   const secretMasker = createInputSecretMasker(inputs);
   let tempCollectionId = '';
   let tempCollectionDeleted = false;
@@ -441,7 +460,7 @@ async function runWithoutFlowManifest(
   const warnings = [
     ...extraWarnings,
     authApplied
-      ? `flow-path was not provided; refreshed canonical Smoke collection from the generated spec collection and applied ${describeAuthConfig(inputs.authConfig!)} auth without flow curation.`
+      ? `flow-path was not provided; refreshed canonical Smoke collection from the generated spec collection and applied ${describeRuntimeAuth(inputs)} without flow curation.`
       : 'flow-path was not provided; refreshed canonical Smoke collection from the generated spec collection without flow curation.'
   ];
 
@@ -462,15 +481,21 @@ async function runWithoutFlowManifest(
           secretsResolverProvider: inputs.secretsResolverProvider,
           collectionName: canonicalCollectionName,
           scriptSourceCollection: existingCollection,
-          canonicalCollection: existingCollection
+          canonicalCollection: existingCollection,
+          authPlan: inputs.authPlan,
+          specPath: inputs.specPath
         }),
       verifyCollection: (collection) =>
         verifyGeneratedSmokeCollection(collection, inputs.authConfig, {
-          secretsResolverProvider: inputs.secretsResolverProvider
+          secretsResolverProvider: inputs.secretsResolverProvider,
+          authPlan: inputs.authPlan,
+          specPath: inputs.specPath
         })
     });
 
-    const authDescription = authApplied ? ` with Smoke ${describeAuthConfig(inputs.authConfig!)} auth on ${transformed.authRequestCount} request(s)` : '';
+    const authDescription = authApplied
+      ? ` with Smoke ${describeRuntimeAuth(inputs)} on ${transformed.authRequestCount} request(s)`
+      : '';
     dependencies.core.info(
       `Updated canonical Smoke collection ${inputs.smokeCollectionId} from generated spec collection${authDescription}.`
     );
@@ -726,12 +751,13 @@ async function runWithFlowDefinition(
           resolvedRequests,
           inputs.authConfig,
           inputs.secretsResolverProvider,
-          { canonicalCollection }
+          { canonicalCollection, authPlan: inputs.authPlan }
         );
       },
       verifyCollection: (collection) =>
         verifyCuratedSmokeCollection(collection, flow, inputs.authConfig, {
-          secretsResolverProvider: inputs.secretsResolverProvider
+          secretsResolverProvider: inputs.secretsResolverProvider,
+          authPlan: inputs.authPlan
         })
     });
     dependencies.core.info(`Updated canonical Smoke collection ${inputs.smokeCollectionId} from ${flowSource} flow.`);
@@ -759,7 +785,7 @@ async function runWithFlowDefinition(
       derivation,
       temporaryCollectionId: tempCollectionId,
       canonicalSmokeCollectionId: inputs.smokeCollectionId,
-      authApplied: Boolean(inputs.authConfig?.enabled),
+      authApplied: hasRuntimeAuth(inputs),
       stepCount: flow.steps.length,
       resolvedOperationCount: resolvedRequests.length,
       appliedBindingCount: transformed.bindingCount,
@@ -790,7 +816,7 @@ async function runWithFlowDefinition(
       derivation,
       temporaryCollectionId: tempCollectionId || undefined,
       canonicalSmokeCollectionId: inputs.smokeCollectionId,
-      authApplied: Boolean(inputs.authConfig?.enabled),
+      authApplied: hasRuntimeAuth(inputs),
       stepCount: 0,
       resolvedOperationCount: 0,
       appliedBindingCount: 0,

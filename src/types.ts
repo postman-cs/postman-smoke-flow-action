@@ -52,6 +52,8 @@ export type ActionInputs = {
   postmanBifrostBaseUrl: string;
   postmanIapubBaseUrl: string;
   authConfig?: SmokeAuthConfig;
+  authPlanPath?: string;
+  authPlan?: SmokeAuthPlan;
   secretsResolverProvider: SecretsResolverProvider;
   specPath?: string;
   debugDumpPath?: string;
@@ -67,8 +69,7 @@ export type ActionInputs = {
   channels?: string;
 };
 
-export type SmokeOAuthConfig = {
-  enabled: boolean;
+export type SmokeOAuthSettings = {
   type: 'oauth2';
   grantType: 'client_credentials';
   tokenUrl: string;
@@ -93,8 +94,11 @@ export type SmokeOAuthConfig = {
   };
 };
 
-export type SmokeApiKeyConfig = {
+export type SmokeOAuthConfig = SmokeOAuthSettings & {
   enabled: boolean;
+};
+
+export type SmokeApiKeySettings = {
   type: 'apiKey';
   in: 'header' | 'query';
   name: string;
@@ -103,7 +107,44 @@ export type SmokeApiKeyConfig = {
   };
 };
 
+export type SmokeApiKeyConfig = SmokeApiKeySettings & {
+  enabled: boolean;
+};
+
 export type SmokeAuthConfig = SmokeOAuthConfig | SmokeApiKeyConfig;
+
+export type SmokeOAuthProfile = SmokeOAuthSettings & {
+  scope?: string;
+  variables: {
+    clientId: string;
+    clientSecret: string;
+    accessToken: string;
+    expiresAt: string;
+  };
+};
+
+export type SmokeApiKeyProfile = SmokeApiKeySettings & {
+  variables: {
+    apiKey: string;
+  };
+};
+
+export type SmokeNoAuthProfile = {
+  type: 'noauth';
+};
+
+export type SmokeAuthProfile = SmokeOAuthProfile | SmokeApiKeyProfile | SmokeNoAuthProfile;
+
+export type SmokeAuthPlanTarget = {
+  operationId: string;
+  profile: string;
+};
+
+export type SmokeAuthPlan = {
+  version: 1;
+  profiles: Record<string, SmokeAuthProfile>;
+  targets: SmokeAuthPlanTarget[];
+};
 
 export type FlowWarning = {
   message: string;

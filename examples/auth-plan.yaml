@@ -1,0 +1,28 @@
+version: 1
+profiles:
+  payments-entra:
+    type: oauth2
+    grantType: client_credentials
+    clientAuthentication: body
+    tokenUrl: "{{ENTRA_ID_URL}}"
+    scope: "{{PAYMENTS_CLIENT_ID}}/.default"
+    variables:
+      clientId: APIM_CLIENT_ID
+      clientSecret: APIM_CLIENT_SECRET
+      accessToken: PAYMENTS_TOKEN
+      expiresAt: PAYMENTS_TOKEN_EXPIRES_AT
+  reports-key:
+    type: apiKey
+    in: header
+    name: X-API-Key
+    variables:
+      apiKey: REPORTS_APIKEY
+  health-public:
+    type: noauth
+targets:
+  - operationId: createPayment
+    profile: payments-entra
+  - operationId: getReport
+    profile: reports-key
+  - operationId: getHealth
+    profile: health-public

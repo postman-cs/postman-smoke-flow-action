@@ -131,6 +131,51 @@ function matchesOperationByRequestShape(item: CollectionItem, operationMatch?: O
   );
 }
 
+export function resolveOperationRequestTargets(
+  operationIds: string[],
+  generatedCollection: CollectionItem,
+  specPath?: string,
+  options: { allowMissing?: boolean } = {}
+): Map<string, CollectionItem> {
+  const requestItems = flattenRequestItems(generatedCollection);
+  const operationMatches = loadOperationMatches(specPath);
+  const resolved = new Map<string, CollectionItem>();
+
+  for (const operationId of operationIds) {
+    const nameMatches = requestItems.filter((item) => matchesByName(item, operationId));
+    if (nameMatches.length > 1) {
+      throw new ValidationError(
+        `Auth plan operationId "${operationId}" is ambiguous: ${nameMatches.length} requests match by name.`
+      );
+    }
+    if (nameMatches.length === 1) {
+      resolved.set(operationId, nameMatches[0]!);
+      continue;
+    }
+
+    const requestShapeMatches = requestItems.filter((item) =>
+      matchesOperationByRequestShape(item, operationMatches.get(operationId))
+    );
+    if (requestShapeMatches.length > 1) {
+      throw new ValidationError(
+        `Auth plan operationId "${operationId}" is ambiguous: ${requestShapeMatches.length} requests match its method and path.`
+      );
+    }
+    if (requestShapeMatches.length === 1) {
+      resolved.set(operationId, requestShapeMatches[0]!);
+      continue;
+    }
+
+    if (!options.allowMissing) {
+      throw new ValidationError(
+        `Could not resolve auth plan operationId "${operationId}" in the generated temporary Smoke collection.`
+      );
+    }
+  }
+
+  return resolved;
+}
+
 export function resolveFlowRequests(
   flow: FlowDefinition,
   generatedCollection: CollectionItem,

@@ -10,6 +10,7 @@ export const smokeFlowActionContract = {
     'postman-api-key': { required: false },
     'postman-region': { required: false, default: 'us' },
     'auth-config-json': { required: false },
+    'auth-plan-path': { required: false },
     'secrets-resolver': { required: false, default: 'none' },
     'secrets-resolver-enabled': { required: false },
     'spec-path': { required: false },

@@ -204,4 +204,25 @@ describe('readActionInputs', () => {
       } as NodeJS.ProcessEnv)
     ).toThrow('variables.apiKey must be a non-empty string');
   });
+
+  it('loads an auth plan and rejects combining it with legacy auth config', () => {
+    const inputs = readActionInputs({
+      INPUT_AUTH_PLAN_PATH: 'examples/auth-plan.yaml'
+    } as NodeJS.ProcessEnv);
+
+    expect(inputs.authPlanPath).toBe('examples/auth-plan.yaml');
+    expect(inputs.authPlan?.profiles['payments-entra']?.type).toBe('oauth2');
+
+    expect(() =>
+      readActionInputs({
+        INPUT_AUTH_PLAN_PATH: 'examples/auth-plan.yaml',
+        INPUT_AUTH_CONFIG_JSON: JSON.stringify({
+          enabled: true,
+          type: 'apiKey',
+          in: 'header',
+          name: 'X-API-Key'
+        })
+      } as NodeJS.ProcessEnv)
+    ).toThrow('mutually exclusive');
+  });
 });

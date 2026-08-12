@@ -4,9 +4,14 @@ import type {
   FlowStep,
   ResolvedRequest,
   SmokeApiKeyConfig,
+  SmokeApiKeySettings,
   SmokeAuthConfig,
-  SmokeOAuthConfig
+  SmokeAuthPlan,
+  SmokeAuthProfile,
+  SmokeOAuthConfig,
+  SmokeOAuthSettings
 } from '../types.js';
+import { resolveOperationRequestTargets } from '../flow/resolver.js';
 import {
   createSecretsResolverItem,
   isSecretsResolverEnabled,
@@ -31,6 +36,8 @@ export type GeneratedSmokeCollectionBuildOptions = {
   secretsResolverProvider?: SecretsResolverProvider;
   collectionName?: string;
   scriptSourceCollection?: JsonRecord;
+  authPlan?: SmokeAuthPlan;
+  specPath?: string;
   /**
    * The canonical Smoke collection currently in Postman. Bootstrap elects and
    * adopts that final by exact `info.name`; a refresh that renames it via the
@@ -284,7 +291,7 @@ function removeQueryParam(request: JsonRecord, key: string): void {
   }
 }
 
-function getOAuthVariableNames(authConfig: SmokeOAuthConfig): Required<NonNullable<SmokeOAuthConfig['variables']>> {
+function getOAuthVariableNames(authConfig: SmokeOAuthSettings): Required<NonNullable<SmokeOAuthSettings['variables']>> {
   return {
     tokenUrl: authConfig.variables?.tokenUrl || 'auth_token_url',
     scope: authConfig.variables?.scope || 'auth_scope',
@@ -299,15 +306,15 @@ function isOAuthAuthConfig(authConfig: SmokeAuthConfig): authConfig is SmokeOAut
   return authConfig.type === 'oauth2';
 }
 
-function getApiKeyVariableName(authConfig: SmokeApiKeyConfig): string {
+function getApiKeyVariableName(authConfig: SmokeApiKeySettings): string {
   return authConfig.variables?.apiKey?.trim() || 'api_key';
 }
 
-function getApiKeyName(authConfig: SmokeApiKeyConfig): string {
+function getApiKeyName(authConfig: SmokeApiKeySettings): string {
   return authConfig.name.trim();
 }
 
-function createApiKeyAuth(authConfig: SmokeApiKeyConfig): JsonRecord {
+function createApiKeyAuth(authConfig: SmokeApiKeySettings): JsonRecord {
   return {
     type: 'apikey',
     apikey: [
@@ -330,7 +337,7 @@ function createApiKeyAuth(authConfig: SmokeApiKeyConfig): JsonRecord {
   };
 }
 
-function setRequestBearerAuth(request: JsonRecord, authConfig: SmokeOAuthConfig): void {
+function setRequestBearerAuth(request: JsonRecord, authConfig: SmokeOAuthSettings): void {
   const variables = getOAuthVariableNames(authConfig);
   request.auth = {
     type: 'bearer',
@@ -345,7 +352,7 @@ function setRequestBearerAuth(request: JsonRecord, authConfig: SmokeOAuthConfig)
   removeHeader(request, authConfig.apply?.header || 'Authorization');
 }
 
-function prepareRequestForCollectionApiKeyAuth(request: JsonRecord, authConfig: SmokeApiKeyConfig): void {
+function prepareRequestForCollectionApiKeyAuth(request: JsonRecord, authConfig: SmokeApiKeySettings): void {
   const apiKeyName = getApiKeyName(authConfig);
   delete request.auth;
   if (authConfig.in === 'header') {
@@ -400,6 +407,37 @@ function seedApiKeyCollectionVariables(collection: JsonRecord, authConfig: Smoke
   upsertCollectionVariable(collection, getApiKeyVariableName(authConfig));
 }
 
+function getTemplateVariableNames(template: string | undefined): string[] {
+  if (!template) {
+    return [];
+  }
+  return [...template.matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)]
+    .map((match) => match[1]?.trim() ?? '')
+    .filter(Boolean);
+}
+
+function seedAuthPlanVariables(collection: JsonRecord, authPlan: SmokeAuthPlan): void {
+  for (const profile of Object.values(authPlan.profiles)) {
+    if (profile.type === 'oauth2') {
+      const variables = profile.variables;
+      for (const variableName of [
+        variables.clientId,
+        variables.clientSecret,
+        variables.accessToken,
+        variables.expiresAt,
+        ...getTemplateVariableNames(profile.tokenUrl),
+        ...getTemplateVariableNames(profile.scope)
+      ]) {
+        upsertCollectionVariable(collection, variableName);
+      }
+      continue;
+    }
+    if (profile.type === 'apiKey') {
+      upsertCollectionVariable(collection, profile.variables.apiKey);
+    }
+  }
+}
+
 function getScriptExecText(event: JsonRecord): string {
   const script = asRecord(event.script);
   const exec = script?.exec;
@@ -414,6 +452,68 @@ function getScriptExecText(event: JsonRecord): string {
 
 function isGeneratedOAuthEvent(event: JsonRecord): boolean {
   return event.listen === 'prerequest' && getScriptExecText(event).includes(GENERATED_OAUTH_EVENT_MARKER);
+}
+
+function setRequestEvents(item: JsonRecord, events: JsonRecord[]): void {
+  if (events.length > 0) {
+    item.event = events;
+  } else {
+    delete item.event;
+  }
+}
+
+function removeGeneratedOAuthEventsFromItem(item: JsonRecord): JsonRecord[] {
+  const events = Array.isArray(item.event) ? item.event : [];
+  return events
+    .map((entry) => asRecord(entry))
+    .filter((entry): entry is JsonRecord => Boolean(entry))
+    .filter((entry) => !isGeneratedOAuthEvent(entry));
+}
+
+function applyAuthProfileToItem(item: JsonRecord, profile: SmokeAuthProfile): void {
+  const request = asRecord(item.request);
+  if (!request) {
+    return;
+  }
+
+  const retainedEvents = removeGeneratedOAuthEventsFromItem(item);
+  if (profile.type === 'oauth2') {
+    setRequestBearerAuth(request, profile);
+    setRequestEvents(item, [
+      ...retainedEvents,
+      createOAuthPreRequestEvent(profile, { scopeTemplate: profile.scope })
+    ]);
+    return;
+  }
+  if (profile.type === 'apiKey') {
+    request.auth = createApiKeyAuth(profile);
+    if (profile.in === 'header') {
+      removeHeader(request, profile.name);
+    } else {
+      removeQueryParam(request, profile.name);
+    }
+    setRequestEvents(item, retainedEvents);
+    return;
+  }
+
+  request.auth = { type: 'noauth' };
+  removeHeader(request, 'Authorization');
+  setRequestEvents(item, retainedEvents);
+}
+
+function prepareCollectionForAuthPlan(collection: JsonRecord, authPlan: SmokeAuthPlan): void {
+  collection.auth = { type: 'noauth' };
+  const existingEvents = Array.isArray(collection.event) ? collection.event : [];
+  const retainedEvents = existingEvents
+    .map((entry) => asRecord(entry))
+    .filter((entry): entry is JsonRecord => Boolean(entry))
+    .filter((entry) => !isGeneratedOAuthEvent(entry));
+  if (retainedEvents.length > 0) {
+    collection.event = retainedEvents;
+  } else {
+    delete collection.event;
+  }
+  seedAuthPlanVariables(collection, authPlan);
 }
 
 function applyCollectionAuth(collection: JsonRecord, authConfig: SmokeAuthConfig | undefined): void {
@@ -720,6 +820,62 @@ function collectSmokeRequestItems(items: unknown): JsonRecord[] {
   });
 }
 
+function getAuthPlanTargetMap(authPlan: SmokeAuthPlan): Map<string, string> {
+  return new Map(authPlan.targets.map((target) => [target.operationId, target.profile]));
+}
+
+function applyAuthPlanToGeneratedCollection(
+  collection: JsonRecord,
+  authPlan: SmokeAuthPlan,
+  specPath?: string
+): number {
+  prepareCollectionForAuthPlan(collection, authPlan);
+  const targets = resolveOperationRequestTargets(
+    authPlan.targets.map((target) => target.operationId),
+    collection,
+    specPath
+  );
+  const assignedItems = new Set<JsonRecord>();
+
+  for (const target of authPlan.targets) {
+    const item = targets.get(target.operationId);
+    if (!item) {
+      continue;
+    }
+    if (assignedItems.has(item)) {
+      throw new Error(
+        `Auth plan operationId "${target.operationId}" resolves to a request that is already assigned to another profile.`
+      );
+    }
+    applyAuthProfileToItem(item, authPlan.profiles[target.profile]!);
+    assignedItems.add(item);
+  }
+
+  const missingItems = collectSmokeRequestItems(collection.item).filter((item) => !assignedItems.has(item));
+  if (missingItems.length > 0) {
+    const names = missingItems.slice(0, 5).map((item) => String(item.name ?? '<unnamed request>'));
+    const suffix = missingItems.length > 5 ? `, and ${missingItems.length - 5} more` : '';
+    throw new Error(
+      `Auth plan does not assign a profile to ${missingItems.length} active Smoke request(s): ${names.join(', ')}${suffix}. Add an operationId target for every request, using noauth when authentication is intentionally absent.`
+    );
+  }
+
+  return assignedItems.size;
+}
+
+function resolveCuratedAuthProfile(
+  authPlan: SmokeAuthPlan,
+  operationId: string
+): SmokeAuthProfile {
+  const profileName = getAuthPlanTargetMap(authPlan).get(operationId);
+  if (!profileName) {
+    throw new Error(
+      `Auth plan does not assign a profile to active Smoke operationId "${operationId}".`
+    );
+  }
+  return authPlan.profiles[profileName]!;
+}
+
 function hasGeneratedOAuthEvent(collection: JsonRecord): boolean {
   const events = Array.isArray(collection.event) ? collection.event : [];
   return events
@@ -777,7 +933,7 @@ function countBearerAuthRequests(items: unknown, authConfig: SmokeOAuthConfig): 
   }, 0);
 }
 
-function authUsesApiKey(auth: JsonRecord | null, authConfig: SmokeApiKeyConfig): boolean {
+function authUsesApiKey(auth: JsonRecord | null, authConfig: SmokeApiKeySettings): boolean {
   if (!auth || auth.type !== 'apikey') {
     return false;
   }
@@ -831,6 +987,154 @@ function hasFlowRequestScripts(item: JsonRecord): boolean {
     ? item.event.map((entry) => asRecord(entry)).filter((entry): entry is JsonRecord => Boolean(entry))
     : [];
   return events.some((entry) => entry.listen === 'prerequest') && events.some((entry) => entry.listen === 'test');
+}
+
+function itemHasGeneratedOAuthEvent(item: JsonRecord): boolean {
+  return getRequestEvents(item).some((event) => isGeneratedOAuthEvent(event));
+}
+
+function verifyAuthPlanAssignment(
+  item: JsonRecord,
+  profile: SmokeAuthProfile,
+  variableKeys: Set<string>
+): string[] {
+  const request = asRecord(item.request);
+  if (!request) {
+    return ['request body is missing'];
+  }
+  const failures: string[] = [];
+
+  if (profile.type === 'oauth2') {
+    const requiredVariables = [
+      profile.variables.clientId,
+      profile.variables.clientSecret,
+      profile.variables.accessToken,
+      profile.variables.expiresAt,
+      ...getTemplateVariableNames(profile.tokenUrl),
+      ...getTemplateVariableNames(profile.scope)
+    ];
+    const missingVariables = requiredVariables.filter((name) => !variableKeys.has(name));
+    if (!requestUsesBearerAuth(request, profile.variables.accessToken)) {
+      failures.push(`missing bearer auth for {{${profile.variables.accessToken}}}`);
+    }
+    if (!itemHasGeneratedOAuthEvent(item)) {
+      failures.push('missing request-level OAuth token script');
+    }
+    if (missingVariables.length > 0) {
+      failures.push(`missing variable(s): ${missingVariables.join(', ')}`);
+    }
+    return failures;
+  }
+
+  if (profile.type === 'apiKey') {
+    if (!authUsesApiKey(asRecord(request.auth), profile)) {
+      failures.push(`missing request-level ${profile.in} API key auth`);
+    }
+    if (!variableKeys.has(profile.variables.apiKey)) {
+      failures.push(`missing API key variable: ${profile.variables.apiKey}`);
+    }
+    if (itemHasGeneratedOAuthEvent(item)) {
+      failures.push('unexpected OAuth token script');
+    }
+    return failures;
+  }
+
+  const auth = asRecord(request.auth);
+  if (auth?.type !== 'noauth') {
+    failures.push('missing explicit noauth request setting');
+  }
+  if (itemHasGeneratedOAuthEvent(item)) {
+    failures.push('unexpected OAuth token script');
+  }
+  return failures;
+}
+
+export function verifySmokeCollectionAuthPlan(
+  collection: JsonRecord,
+  authPlan: SmokeAuthPlan,
+  options: { specPath?: string; flow?: FlowDefinition } = {}
+): CollectionVerification {
+  const failures: string[] = [];
+  const variableKeys = getCollectionVariableKeys(collection);
+  const collectionAuth = asRecord(collection.auth);
+  if (collectionAuth?.type !== 'noauth') {
+    failures.push('collection-level auth must be noauth when an auth plan is active');
+  }
+  if (hasGeneratedOAuthEvent(collection)) {
+    failures.push('OAuth token acquisition must be request-level when an auth plan is active');
+  }
+
+  const assignments: Array<{ item: JsonRecord; profile: SmokeAuthProfile; operationId: string }> = [];
+  try {
+    if (options.flow) {
+      const itemsByName = new Map(
+        getTopLevelItems(collection)
+          .filter((item) => asRecord(item.request) && !isSecretsResolverItem(item))
+          .map((item) => [String(item.name ?? ''), item])
+      );
+      const targetMap = getAuthPlanTargetMap(authPlan);
+      for (const step of options.flow.steps) {
+        const itemName = step.name?.trim() || step.operationId;
+        const item = itemsByName.get(itemName);
+        const profileName = targetMap.get(step.operationId);
+        if (!item || !profileName) {
+          failures.push(`active operationId "${step.operationId}" has no persisted auth profile`);
+          continue;
+        }
+        assignments.push({ item, profile: authPlan.profiles[profileName]!, operationId: step.operationId });
+      }
+    } else {
+      const resolved = resolveOperationRequestTargets(
+        authPlan.targets.map((target) => target.operationId),
+        collection,
+        options.specPath
+      );
+      const assignedItems = new Set<JsonRecord>();
+      for (const target of authPlan.targets) {
+        const item = resolved.get(target.operationId);
+        if (!item) {
+          continue;
+        }
+        if (assignedItems.has(item)) {
+          failures.push(`operationId "${target.operationId}" resolves to an already assigned request`);
+          continue;
+        }
+        assignedItems.add(item);
+        assignments.push({
+          item,
+          profile: authPlan.profiles[target.profile]!,
+          operationId: target.operationId
+        });
+      }
+      const missingItems = collectSmokeRequestItems(collection.item).filter((item) => !assignedItems.has(item));
+      if (missingItems.length > 0) {
+        failures.push(`${missingItems.length} active request(s) have no auth profile`);
+      }
+    }
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
+  }
+
+  for (const assignment of assignments) {
+    const assignmentFailures = verifyAuthPlanAssignment(
+      assignment.item,
+      assignment.profile,
+      variableKeys
+    );
+    failures.push(
+      ...assignmentFailures.map(
+        (failure) => `operationId "${assignment.operationId}": ${failure}`
+      )
+    );
+  }
+
+  return {
+    ok: failures.length === 0,
+    summary:
+      failures.length > 0
+        ? failures.join('; ')
+        : `auth plan persisted on ${assignments.length} request(s)`
+  };
 }
 
 export function verifySmokeCollectionAuth(
@@ -897,7 +1201,11 @@ export function verifySmokeCollectionAuth(
 export function verifyGeneratedSmokeCollection(
   collection: JsonRecord,
   authConfig: SmokeAuthConfig | undefined,
-  options: { secretsResolverProvider?: SecretsResolverProvider } = {}
+  options: {
+    secretsResolverProvider?: SecretsResolverProvider;
+    authPlan?: SmokeAuthPlan;
+    specPath?: string;
+  } = {}
 ): CollectionVerification {
   const requestItems = collectSmokeRequestItems(collection.item);
   const requestsMissingUrls = requestItems
@@ -929,6 +1237,14 @@ export function verifyGeneratedSmokeCollection(
       failures.push(authVerification.summary);
     }
   }
+  if (options.authPlan) {
+    const authVerification = verifySmokeCollectionAuthPlan(collection, options.authPlan, {
+      specPath: options.specPath
+    });
+    if (!authVerification.ok) {
+      failures.push(authVerification.summary);
+    }
+  }
 
   return {
     ok: failures.length === 0,
@@ -940,7 +1256,7 @@ export function verifyCuratedSmokeCollection(
   collection: JsonRecord,
   flow: FlowDefinition,
   authConfig: SmokeAuthConfig | undefined,
-  options: { secretsResolverProvider?: SecretsResolverProvider } = {}
+  options: { secretsResolverProvider?: SecretsResolverProvider; authPlan?: SmokeAuthPlan } = {}
 ): CollectionVerification {
   const topLevelItems = getTopLevelItems(collection);
   const requestItems = topLevelItems.filter((item) => asRecord(item.request) && !isSecretsResolverItem(item));
@@ -976,6 +1292,12 @@ export function verifyCuratedSmokeCollection(
       failures.push(authVerification.summary);
     }
   }
+  if (options.authPlan) {
+    const authVerification = verifySmokeCollectionAuthPlan(collection, options.authPlan, { flow });
+    if (!authVerification.ok) {
+      failures.push(authVerification.summary);
+    }
+  }
 
   return {
     ok: failures.length === 0,
@@ -983,16 +1305,26 @@ export function verifyCuratedSmokeCollection(
   };
 }
 
-function curateRequestItem(resolved: ResolvedRequest, authConfig?: SmokeAuthConfig): JsonRecord {
+function curateRequestItem(
+  resolved: ResolvedRequest,
+  authConfig?: SmokeAuthConfig,
+  authProfile?: SmokeAuthProfile
+): JsonRecord {
   const item = structuredClone(resolved.item);
   item.name = resolved.step.name?.trim() || resolved.step.operationId;
   const request = asRecord(item.request);
   if (request) {
     updateRequestUrl(request, resolved.step);
     updateRequestBody(request, resolved.step);
-    applyAuthToRequest(request, authConfig);
   }
   applyFlowScripts(item, resolved.step);
+  const curatedRequest = asRecord(item.request);
+  if (curatedRequest) {
+    applyAuthToRequest(curatedRequest, authConfig);
+  }
+  if (authProfile) {
+    applyAuthProfileToItem(item, authProfile);
+  }
   return item;
 }
 
@@ -1043,6 +1375,12 @@ export function buildGeneratedSmokeCollection(
   if (authConfig?.enabled) {
     applyCollectionAuth(collection, authConfig);
     authRequestCount = applyAuthToCollectionItems(collection.item, authConfig);
+  } else if (options.authPlan) {
+    authRequestCount = applyAuthPlanToGeneratedCollection(
+      collection,
+      options.authPlan,
+      options.specPath
+    );
   }
 
   return {
@@ -1058,7 +1396,7 @@ export function buildCuratedSmokeCollection(
   resolvedRequests: ResolvedRequest[],
   authConfig?: SmokeAuthConfig,
   secretsResolverProvider: SecretsResolverProvider = 'none',
-  options: { canonicalCollection?: JsonRecord } = {}
+  options: { canonicalCollection?: JsonRecord; authPlan?: SmokeAuthPlan } = {}
 ): { collection: JsonRecord; bindingCount: number; extractCount: number; assertionCount: number } {
   const collection = sanitizeForCollectionUpdate(structuredClone(generatedCollection)) as JsonRecord;
   const info = asRecord(collection.info);
@@ -1066,8 +1404,20 @@ export function buildCuratedSmokeCollection(
     info.name = `[Smoke] ${flow.name}`;
   }
   applyCanonicalCollectionIdentity(collection, options.canonicalCollection);
-  applyCollectionAuth(collection, authConfig);
-  const requestItems = resolvedRequests.map((request) => curateRequestItem(request, authConfig));
+  if (options.authPlan) {
+    prepareCollectionForAuthPlan(collection, options.authPlan);
+  } else {
+    applyCollectionAuth(collection, authConfig);
+  }
+  const requestItems = resolvedRequests.map((request) =>
+    curateRequestItem(
+      request,
+      authConfig,
+      options.authPlan
+        ? resolveCuratedAuthProfile(options.authPlan, request.step.operationId)
+        : undefined
+    )
+  );
   collection.item = isSecretsResolverEnabled(secretsResolverProvider)
     ? [buildSecretsResolverItem(secretsResolverProvider), ...requestItems]
     : requestItems;
