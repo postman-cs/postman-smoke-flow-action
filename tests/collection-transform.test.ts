@@ -1195,6 +1195,16 @@ describe('collection transform', () => {
     expect(
       verifyGeneratedSmokeCollection(collection, undefined, { authPlan })
     ).toEqual({ ok: true, summary: 'generated Smoke collection persisted with 4 request(s)' });
+
+    const persistedCollection = structuredClone(collection);
+    delete persistedCollection.auth;
+    const persistedPublicRequest = (
+      (persistedCollection.item as Array<Record<string, unknown>>)[3]!.request as Record<string, unknown>
+    );
+    delete persistedPublicRequest.auth;
+    expect(
+      verifyGeneratedSmokeCollection(persistedCollection, undefined, { authPlan })
+    ).toEqual({ ok: true, summary: 'generated Smoke collection persisted with 4 request(s)' });
   });
 
   it('rejects an auth plan that leaves an active generated request unmapped', () => {

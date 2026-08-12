@@ -993,6 +993,11 @@ function itemHasGeneratedOAuthEvent(item: JsonRecord): boolean {
   return getRequestEvents(item).some((event) => isGeneratedOAuthEvent(event));
 }
 
+function isPersistedNoAuth(auth: JsonRecord | null): boolean {
+  // The Postman v3 collection API persists noauth by omitting the auth block.
+  return auth === null || auth.type === 'noauth';
+}
+
 function verifyAuthPlanAssignment(
   item: JsonRecord,
   profile: SmokeAuthProfile,
@@ -1040,7 +1045,7 @@ function verifyAuthPlanAssignment(
   }
 
   const auth = asRecord(request.auth);
-  if (auth?.type !== 'noauth') {
+  if (!isPersistedNoAuth(auth)) {
     failures.push('missing explicit noauth request setting');
   }
   if (itemHasGeneratedOAuthEvent(item)) {
@@ -1057,7 +1062,7 @@ export function verifySmokeCollectionAuthPlan(
   const failures: string[] = [];
   const variableKeys = getCollectionVariableKeys(collection);
   const collectionAuth = asRecord(collection.auth);
-  if (collectionAuth?.type !== 'noauth') {
+  if (!isPersistedNoAuth(collectionAuth)) {
     failures.push('collection-level auth must be noauth when an auth plan is active');
   }
   if (hasGeneratedOAuthEvent(collection)) {

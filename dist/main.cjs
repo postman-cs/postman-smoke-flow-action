@@ -40049,6 +40049,9 @@ function hasFlowRequestScripts(item) {
 function itemHasGeneratedOAuthEvent(item) {
   return getRequestEvents(item).some((event) => isGeneratedOAuthEvent(event));
 }
+function isPersistedNoAuth(auth) {
+  return auth === null || auth.type === "noauth";
+}
 function verifyAuthPlanAssignment(item, profile, variableKeys) {
   const request = asRecord4(item.request);
   if (!request) {
@@ -40089,7 +40092,7 @@ function verifyAuthPlanAssignment(item, profile, variableKeys) {
     return failures;
   }
   const auth = asRecord4(request.auth);
-  if (auth?.type !== "noauth") {
+  if (!isPersistedNoAuth(auth)) {
     failures.push("missing explicit noauth request setting");
   }
   if (itemHasGeneratedOAuthEvent(item)) {
@@ -40101,7 +40104,7 @@ function verifySmokeCollectionAuthPlan(collection, authPlan, options = {}) {
   const failures = [];
   const variableKeys = getCollectionVariableKeys(collection);
   const collectionAuth = asRecord4(collection.auth);
-  if (collectionAuth?.type !== "noauth") {
+  if (!isPersistedNoAuth(collectionAuth)) {
     failures.push("collection-level auth must be noauth when an auth plan is active");
   }
   if (hasGeneratedOAuthEvent(collection)) {
