@@ -17,7 +17,7 @@ function job(name: string): string {
 
 function namedStep(name: string): string {
   const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = releaseWorkflow.match(new RegExp(`      - name: ${escapedName}\\n[\\s\\S]*?(?=\\n      - |\\n  [a-z-]+:|$)`));
+  const match = releaseWorkflow.match(new RegExp(`      - (?:id: [^\\n]+\\n        )?name: ${escapedName}\\n[\\s\\S]*?(?=\\n      - |\\n  [a-z-]+:|$)`));
   return match?.[0] ?? '';
 }
 
@@ -156,7 +156,7 @@ describe('release workflow publishing contract', () => {
     );
   });
 
-  it('publishes only verified artifacts in npm-before-GitHub-before-alias order', () => {
+  it('publishes only verified artifacts in GitHub-before-npm-before-alias order', () => {
     const publish = job('publish');
     const extract = namedStep('Extract artifact-bound verifier');
     expect(publish).toMatch(/permissions:\n {6}contents: write\n {6}id-token: write/);
@@ -171,25 +171,29 @@ describe('release workflow publishing contract', () => {
     expect(extract).not.toContain('mkdir -p scripts');
     expect(publish).toContain('node "$RUNNER_TEMP/verify-release-artifacts.mjs" .');
     expect(publish).not.toContain('node scripts/verify-release-artifacts.mjs');
-    expect(publish.indexOf('node "$RUNNER_TEMP/verify-release-artifacts.mjs" .')).toBeLessThan(
-      publish.indexOf('Publish npm package or verify existing identity')
-    );
-    expect(publish.indexOf('npm publish ./release.tgz --provenance --access public')).toBeLessThan(
-      publish.indexOf('softprops/action-gh-release')
-    );
-    expect(publish).toContain('assertNpmSriMatch');
-    expect(publish).toContain('computeNpmSri');
+    expect(publish.indexOf('node "$RUNNER_TEMP/verify-release-artifacts.mjs" .')).toBeLessThan(publish.indexOf('Publish GitHub release assets'));
+    expect(publish.indexOf('softprops/action-gh-release')).toBeLessThan(publish.indexOf('Publish npm package or verify existing identity'));
+    expect(publish).toContain('outputs:\n      published: ${{ steps.npm-publish.outputs.published }}');
+    expect(publish).toContain('id: npm-publish');
+    expect(publish).toContain('continue-on-error: true');
+    expect(namedStep('Publish npm package or verify existing identity')).toContain('set -euo pipefail');
+    expect(namedStep('Publish npm package or verify existing identity')).toContain("sed -i '/_authToken/d'");
+    expect(namedStep('Verify npm registry identity')).toContain('assertNpmSriMatch');
+    expect(namedStep('Verify npm registry identity')).toContain('computeNpmSri');
+    expect(publish.indexOf('Verify npm registry identity')).toBeLessThan(publish.indexOf('Report npm publish skipped'));
     expect(releaseWorkflow.indexOf('  publish:')).toBeLessThan(releaseWorkflow.indexOf('  advance-major-alias:'));
     expect(releaseWorkflow).toContain('group: release-${{ github.repository }}');
     expect(releaseWorkflow).toContain('cancel-in-progress: false');
   });
 
-  it('uses staged artifacts and verifies npm identity before GitHub release', () => {
+  it('uses staged artifacts, releases to GitHub before best-effort npm, and verifies successful npm publishes', () => {
     const publishSetup = job('publish').match(/uses: actions\/setup-node@v\d+\n(?: {8}[^\n]+\n| {10}[^\n]+\n)*/)?.[0] ?? '';
     expect(publishSetup).not.toMatch(/\n\s+cache:/);
     expect(npmRegistrySetupStep()).not.toMatch(/\n\s+if:/);
     expect(namedStep('Publish npm package or verify existing identity')).toContain('npm view "$PKG_NAME@$PKG_VERSION" dist.integrity');
     expect(namedStep('Publish npm package or verify existing identity')).toContain('npm publish ./release.tgz --provenance --access public');
+    expect(namedStep('Verify npm registry identity')).toContain('npm view "$PKG_NAME@$PKG_VERSION" dist.integrity');
+    expect(namedStep('Report npm publish skipped')).toContain('GitHub Release remains authoritative');
     expect(namedStep('Publish GitHub release assets')).toContain('release-manifest.json');
     expect(job('verify-package')).toContain('name: release-artifacts-${{ github.run_id }}-${{ github.run_attempt }}');
   });
