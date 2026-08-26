@@ -34,7 +34,7 @@ const distCli = path.join(repoRoot, 'dist', 'cli.cjs');
 const packagingSource = readFileSync(fileURLToPath(import.meta.url), 'utf8');
 const tempDirs: string[] = [];
 
-const EXPECTED_PACKAGE_NAME = '@postman/onboarding-smoke-flow';
+const EXPECTED_PACKAGE_NAME = '@postman-cs/onboarding-smoke-flow';
 const EXPECTED_AUTOMATION_CORE_PACKAGE = '@postman-cse/automation-core';
 const AUTOMATION_CORE_WORKSPACE_ROOT = path.resolve(repoRoot, '../../../automation-core');
 const AUTOMATION_CORE_INSTALLED_ROOT = path.join(
@@ -414,7 +414,7 @@ async function runPosixInstallPackaging(): Promise<{ binPath: string; version: s
   const binPath = path.join(
     installRoot,
     'node_modules',
-    '@postman',
+    '@postman-cs',
     'onboarding-smoke-flow',
     'dist',
     'cli.cjs'

@@ -23,7 +23,7 @@ import {
 const VERIFIER = join(process.cwd(), 'scripts/verify-release-artifacts.mjs');
 const CLASSIFIER = join(process.cwd(), 'scripts/classify-release.mjs');
 
-const PACKAGE_NAME = '@postman/onboarding-smoke-flow';
+const PACKAGE_NAME = '@postman-cs/onboarding-smoke-flow';
 const PACKAGE_VERSION = '2.1.6';
 const REPOSITORY = 'postman-cs/postman-smoke-flow-action';
 const COMMIT_SHA = 'abc123';

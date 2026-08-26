@@ -1,6 +1,6 @@
 # Postman Onboarding: Smoke Flow
 
-[![CI](https://github.com/postman-cs/postman-smoke-flow-action/actions/workflows/ci.yml/badge.svg)](https://github.com/postman-cs/postman-smoke-flow-action/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/postman-cs/postman-smoke-flow-action?sort=semver)](https://github.com/postman-cs/postman-smoke-flow-action/releases) [![npm](https://img.shields.io/npm/v/%40postman%2Fonboarding-smoke-flow)](https://www.npmjs.com/package/@postman/onboarding-smoke-flow) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/postman-cs/postman-smoke-flow-action/actions/workflows/ci.yml/badge.svg)](https://github.com/postman-cs/postman-smoke-flow-action/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/postman-cs/postman-smoke-flow-action?sort=semver)](https://github.com/postman-cs/postman-smoke-flow-action/releases) [![npm](https://img.shields.io/npm/v/%40postman-cs%2Fonboarding-smoke-flow)](https://www.npmjs.com/package/@postman-cs/onboarding-smoke-flow) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Reshapes the generated Postman Smoke collection into an ordered smoke journey using one effective flow path — explicit `flow-path`, or `postman/flow.yaml` when omitted. Under `flow-mode: auto`, a valid manifest at that path is curated; an absent manifest is derived deterministically from the OpenAPI spec at `spec-path` and can be persisted there for the next curated run — with optional runtime auth injection for [OAuth2](https://learning.postman.com/docs/use/send-requests/authorization/oauth-20/) and API keys.
 
@@ -190,7 +190,7 @@ Set `debug-dump-path` to write the transformed collection JSON to disk before th
 The npm package ships a `postman-smoke-flow` binary that accepts every action input as the same kebab-case flag and prints the action outputs as JSON to stdout:
 
 ```sh
-npx --package @postman/onboarding-smoke-flow postman-smoke-flow \
+npx --package @postman-cs/onboarding-smoke-flow postman-smoke-flow \
   --project-name core-payments \
   --workspace-id "$POSTMAN_WORKSPACE_ID" \
   --spec-id "$POSTMAN_SPEC_ID" \
@@ -309,7 +309,7 @@ postman-region selects the Postman public API host used to re-mint the access to
 
 ## Resources
 
-- npm package: [@postman/onboarding-smoke-flow](https://www.npmjs.com/package/@postman/onboarding-smoke-flow)
+- npm package: [@postman-cs/onboarding-smoke-flow](https://www.npmjs.com/package/@postman-cs/onboarding-smoke-flow)
 - Docs in this repo: [flow.yaml manifest format](docs/flow-manifest.md), [Smoke OAuth configuration](docs/smoke-oauth.md), [Smoke API key configuration](docs/smoke-api-key.md), [generated tests](docs/generated-tests.md), [CLI usage for non-GitHub CI](docs/cli.md), [self-contained binary](docs/self-contained-binary.md)
 - Marketplace docs: [Support](SUPPORT.md), [Security policy](SECURITY.md), [Release policy](RELEASE_POLICY.md), [Contributing](CONTRIBUTING.md)
 - Postman scripting references: [OAuth 2.0](https://learning.postman.com/docs/use/send-requests/authorization/oauth-20/), [pre-request scripts](https://learning.postman.com/docs/tests-and-scripts/write-scripts/pre-request-scripts/), [test scripts](https://learning.postman.com/docs/tests-and-scripts/write-scripts/test-scripts/), [pm variables](https://learning.postman.com/docs/tests-and-scripts/write-scripts/postman-sandbox-reference/pm-variables/)

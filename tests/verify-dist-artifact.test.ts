@@ -15,7 +15,7 @@ interface RepoConfig {
   census: string[];
 }
 
-const CONFIG: RepoConfig = {"pkgName":"@postman/onboarding-smoke-flow","binName":"postman-smoke-flow","pkgMain":"dist/main.cjs","actionMain":"dist/main.cjs","census":["cli.cjs","main.cjs"]};
+const CONFIG: RepoConfig = {"pkgName":"@postman-cs/onboarding-smoke-flow","binName":"postman-smoke-flow","pkgMain":"dist/main.cjs","actionMain":"dist/main.cjs","census":["cli.cjs","main.cjs"]};
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
