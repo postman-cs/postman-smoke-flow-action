@@ -122,11 +122,9 @@ jobs:
       - id: npm-publish
         name: Publish npm package or verify existing identity
         continue-on-error: true
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then sed -i '/_authToken/d' "${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"; fi
+          sed -i '/_authToken/d' "${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}"
           echo "published=false" >> "$GITHUB_OUTPUT"
           PKG_NAME=$(node -e "console.log(JSON.parse(require('child_process').execFileSync('tar',['-xOf','release.tgz','package/package.json'],{encoding:'utf8'})).name)")
           PKG_VERSION=$(node -e "console.log(JSON.parse(require('child_process').execFileSync('tar',['-xOf','release.tgz','package/package.json'],{encoding:'utf8'})).version)")
@@ -156,7 +154,7 @@ jobs:
       - name: Report npm publish skipped
         if: steps.npm-publish.outputs.published != 'true'
         run: |
-          MESSAGE="npm publish for @postman-cs/onboarding-smoke-flow@${GITHUB_REF_NAME#v} did not complete (missing/invalid NPM_TOKEN or registry error); GitHub Release remains authoritative; recover via backfill-npm.yml once publish access exists"
+          MESSAGE="npm publish for @postman-cs/onboarding-smoke-flow@${GITHUB_REF_NAME#v} did not complete (OIDC trusted publisher or registry error); GitHub Release remains authoritative; recover via backfill-npm.yml if needed"
           echo "::warning::$MESSAGE"
           echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
 
