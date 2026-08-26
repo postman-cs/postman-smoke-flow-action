@@ -16,10 +16,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   accountTypeFromConsumer,
   type AccountType
-} from '@postman-cse/automation-core';
+} from '@postman-cs/automation-core';
 
 import { readActionInputs, resolveGatewayTeamContext } from '../src/index.js';
-import { AccessTokenGatewayClient } from '@postman-cse/automation-core';
+import { AccessTokenGatewayClient } from '@postman-cs/automation-core';
 import { mintAccessTokenIfNeeded, AccessTokenProvider } from '../src/lib/postman/token-provider.js';
 import { createSecretMasker } from '../src/lib/secrets.js';
 import {

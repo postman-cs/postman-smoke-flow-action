@@ -9,7 +9,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { AccessTokenProvider } from '../src/lib/postman/token-provider.js';
-import { AccessTokenGatewayClient } from '@postman-cse/automation-core';
+import { AccessTokenGatewayClient } from '@postman-cs/automation-core';
 import { POSTMAN_ENDPOINT_PROFILES } from '../src/lib/postman/base-urls.js';
 import { PostmanGatewaySmokeClient } from '../src/postman/postman-gateway-smoke-client.js';
 

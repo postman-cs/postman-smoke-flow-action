@@ -1,4 +1,4 @@
-import type { SecretsResolverProvider } from '@postman-cse/automation-core';
+import type { SecretsResolverProvider } from '@postman-cs/automation-core';
 
 export type BindingSource = 'example' | 'literal' | 'prior_output';
 

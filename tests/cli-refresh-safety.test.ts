@@ -42,8 +42,8 @@ vi.mock('../src/postman/credential-identity.js', async () => {
 
 // Spy on telemetry only. The logger stays real so these tests keep exercising
 // the same log path production runs on.
-vi.mock('@postman-cse/automation-core', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@postman-cse/automation-core')>()),
+vi.mock('@postman-cs/automation-core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@postman-cs/automation-core')>()),
   createTelemetryContext: () => telemetrySpy
 }));
 
