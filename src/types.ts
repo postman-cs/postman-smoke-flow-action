@@ -153,7 +153,7 @@ export type ActionOutputs = {
   'applied-binding-count': string;
   'applied-extract-count': string;
   'assertion-count': string;
-  /** Repo-relative path where this run persisted a derived flow.yaml ('' when nothing was written). */
+  /** Effective-working-directory-relative path where this run persisted a derived flow.yaml. */
   'derived-flow-path': string;
   'sync-status': string;
   'branch-decision': string;

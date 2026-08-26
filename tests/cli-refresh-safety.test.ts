@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -250,7 +250,9 @@ describe('CLI no-flow refresh safety', () => {
 describe('input validation before side effects', () => {
   it('runAction derives and persists an absent custom flow-path, then converges to curated', async () => {
     const previousCwd = process.cwd();
+    const previousWorkspace = process.env.GITHUB_WORKSPACE;
     const tempDir = mkdtempSync(path.join(os.tmpdir(), 'smoke-flow-action-convergence-'));
+    const serviceDir = path.join(tempDir, 'services', 'payments');
     mintSpy.mockClear();
     preflightSpy.mockClear();
     telemetrySpy.emitCompletion.mockClear();
@@ -259,9 +261,12 @@ describe('input validation before side effects', () => {
     const customFlowPath = 'ci/generated-smoke-flow.yaml';
 
     try {
-      writeFileSync(path.join(tempDir, 'openapi.yaml'), DERIVABLE_SPEC);
+      mkdirSync(serviceDir, { recursive: true });
+      writeFileSync(path.join(serviceDir, 'openapi.yaml'), DERIVABLE_SPEC);
       process.chdir(tempDir);
       const env = {
+        GITHUB_WORKSPACE: tempDir,
+        INPUT_WORKING_DIRECTORY: 'services/payments',
         INPUT_PROJECT_NAME: 'payments',
         INPUT_WORKSPACE_ID: 'ws-1',
         INPUT_SPEC_ID: 'spec-1',
@@ -275,7 +280,8 @@ describe('input validation before side effects', () => {
       const run1 = await runAction(actionCore, env, undefined, dependencies);
       expect(run1['flow-apply-status']).toBe('success');
       expect(run1['derived-flow-path']).toBe(customFlowPath);
-      expect(existsSync(path.join(tempDir, customFlowPath))).toBe(true);
+      expect(existsSync(path.join(serviceDir, customFlowPath))).toBe(true);
+      expect(existsSync(path.join(tempDir, customFlowPath))).toBe(false);
       expect(JSON.parse(run1['flow-apply-summary-json'])).toMatchObject({ flowSource: 'derived' });
       expect(actionCore.setOutput).toHaveBeenCalledWith('derived-flow-path', customFlowPath);
       expect(postman.generateCollection).toHaveBeenCalledTimes(1);
@@ -290,6 +296,11 @@ describe('input validation before side effects', () => {
       expect(postman.updateCollection).toHaveBeenCalledTimes(2);
     } finally {
       process.chdir(previousCwd);
+      if (previousWorkspace === undefined) {
+        delete process.env.GITHUB_WORKSPACE;
+      } else {
+        process.env.GITHUB_WORKSPACE = previousWorkspace;
+      }
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
