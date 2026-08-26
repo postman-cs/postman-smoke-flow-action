@@ -15,6 +15,8 @@ describe('CLI argument parsing', () => {
         'node',
         'postman-smoke-flow',
         '--project-name=payments',
+        '--working-directory',
+        'services/payments',
         '--workspace-id',
         'ws-123',
         '--postman-api-key=PMAK-123'
@@ -23,6 +25,7 @@ describe('CLI argument parsing', () => {
     );
 
     expect(env.INPUT_PROJECT_NAME).toBe('payments');
+    expect(env.INPUT_WORKING_DIRECTORY).toBe('services/payments');
     expect(env.INPUT_WORKSPACE_ID).toBe('ws-123');
     expect(env.INPUT_POSTMAN_API_KEY).toBe('PMAK-123');
   });

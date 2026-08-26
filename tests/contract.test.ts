@@ -59,6 +59,7 @@ describe('postman-smoke-flow-action contract', () => {
     const manifest = loadManifest();
     expect(manifest.name).toBe('Postman Onboarding: Smoke Flow');
     expect(manifest.inputs['flow-path']?.required).toBe(false);
+    expect(manifest.inputs['working-directory']).toMatchObject({ required: false, default: '' });
     expect(manifest.inputs['smoke-collection-id']?.required).toBe(true);
     // Off by default: the helper is opt-in, and the legacy boolean carries no default.
     expect(manifest.inputs['secrets-resolver']?.default).toBe('none');

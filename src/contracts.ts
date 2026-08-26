@@ -1,5 +1,6 @@
 export const smokeFlowActionContract = {
   inputs: {
+    'working-directory': { required: false, default: '' },
     'project-name': { required: true },
     'workspace-id': { required: true },
     'spec-id': { required: true },

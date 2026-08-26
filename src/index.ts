@@ -45,6 +45,7 @@ import {
   type Logger
 } from '@postman-cse/automation-core';
 import { resolveActionVersion } from './action-version.js';
+import { activateWorkingDirectory } from './lib/working-directory.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -952,6 +953,10 @@ export async function runAction(
   injectedLogger?: Logger,
   injectedDependencies?: Omit<SmokeFlowDependencies, 'core'>
 ): Promise<ActionOutputs> {
+  activateWorkingDirectory(
+    getInput('working-directory', env),
+    env.GITHUB_WORKSPACE ?? process.cwd()
+  );
   const logger =
     injectedLogger ??
     createLogger({

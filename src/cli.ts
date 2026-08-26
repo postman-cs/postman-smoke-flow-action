@@ -9,6 +9,7 @@ import { summarizeError } from './lib/logging.js';
 import { resolveActionVersion } from './action-version.js';
 import { DEFAULT_FLOW_PATH, readActionInputs, runAction } from './index.js';
 import type { CoreLike } from './types.js';
+import { activateWorkingDirectory } from './lib/working-directory.js';
 
 const outputs: Record<string, string> = {};
 
@@ -97,6 +98,7 @@ export async function runCli(
     return;
   }
 
+  activateWorkingDirectory(parsed.env.INPUT_WORKING_DIRECTORY, process.cwd());
   const mergedEnv: NodeJS.ProcessEnv = { ...env, ...parsed.env };
   const inputs = readActionInputs(mergedEnv);
   assertCliNoFlowRefreshAllowed({

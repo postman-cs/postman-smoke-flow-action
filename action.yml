@@ -5,6 +5,10 @@ branding:
   icon: zap
   color: orange
 inputs:
+  working-directory:
+    description: Repository-root-relative directory used for flow/spec paths and generated artifacts.
+    required: false
+    default: ''
   project-name:
     description: Service project name used for temporary smoke collection naming.
     required: true
@@ -18,7 +22,7 @@ inputs:
     description: Canonical Smoke collection ID to refresh in place.
     required: true
   flow-path:
-    description: Optional repo-root-relative path to the flow.yaml manifest. Defaults to postman/flow.yaml. Under flow-mode auto the action runs curated when a manifest exists at the effective path, otherwise derives a smoke flow from spec-path and persists it there; without spec-path (or under flow-mode off) the canonical Smoke collection is refreshed from the generated spec collection without flow curation.
+    description: Optional path relative to the effective working directory for the flow.yaml manifest. Defaults to postman/flow.yaml. Under flow-mode auto the action runs curated when a manifest exists at the effective path, otherwise derives a smoke flow from spec-path and persists it there; without spec-path (or under flow-mode off) the canonical Smoke collection is refreshed from the generated spec collection without flow curation.
     required: false
   flow-mode:
     description: Flow selection policy. auto (default) runs curated when a flow.yaml exists at the effective path (flow-path or postman/flow.yaml) and otherwise derives a deterministic smoke flow from spec-path, persisting it to that path; curated requires flow-path; off disables curation entirely and refreshes the canonical Smoke collection from the generated spec collection.
@@ -46,10 +50,10 @@ inputs:
     description: 'Deprecated. Legacy boolean spelling of secrets-resolver: true selects the AWS helper, false selects none. Prefer secrets-resolver, which also supports azure and gcp. Ignored when secrets-resolver is set.'
     required: false
   spec-path:
-    description: Optional repo-root-relative path to the local OpenAPI spec for validation and debug context.
+    description: Optional path relative to the effective working directory for the local OpenAPI spec used for validation and debug context.
     required: false
   debug-dump-path:
-    description: Optional repo-root-relative or absolute path to write the transformed collection JSON before update.
+    description: Optional effective-working-directory-relative or absolute path to write the transformed collection JSON before update.
     required: false
   collection-sync-mode:
     description: Collection lifecycle policy. Refresh is the supported v1 mode.
@@ -107,7 +111,7 @@ outputs:
   assertion-count:
     description: Number of generated assertions applied across flow steps.
   derived-flow-path:
-    description: Repo-relative path where this run persisted a derived flow.yaml (empty when a curated manifest was used, curation was off, persistence was disabled, or the run was gated). Commit it to make the next run curated.
+    description: Effective-working-directory-relative path where this run persisted a derived flow.yaml (empty when a curated manifest was used, curation was off, persistence was disabled, or the run was gated). Commit it to make the next run curated.
   sync-status:
     description: 'Branch-aware sync status: synced, skipped-branch-gate, or empty under branch-strategy legacy.'
   branch-decision:
