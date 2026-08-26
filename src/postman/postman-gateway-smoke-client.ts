@@ -1,4 +1,4 @@
-import { AccessTokenGatewayClient, HttpError } from '@postman-cse/automation-core';
+import { AccessTokenGatewayClient, HttpError } from '@postman-cs/automation-core';
 import { summarizeError } from '../lib/logging.js';
 import type { AccessTokenProvider } from '../lib/postman/token-provider.js';
 import type { PostmanAppVersionProvider } from '../lib/postman/app-version.js';

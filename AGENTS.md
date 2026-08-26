@@ -28,7 +28,7 @@ src/
     paths.ts                     # Path resolution helpers
     postman/
       token-provider.ts          # AccessTokenProvider: holds access token, re-mints from PMAK on 401
-  @postman-cse/automation-core   # Shared gateway transport, retry, and HttpError
+  @postman-cs/automation-core   # Shared gateway transport, retry, and HttpError
 tests/
 ```
 

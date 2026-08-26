@@ -35,8 +35,8 @@ const packagingSource = readFileSync(fileURLToPath(import.meta.url), 'utf8');
 const tempDirs: string[] = [];
 
 const EXPECTED_PACKAGE_NAME = '@postman-cs/onboarding-smoke-flow';
-const EXPECTED_AUTOMATION_CORE_PACKAGE = '@postman-cse/automation-core';
-const AUTOMATION_CORE_WORKSPACE_ROOT = path.resolve(repoRoot, '../../../automation-core');
+const EXPECTED_AUTOMATION_CORE_PACKAGE = '@postman-cs/automation-core';
+const AUTOMATION_CORE_WORKSPACE_ROOT = path.resolve(repoRoot, '../automation-core');
 const AUTOMATION_CORE_INSTALLED_ROOT = path.join(
   repoRoot,
   'node_modules',

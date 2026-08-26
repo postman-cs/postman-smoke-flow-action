@@ -43,7 +43,7 @@ import {
   createTelemetryContext,
   parseSecretsResolverProvider,
   type Logger
-} from '@postman-cse/automation-core';
+} from '@postman-cs/automation-core';
 import { resolveActionVersion } from './action-version.js';
 import { activateWorkingDirectory } from './lib/working-directory.js';
 

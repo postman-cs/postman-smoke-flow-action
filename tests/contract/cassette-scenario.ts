@@ -5,13 +5,13 @@
  * file with zero live transport.
  *
  * This is the third leg of the shared cassette transport: bootstrap, repo-sync,
- * and smoke-flow all replay through `@postman-cse/automation-core/cassette`, so
+ * and smoke-flow all replay through `@postman-cs/automation-core/cassette`, so
  * one wire-contract format covers the whole composite spine.
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import type { Cassette } from '@postman-cse/automation-core/cassette';
+import type { Cassette } from '@postman-cs/automation-core/cassette';
 
 import type { PlatformOptions } from './platform-fake.js';
 

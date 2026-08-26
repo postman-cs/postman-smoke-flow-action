@@ -12,7 +12,7 @@ import {
   isSecretsResolverEnabled,
   SECRETS_RESOLVER_ITEM_NAME,
   type SecretsResolverProvider
-} from '@postman-cse/automation-core';
+} from '@postman-cs/automation-core';
 
 import {
   createOAuthPreRequestEvent,

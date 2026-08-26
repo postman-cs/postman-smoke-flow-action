@@ -9,7 +9,7 @@
  * provable offline.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { createReplayFetch } from '@postman-cse/automation-core/cassette';
+import { createReplayFetch } from '@postman-cs/automation-core/cassette';
 
 import { runContractAction } from './harness.js';
 import {
