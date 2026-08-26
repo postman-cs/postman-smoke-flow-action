@@ -180,6 +180,10 @@ describe('release workflow publishing contract', () => {
     expect(namedStep('Publish npm package or verify existing identity')).toContain("sed -i '/_authToken/d'");
     expect(namedStep('Verify npm registry identity')).toContain('assertNpmSriMatch');
     expect(namedStep('Verify npm registry identity')).toContain('computeNpmSri');
+    expect(namedStep('Verify npm registry identity')).toContain('for attempt in $(seq 1 40)');
+    expect(namedStep('Verify npm registry identity')).toContain('sleep 15');
+    expect(namedStep('Verify npm registry identity')).toContain('npm error code E404');
+    expect(namedStep('Verify npm registry identity')).toContain('non-E404 error');
     expect(publish.indexOf('Verify npm registry identity')).toBeLessThan(publish.indexOf('Report npm publish skipped'));
     expect(releaseWorkflow.indexOf('  publish:')).toBeLessThan(releaseWorkflow.indexOf('  advance-major-alias:'));
     expect(releaseWorkflow).toContain('group: release-${{ github.repository }}');

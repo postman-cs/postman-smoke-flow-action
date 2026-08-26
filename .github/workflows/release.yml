@@ -137,20 +137,35 @@ jobs:
       - name: Verify npm registry identity
         if: steps.npm-publish.outputs.published == 'true'
         run: |
+          set -euo pipefail
           PKG_NAME=$(node -e "console.log(JSON.parse(require('child_process').execFileSync('tar',['-xOf','release.tgz','package/package.json'],{encoding:'utf8'})).name)")
           PKG_VERSION=$(node -e "console.log(JSON.parse(require('child_process').execFileSync('tar',['-xOf','release.tgz','package/package.json'],{encoding:'utf8'})).version)")
-          if EXISTING=$(npm view "$PKG_NAME@$PKG_VERSION" dist.integrity 2>/dev/null); then
-            EXISTING="$EXISTING" VERIFIER="$RUNNER_TEMP/verify-release-artifacts.mjs" node --input-type=module <<'NODE'
+          NPM_VIEW_STATUS=1
+          for attempt in $(seq 1 40); do
+            set +e
+            npm view "$PKG_NAME@$PKG_VERSION" dist.integrity >/tmp/npm-integrity 2>/tmp/npm-view.err
+            NPM_VIEW_STATUS=$?
+            set -e
+            [ "$NPM_VIEW_STATUS" -eq 0 ] && break
+            if ! grep -q 'npm error code E404' /tmp/npm-view.err; then
+              echo '::error::npm view failed with a non-E404 error; refusing to verify the published package'
+              cat /tmp/npm-view.err >&2
+              exit 1
+            fi
+            if [ "$attempt" -lt 40 ]; then
+              echo "::notice::registry read-back attempt $attempt/40 has not resolved yet"
+              sleep 15
+            fi
+          done
+          [ "$NPM_VIEW_STATUS" -eq 0 ] || { echo '::error::npm package is not visible after a successful publish'; exit 1; }
+          EXISTING=$(cat /tmp/npm-integrity)
+          EXISTING="$EXISTING" VERIFIER="$RUNNER_TEMP/verify-release-artifacts.mjs" node --input-type=module <<'NODE'
           import { readFileSync } from 'node:fs';
           import { pathToFileURL } from 'node:url';
           const { assertNpmSriMatch, computeNpmSri } = await import(pathToFileURL(process.env.VERIFIER).href);
           assertNpmSriMatch(process.env.EXISTING, computeNpmSri(readFileSync('release.tgz')));
           NODE
-            echo '::notice::npm version already published with matching integrity'
-          else
-            echo '::error::npm registry has no integrity for the published version'
-            exit 1
-          fi
+          echo '::notice::npm version already published with matching integrity'
       - name: Report npm publish skipped
         if: steps.npm-publish.outputs.published != 'true'
         run: |
