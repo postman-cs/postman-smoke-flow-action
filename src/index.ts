@@ -951,12 +951,15 @@ export async function runAction(
   actionCore: CoreLike = core,
   env: NodeJS.ProcessEnv = process.env,
   injectedLogger?: Logger,
-  injectedDependencies?: Omit<SmokeFlowDependencies, 'core'>
+  injectedDependencies?: Omit<SmokeFlowDependencies, 'core'>,
+  execution: { workingDirectoryAlreadyActivated?: boolean } = {}
 ): Promise<ActionOutputs> {
-  activateWorkingDirectory(
-    getInput('working-directory', env),
-    env.GITHUB_WORKSPACE ?? process.cwd()
-  );
+  if (!execution.workingDirectoryAlreadyActivated) {
+    activateWorkingDirectory(
+      getInput('working-directory', env),
+      env.GITHUB_WORKSPACE ?? process.cwd()
+    );
+  }
   const logger =
     injectedLogger ??
     createLogger({

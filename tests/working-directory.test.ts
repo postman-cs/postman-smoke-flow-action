@@ -133,4 +133,51 @@ describe('activateWorkingDirectory', () => {
     expect(process.cwd()).toBe(service);
     expect(process.env.GITHUB_WORKSPACE).toBe(service);
   });
+
+  it('activates exactly once when the CLI reaches action execution', async () => {
+    const root = makeRoot();
+    const service = realpathSync(path.join(root, 'services', 'payments'));
+    writeFileSync(path.join(service, 'openapi.yaml'), 'openapi: 3.1.0\ninfo:\n  title: Payments\n  version: 1.0.0\npaths: {}\n');
+    process.chdir(root);
+    const originalRef = process.env.GITHUB_REF;
+    const originalRefName = process.env.GITHUB_REF_NAME;
+    process.env.GITHUB_WORKSPACE = root;
+    process.env.GITHUB_REF = 'refs/heads/feature/monorepo';
+    process.env.GITHUB_REF_NAME = 'feature/monorepo';
+
+    try {
+      const outputs = await runCli([
+        'node',
+        'postman-smoke-flow',
+        '--working-directory',
+        'services/payments',
+        '--project-name',
+        'payments',
+        '--workspace-id',
+        'workspace-1',
+        '--spec-id',
+        'spec-1',
+        '--smoke-collection-id',
+        'collection-1',
+        '--spec-path',
+        'openapi.yaml',
+        '--branch-strategy',
+        'publish-gate',
+        '--canonical-branch',
+        'main'
+      ]);
+
+      expect(outputs).toMatchObject({
+        'sync-status': 'skipped-branch-gate',
+        'flow-apply-status': 'skipped'
+      });
+      expect(process.cwd()).toBe(service);
+      expect(process.env.GITHUB_WORKSPACE).toBe(service);
+    } finally {
+      if (originalRef === undefined) delete process.env.GITHUB_REF;
+      else process.env.GITHUB_REF = originalRef;
+      if (originalRefName === undefined) delete process.env.GITHUB_REF_NAME;
+      else process.env.GITHUB_REF_NAME = originalRefName;
+    }
+  });
 });
