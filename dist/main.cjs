@@ -42731,11 +42731,13 @@ async function runGatedSkip(inputs, decision, actionCore) {
   process.env[BRANCH_DECISION_ENV] = serializeBranchDecision(decision);
   return outputs;
 }
-async function runAction(actionCore = core_exports, env = process.env, injectedLogger, injectedDependencies) {
-  activateWorkingDirectory(
-    getInput2("working-directory", env),
-    env.GITHUB_WORKSPACE ?? process.cwd()
-  );
+async function runAction(actionCore = core_exports, env = process.env, injectedLogger, injectedDependencies, execution = {}) {
+  if (!execution.workingDirectoryAlreadyActivated) {
+    activateWorkingDirectory(
+      getInput2("working-directory", env),
+      env.GITHUB_WORKSPACE ?? process.cwd()
+    );
+  }
   const logger = injectedLogger ?? createLogger({
     sink: actionSink(actionCore),
     env,

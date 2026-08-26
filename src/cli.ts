@@ -108,7 +108,11 @@ export async function runCli(
     acknowledgeNoFlowRefresh: parsed.acknowledgeNoFlowRefresh
   });
 
-  await runAction(actionCore, mergedEnv);
+  // CLI safety checks require the effective service root before runAction. Tell
+  // the shared action path not to resolve the same relative input a second time.
+  await runAction(actionCore, mergedEnv, undefined, undefined, {
+    workingDirectoryAlreadyActivated: true
+  });
   return outputs;
 }
 
