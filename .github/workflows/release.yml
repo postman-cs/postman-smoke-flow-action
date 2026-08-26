@@ -156,7 +156,7 @@ jobs:
       - name: Report npm publish skipped
         if: steps.npm-publish.outputs.published != 'true'
         run: |
-          MESSAGE="npm publish for @postman/onboarding-smoke-flow@${GITHUB_REF_NAME#v} did not complete (missing/invalid NPM_TOKEN or registry error); GitHub Release remains authoritative; recover via backfill-npm.yml once publish access exists"
+          MESSAGE="npm publish for @postman-cs/onboarding-smoke-flow@${GITHUB_REF_NAME#v} did not complete (missing/invalid NPM_TOKEN or registry error); GitHub Release remains authoritative; recover via backfill-npm.yml once publish access exists"
           echo "::warning::$MESSAGE"
           echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
 

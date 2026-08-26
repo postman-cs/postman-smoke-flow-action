@@ -3,7 +3,7 @@
 The npm package ships a `postman-smoke-flow` binary for GitLab CI, Bitbucket Pipelines, Azure DevOps, Jenkins, and local validation jobs.
 
 ```sh
-npm install -g @postman/onboarding-smoke-flow
+npm install -g @postman-cs/onboarding-smoke-flow
 
 postman-smoke-flow \
   --project-name core-payments \
@@ -108,7 +108,7 @@ concurrency:
 For one-off runs without a global install:
 
 ```sh
-npx --package @postman/onboarding-smoke-flow postman-smoke-flow \
+npx --package @postman-cs/onboarding-smoke-flow postman-smoke-flow \
   --project-name core-payments \
   --workspace-id "$POSTMAN_WORKSPACE_ID" \
   --spec-id "$POSTMAN_SPEC_ID" \
