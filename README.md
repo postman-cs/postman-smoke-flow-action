@@ -163,7 +163,7 @@ smoke:
 
 ### Debug the transformed collection with debug-dump-path
 
-Set `debug-dump-path` to write the transformed collection JSON to disk before the update call, then upload it as a workflow artifact for inspection:
+Set `debug-dump-path` to write the transformed collection JSON to disk before the update call, then upload it as a workflow artifact for inspection. The path must be relative to the effective working directory and must not already exist; absolute paths, traversal, and symlinks are rejected.
 
 ```yaml
 - uses: postman-cs/postman-smoke-flow-action@v2
@@ -221,7 +221,7 @@ See [docs/cli.md](docs/cli.md) for GitLab CI, Bitbucket Pipelines, Azure DevOps,
 | `secrets-resolver` | Cloud secret store the optional "00 - Resolve Secrets" helper request targets: none (default, no helper is added), aws (AWS Secrets Manager), azure (Azure Key Vault), or gcp (Google Secret Manager). The helper is skipped in CI and only exists to save developers pasting credentials by hand when running the collection locally. | no | `none` |
 | `secrets-resolver-enabled` | Deprecated. Legacy boolean spelling of secrets-resolver: true selects the AWS helper, false selects none. Prefer secrets-resolver, which also supports azure and gcp. Ignored when secrets-resolver is set. | no |  |
 | `spec-path` | Optional path relative to the effective working directory for the local OpenAPI spec used for validation and debug context. | no |  |
-| `debug-dump-path` | Optional effective-working-directory-relative or absolute path to write the transformed collection JSON before update. | no |  |
+| `debug-dump-path` | Optional path relative to the effective working directory for a new transformed-collection JSON debug dump. Absolute paths, traversal, symlinks, and existing targets are rejected. | no |  |
 | `collection-sync-mode` | Collection lifecycle policy. Refresh is the supported v1 mode. | no | `refresh` |
 | `postman-access-token` | Service-account access token (x-access-token) that authenticates the Smoke collection reshape against the Postman gateway. Required for the reshape; when omitted, the action mints one from postman-api-key (service-account PMAK). | no |  |
 | `fail-on-flow-warning` | Whether non-blocking flow warnings should fail the action. | no | `false` |

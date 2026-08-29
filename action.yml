@@ -53,7 +53,7 @@ inputs:
     description: Optional path relative to the effective working directory for the local OpenAPI spec used for validation and debug context.
     required: false
   debug-dump-path:
-    description: Optional effective-working-directory-relative or absolute path to write the transformed collection JSON before update.
+    description: Optional path relative to the effective working directory for a new transformed-collection JSON debug dump. Absolute paths, traversal, symlinks, and existing targets are rejected.
     required: false
   collection-sync-mode:
     description: Collection lifecycle policy. Refresh is the supported v1 mode.

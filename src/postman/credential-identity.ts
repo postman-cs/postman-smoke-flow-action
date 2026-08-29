@@ -346,7 +346,8 @@ async function probeSessionIdentity(
     try {
       response = await fetchImpl(`${baseUrl}${sessionPath}`, {
         method: 'GET',
-        headers: { 'x-access-token': accessToken }
+        headers: { 'x-access-token': accessToken },
+        redirect: 'error'
       });
     } catch {
       // Network-level failure: transient. No response to read a signal from, so

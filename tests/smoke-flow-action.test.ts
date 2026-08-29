@@ -1074,6 +1074,10 @@ describe('runSmokeFlow', () => {
       const dumpInfo = dumpContent.info as Record<string, unknown>;
       expect(dumpInfo.name).toBe('[PROJECT] [Smoke] payments');
       expect(dumpInfo.description).toBe(canonicalDescription);
+
+      const originalDump = readFileSync(dumpPath, 'utf8');
+      await expect(runSmokeFlow(inputs, createDependencies(core, postman))).rejects.toThrow(/EEXIST|exist/i);
+      expect(readFileSync(dumpPath, 'utf8')).toBe(originalDump);
     } finally {
       process.chdir(previousCwd);
       rmSync(tempDir, { recursive: true, force: true });

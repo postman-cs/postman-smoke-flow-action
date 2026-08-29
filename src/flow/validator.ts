@@ -1,6 +1,8 @@
 import type { FlowDefinition, FlowManifest, FlowWarning } from '../types.js';
 import { ValidationError } from '../lib/errors.js';
 
+const UNSAFE_OBJECT_PATH_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
+
 export function validateFlowManifest(manifest: FlowManifest): { flow: FlowDefinition; warnings: FlowWarning[] } {
   const warnings: FlowWarning[] = [];
 
@@ -43,6 +45,11 @@ export function validateFlowManifest(manifest: FlowManifest): { flow: FlowDefini
     for (const binding of step.bindings) {
       if (!binding.fieldKey?.trim()) {
         throw new ValidationError(`Step ${step.stepKey} has a binding without fieldKey.`);
+      }
+      if (binding.fieldKey.split('.').some((segment) => UNSAFE_OBJECT_PATH_SEGMENTS.has(segment))) {
+        throw new ValidationError(
+          `Step ${step.stepKey} binding ${binding.fieldKey} contains an unsafe object-path segment.`
+        );
       }
       if (binding.source === 'prior_output' && (!binding.sourceStepKey || !binding.variable)) {
         throw new ValidationError(

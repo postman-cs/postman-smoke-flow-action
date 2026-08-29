@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { assertWorkspaceContainment, writeWorkspaceFileExclusive } from '../src/lib/paths.js';
 import { loadFlowManifest } from '../src/flow/parser.js';
+import { loadSpecDocument } from '../src/flow/derive.js';
+import { resolveFlowRequests } from '../src/flow/resolver.js';
 
 const MANIFEST = ['flows:', '  - name: f', '    type: smoke', '    steps: []'].join('\n');
 
@@ -101,6 +103,54 @@ describe('loadFlowManifest read-side containment', () => {
       writeFileSync(path.join(outside, 'flow.yaml'), MANIFEST);
       symlinkSync(outside, path.join(tempDir, 'linked'));
       expect(() => loadFlowManifest('linked/flow.yaml')).toThrow(/symbolic link|symlink/i);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('spec-path read-side containment', () => {
+  let tempDir: string;
+  let previousCwd: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(path.join(os.tmpdir(), 'paths-spec-read-'));
+    previousCwd = process.cwd();
+    process.chdir(tempDir);
+  });
+
+  afterEach(() => {
+    process.chdir(previousCwd);
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('rejects direct traversal and absolute paths in curated resolution', () => {
+    const flow = {
+      name: 'f',
+      type: 'smoke' as const,
+      steps: [{ stepKey: 's', operationId: 'op', bindings: [], extract: [] }]
+    };
+    const collection = { item: [{ name: 'op', request: { method: 'GET', url: '/op' } }] };
+
+    expect(() => resolveFlowRequests(flow, collection, '../outside.yaml')).toThrow(/repository root/);
+    expect(() => resolveFlowRequests(flow, collection, path.join(tempDir, 'absolute.yaml'))).toThrow(/repository root/);
+  });
+
+  it('rejects a symlinked spec target in both derivation and curated resolution', () => {
+    const outside = mkdtempSync(path.join(os.tmpdir(), 'outside-spec-'));
+    try {
+      const spec = 'openapi: 3.0.3\ninfo: { title: Outside, version: 1.0.0 }\npaths: {}\n';
+      writeFileSync(path.join(outside, 'openapi.yaml'), spec);
+      symlinkSync(path.join(outside, 'openapi.yaml'), path.join(tempDir, 'openapi.yaml'));
+
+      expect(() => loadSpecDocument('openapi.yaml')).toThrow(/symbolic link|symlink/i);
+      expect(() =>
+        resolveFlowRequests(
+          { name: 'f', type: 'smoke', steps: [{ stepKey: 's', operationId: 'op', bindings: [], extract: [] }] },
+          { item: [] },
+          'openapi.yaml'
+        )
+      ).toThrow(/symbolic link|symlink/i);
     } finally {
       rmSync(outside, { recursive: true, force: true });
     }

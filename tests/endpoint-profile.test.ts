@@ -54,12 +54,10 @@ describe('smoke-flow emulator endpoint overrides', () => {
     });
   });
 
-  it('threads the armed profile through the action input reader', () => {
-    expect(readActionInputs(armed(COMPLETE_OVERRIDES) as NodeJS.ProcessEnv)).toMatchObject({
-      postmanApiBaseUrl: 'http://127.0.0.1:8081/api',
-      postmanBifrostBaseUrl: 'http://127.0.0.1:8082/bifrost',
-      postmanIapubBaseUrl: 'http://127.0.0.1:8083/iapub'
-    });
+  it('cannot arm the test-only profile through the action or CLI input reader', () => {
+    expect(() => readActionInputs(armed(COMPLETE_OVERRIDES) as NodeJS.ProcessEnv)).toThrow(
+      'ENDPOINT_PROFILE_RUNTIME_FORBIDDEN'
+    );
   });
 
   it('normalizes trailing slashes and ignores the selected region', () => {

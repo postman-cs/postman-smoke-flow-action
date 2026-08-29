@@ -136,7 +136,8 @@ export class AccessTokenProvider {
         'Content-Type': 'application/json',
         'x-api-key': this.apiKey
       },
-      body: JSON.stringify({ apiKey: this.apiKey })
+      body: JSON.stringify({ apiKey: this.apiKey }),
+      redirect: 'error'
     });
 
     const body = await response.text().catch(() => '');

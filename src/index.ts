@@ -1,7 +1,5 @@
 import * as core from '@actions/core';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
 
 import { smokeFlowActionContract } from './contracts.js';
 import { loadFlowManifest } from './flow/parser.js';
@@ -23,7 +21,7 @@ import {
 import type { SmokeCollectionClient } from './postman/smoke-client-contract.js';
 import { PostmanGatewaySmokeClient } from './postman/postman-gateway-smoke-client.js';
 import { AccessTokenProvider, mintAccessTokenIfNeeded } from './lib/postman/token-provider.js';
-import { applyEndpointOverrides } from './lib/postman/base-urls.js';
+import { assertEndpointOverridesDisabled } from './lib/postman/base-urls.js';
 import {
   getMemoizedSessionIdentity,
   runCredentialPreflight
@@ -194,14 +192,8 @@ function parseAuthConfig(value: string): SmokeAuthConfig | undefined {
 }
 
 export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionInputs {
-  const endpoints = applyEndpointOverrides(
-    {
-      apiBaseUrl: resolvePostmanApiBaseUrl(getInput('postman-region', env)),
-      bifrostBaseUrl: 'https://bifrost-premium-https-v4.gw.postman.com',
-      iapubBaseUrl: resolvePostmanIapubBaseUrl(getInput('postman-region', env))
-    },
-    env
-  );
+  assertEndpointOverridesDisabled(env);
+  const region = getInput('postman-region', env);
   return {
     projectName: getInput('project-name', env),
     workspaceId: getInput('workspace-id', env),
@@ -215,9 +207,9 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
       false
     ),
     postmanApiKey: getInput('postman-api-key', env) || env.POSTMAN_API_KEY || '',
-    postmanApiBaseUrl: endpoints.apiBaseUrl,
-    postmanBifrostBaseUrl: endpoints.bifrostBaseUrl,
-    postmanIapubBaseUrl: endpoints.iapubBaseUrl,
+    postmanApiBaseUrl: resolvePostmanApiBaseUrl(region),
+    postmanBifrostBaseUrl: 'https://bifrost-premium-https-v4.gw.postman.com',
+    postmanIapubBaseUrl: resolvePostmanIapubBaseUrl(region),
     authConfig: parseAuthConfig(getInput('auth-config-json', env)),
     // Opt-in provider selection. The legacy boolean input is still honoured
     // (`true` -> the historical AWS helper) so existing callers keep working.
@@ -256,11 +248,11 @@ function writeDebugDump(debugDumpPath: string | undefined, collection: unknown, 
     return;
   }
 
-  const resolvedPath = path.isAbsolute(debugDumpPath)
-    ? debugDumpPath
-    : path.resolve(process.cwd(), debugDumpPath);
-  mkdirSync(path.dirname(resolvedPath), { recursive: true });
-  writeFileSync(resolvedPath, `${JSON.stringify(collection, null, 2)}\n`, 'utf8');
+  const resolvedPath = writeWorkspaceFileExclusive(
+    debugDumpPath,
+    `${JSON.stringify(collection, null, 2)}\n`,
+    'debug-dump-path'
+  );
   actionCore.info(`Wrote transformed collection debug dump to ${resolvedPath}`);
 }
 
@@ -317,7 +309,12 @@ async function updateCanonicalCollectionUntilStable<T extends CollectionTransfor
 
   for (let attempt = 1; attempt <= STABLE_COLLECTION_UPDATE_MAX_ATTEMPTS; attempt += 1) {
     const transformed = options.buildCollection(sourceCollection);
-    writeDebugDump(options.inputs.debugDumpPath, transformed.collection, options.dependencies.core);
+    // A dump is create-only so an input cannot clobber a workspace file. The
+    // first transformed candidate is sufficient for diagnostics and avoids
+    // reopening the same path during stabilization retries.
+    if (attempt === 1) {
+      writeDebugDump(options.inputs.debugDumpPath, transformed.collection, options.dependencies.core);
+    }
     await options.dependencies.postman.updateCollection(options.inputs.smokeCollectionId, transformed.collection);
 
     const stability = await verifyCanonicalCollectionIsStable(

@@ -128,6 +128,22 @@ export interface OverridableEndpoints {
 }
 
 /**
+ * Production composition roots must never derive credential-bearing hosts
+ * from ambient environment variables. Endpoint overrides remain available to
+ * isolated unit tests through applyEndpointOverrides, but action/CLI input
+ * resolution calls this guard and therefore cannot arm the emulator seam.
+ */
+export function assertEndpointOverridesDisabled(env: EndpointEnvironment): void {
+  const set = [EMULATOR_PROFILE_ENV, ...OVERRIDE_FIELDS.map((field) => ENDPOINT_OVERRIDE_ENV[field])]
+    .filter((name) => Object.hasOwn(env, name));
+  if (set.length > 0) {
+    throw new Error(
+      `ENDPOINT_PROFILE_RUNTIME_FORBIDDEN: ${set.join(', ')} cannot override credential-bearing endpoints in the action or CLI runtime.`
+    );
+  }
+}
+
+/**
  * Resolve the three runtime hosts with the emulator override applied when
  * armed. `live` carries the region-resolved live defaults from the caller.
  */
