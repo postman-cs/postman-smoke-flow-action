@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -133,7 +133,15 @@ describe('derived query bindings and resolver tier precedence', () => {
         }
       ]
     } as never;
-    const resolved = resolveFlowRequests(flow, collection, specPath);
+    const previousCwd = process.cwd();
+    process.chdir(dir);
+    let resolved: ReturnType<typeof resolveFlowRequests>;
+    try {
+      resolved = resolveFlowRequests(flow, collection, 'openapi.json');
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(dir, { recursive: true, force: true });
+    }
     const name = (resolved[0]?.item as { name?: string } | undefined)?.name;
     expect(name).toBe('List items');
   });

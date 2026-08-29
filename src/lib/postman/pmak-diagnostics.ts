@@ -56,7 +56,7 @@ async function inspect(base: string, options: InspectPmakIdentityOptions): Promi
   const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
   try {
     const response = await (options.fetchImpl ?? fetch)(`${base}/me`, {
-      method: 'GET', headers: { 'x-api-key': options.apiKey }, signal
+      method: 'GET', headers: { 'x-api-key': options.apiKey }, signal, redirect: 'error'
     });
     if (response.status === 401 || response.status === 403) return { kind: 'invalid', status: response.status };
     if (!response.ok) return { kind: 'inconclusive', status: response.status };

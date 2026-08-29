@@ -45,6 +45,7 @@ export type GeneratedSmokeCollectionBuildOptions = {
 
 const GENERATED_OAUTH_EVENT_MARKER = '[Smoke Flow] Auto-generated OAuth2 client-credentials token cache';
 const LEGACY_SECRETS_RESOLVER_ITEM_NAME = SECRETS_RESOLVER_ITEM_NAME;
+const UNSAFE_OBJECT_PATH_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
 
 function asRecord(value: unknown): JsonRecord | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : null;
@@ -80,6 +81,9 @@ function sanitizeForCollectionUpdate(value: unknown): unknown {
 
 function setNestedValue(root: JsonRecord, dottedKey: string, value: unknown): void {
   const segments = dottedKey.split('.');
+  if (segments.some((segment) => UNSAFE_OBJECT_PATH_SEGMENTS.has(segment))) {
+    throw new Error(`Unsafe binding fieldKey: ${dottedKey}`);
+  }
   let cursor: JsonRecord = root;
   for (let index = 0; index < segments.length - 1; index += 1) {
     const segment = segments[index]!;
@@ -92,6 +96,12 @@ function setNestedValue(root: JsonRecord, dottedKey: string, value: unknown): vo
     cursor = cursor[segment] as JsonRecord;
   }
   cursor[segments[segments.length - 1]!] = value;
+}
+
+function assertSafeBindingFieldKey(fieldKey: string): void {
+  if (fieldKey.split('.').some((segment) => UNSAFE_OBJECT_PATH_SEGMENTS.has(segment))) {
+    throw new Error(`Unsafe binding fieldKey: ${fieldKey}`);
+  }
 }
 
 function getVariableBindings(step: FlowStep) {
@@ -153,8 +163,9 @@ function updateRequestUrl(request: JsonRecord, step: FlowStep): void {
   if (typeof url === 'string') {
     let next = url;
     for (const binding of variableBindings) {
-      next = next.replace(new RegExp(`\\{${binding.fieldKey}\\}`, 'g'), `{{${binding.fieldKey}}}`);
-      next = next.replace(new RegExp(`:${binding.fieldKey}(?=[/?&#]|$)`, 'g'), `{{${binding.fieldKey}}}`);
+      const fieldPattern = escapeRegExp(binding.fieldKey);
+      next = next.replace(new RegExp(`\\{${fieldPattern}\\}`, 'g'), `{{${binding.fieldKey}}}`);
+      next = next.replace(new RegExp(`:${fieldPattern}(?=[/?&#]|$)`, 'g'), `{{${binding.fieldKey}}}`);
     }
     request.url = updateRawUrlQuery(next, step);
     return;
@@ -168,8 +179,9 @@ function updateRequestUrl(request: JsonRecord, step: FlowStep): void {
   if (typeof urlRecord.raw === 'string') {
     let nextRaw = urlRecord.raw;
     for (const binding of variableBindings) {
-      nextRaw = nextRaw.replace(new RegExp(`\\{${binding.fieldKey}\\}`, 'g'), `{{${binding.fieldKey}}}`);
-      nextRaw = nextRaw.replace(new RegExp(`:${binding.fieldKey}(?=[/?&#]|$)`, 'g'), `{{${binding.fieldKey}}}`);
+      const fieldPattern = escapeRegExp(binding.fieldKey);
+      nextRaw = nextRaw.replace(new RegExp(`\\{${fieldPattern}\\}`, 'g'), `{{${binding.fieldKey}}}`);
+      nextRaw = nextRaw.replace(new RegExp(`:${fieldPattern}(?=[/?&#]|$)`, 'g'), `{{${binding.fieldKey}}}`);
     }
     urlRecord.raw = updateRawUrlQuery(nextRaw, step);
   }
@@ -203,6 +215,7 @@ function updateRequestUrl(request: JsonRecord, step: FlowStep): void {
 
 function updateRequestBody(request: JsonRecord, step: FlowStep): void {
   const variableBindings = getVariableBindings(step);
+  variableBindings.forEach((binding) => assertSafeBindingFieldKey(binding.fieldKey));
   const body = asRecord(request.body);
   if (!body || body.mode !== 'raw' || typeof body.raw !== 'string') {
     return;
@@ -368,7 +381,7 @@ function applyAuthToRequest(request: JsonRecord, authConfig: SmokeAuthConfig | u
   return true;
 }
 
-function upsertCollectionVariable(collection: JsonRecord, key: string, value = ''): void {
+function upsertCollectionVariable(collection: JsonRecord, key: string, value = '', replaceExisting = false): void {
   const variables = Array.isArray(collection.variable)
     ? collection.variable
         .map((entry) => asRecord(entry))
@@ -376,7 +389,7 @@ function upsertCollectionVariable(collection: JsonRecord, key: string, value = '
     : [];
   const existing = variables.find((entry) => entry.key === key);
   if (existing) {
-    if (typeof existing.value !== 'string') {
+    if (replaceExisting || typeof existing.value !== 'string') {
       existing.value = value;
     }
   } else {
@@ -391,13 +404,15 @@ function seedOAuthCollectionVariables(collection: JsonRecord, authConfig: SmokeO
   upsertCollectionVariable(collection, variables.tokenUrl, tokenUrlValue);
   upsertCollectionVariable(collection, variables.scope);
   upsertCollectionVariable(collection, variables.clientId);
-  upsertCollectionVariable(collection, variables.clientSecret);
-  upsertCollectionVariable(collection, variables.accessToken);
-  upsertCollectionVariable(collection, variables.expiresAt);
+  // Never carry credentials or token-cache state from a source/canonical
+  // collection into the transformed collection or its optional debug dump.
+  upsertCollectionVariable(collection, variables.clientSecret, '', true);
+  upsertCollectionVariable(collection, variables.accessToken, '', true);
+  upsertCollectionVariable(collection, variables.expiresAt, '', true);
 }
 
 function seedApiKeyCollectionVariables(collection: JsonRecord, authConfig: SmokeApiKeyConfig): void {
-  upsertCollectionVariable(collection, getApiKeyVariableName(authConfig));
+  upsertCollectionVariable(collection, getApiKeyVariableName(authConfig), '', true);
 }
 
 function getScriptExecText(event: JsonRecord): string {

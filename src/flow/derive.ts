@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
 
 import type { FlowBinding, FlowDefinition, FlowExtract, FlowStep, FlowWarning } from '../types.js';
-import { assertPathWithinCwd } from '../lib/paths.js';
+import { resolveWorkspaceRegularFile } from '../lib/paths.js';
 import { ValidationError } from '../lib/errors.js';
 
 /**
@@ -305,7 +305,7 @@ function fallbackOperationId(method: string, pathKey: string): string {
 }
 
 export function loadSpecDocument(specPath: string): JsonRecord {
-  const resolved = assertPathWithinCwd(specPath, 'spec-path');
+  const resolved = resolveWorkspaceRegularFile(specPath, 'spec-path');
   const raw = readFileSync(resolved, 'utf8');
   const document = parse(raw) as JsonRecord | null;
   if (!document || typeof document !== 'object' || Array.isArray(document)) {

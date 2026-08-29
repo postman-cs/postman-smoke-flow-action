@@ -1,10 +1,6 @@
-import { readFileSync } from 'node:fs';
-
-import { parse } from 'yaml';
-
 import type { FlowDefinition, ResolvedRequest } from '../types.js';
 import { ValidationError } from '../lib/errors.js';
-import { collectOperations } from './derive.js';
+import { collectOperations, loadSpecDocument } from './derive.js';
 
 type CollectionItem = Record<string, unknown>;
 type OperationMatch = {
@@ -100,7 +96,7 @@ function loadOperationMatches(specPath?: string): Map<string, OperationMatch> {
     return new Map();
   }
 
-  const document = parse(readFileSync(specPath, 'utf8')) as Record<string, unknown> | null;
+  const document = loadSpecDocument(specPath);
   const paths = asRecord(document?.paths);
   if (!paths) {
     return new Map();

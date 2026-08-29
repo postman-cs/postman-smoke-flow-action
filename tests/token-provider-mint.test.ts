@@ -33,7 +33,7 @@ describe('mintAccessTokenIfNeeded (PMAK-only eager mint)', () => {
     );
     expect(fetchImpl).toHaveBeenCalledWith(
       'https://api.getpostman.com/service-account-tokens',
-      expect.objectContaining({ method: 'POST' })
+      expect.objectContaining({ method: 'POST', redirect: 'error' })
     );
   });
 
