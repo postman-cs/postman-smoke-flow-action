@@ -79,7 +79,7 @@ export interface PlatformOptions {
   workspaceId?: string;
   /** Spec id generation runs against. */
   specId?: string;
-  /** Items served on the generated temporary collection's export. */
+  /** Items served on the generated temporary collection's populated snapshot. */
   generatedItems?: Array<{
     name: string;
     method: string;
@@ -153,26 +153,58 @@ export function createPlatform(options: PlatformOptions = {}) {
   /** One pending generation task; flips to completed on the first poll. */
   let generationTask: { id: string; polls: number } | undefined;
 
-  function exportCollection(collection: FakeCollection): Record<string, unknown> {
-    const items = [...collection.items.values()].map((item) => ({
-      id: item.id,
-      $kind: item.$kind,
-      name: item.name,
-      ...(item.method ? { method: item.method } : {}),
-      ...(item.url ? { url: item.url } : {}),
-      ...(item.headers ? { headers: item.headers } : {}),
-      ...(item.body ? { body: item.body } : {}),
-      ...(item.scripts ? { scripts: item.scripts } : {})
-    }));
+  /** v3 wire scripts -> v2.1 `event[]`, mirroring what the populated Sync read returns. */
+  function scriptsToEvents(scripts: Array<Record<string, unknown>> | undefined): Array<Record<string, unknown>> {
+    return (scripts ?? []).flatMap((script) => {
+      const type = String(script.type ?? '');
+      const listen =
+        type === 'beforeRequest' || type === 'http:beforeRequest'
+          ? 'prerequest'
+          : type === 'afterResponse' || type === 'http:afterRequest'
+            ? 'test'
+            : '';
+      if (!listen) return [];
+      return [{ listen, script: { type: 'text/javascript', exec: String(script.code ?? '').split('\n') } }];
+    });
+  }
+
+  /** v3 wire auth `{type, credentials}` -> v2.1 `{type, <type>: [...]}`. */
+  function authToV2(auth: Record<string, unknown> | null | undefined): Record<string, unknown> | undefined {
+    if (!auth || typeof auth.type !== 'string') return undefined;
+    return { type: auth.type, [auth.type]: Array.isArray(auth.credentials) ? auth.credentials : [] };
+  }
+
+  /** The populated Sync v2.1 snapshot the production client reads (never a v3 export). */
+  function populatedCollection(collection: FakeCollection): Record<string, unknown> {
+    const item = [...collection.items.values()].map((entry) => {
+      const auth = authToV2(entry.auth);
+      const event = scriptsToEvents(entry.scripts);
+      return {
+        name: entry.name,
+        request: {
+          method: entry.method ?? 'GET',
+          url: entry.url ?? '',
+          header: entry.headers ?? [],
+          ...(entry.body ? { body: { mode: 'raw', raw: String(entry.body.content ?? '') } } : {}),
+          ...(auth ? { auth } : {})
+        },
+        ...(event.length > 0 ? { event } : {})
+      };
+    });
+    const auth = authToV2(collection.auth);
+    const event = scriptsToEvents(collection.scripts);
     return {
       data: {
-        collection: {
-          id: collection.id,
+        id: collection.id,
+        info: {
+          _postman_id: collection.id,
           name: collection.name,
-          $kind: 'collection',
-          variables: collection.variables,
-          items
-        }
+          schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json'
+        },
+        item,
+        variable: collection.variables,
+        ...(auth ? { auth } : {}),
+        ...(event.length > 0 ? { event } : {})
       }
     };
   }
@@ -278,20 +310,22 @@ export function createPlatform(options: PlatformOptions = {}) {
       }
     }
 
-    if (payload.service === 'collection') {
-      const exportMatch = pathname.match(/^\/v3\/collections\/([^/]+)\/export$/);
-      if (method === 'get' && exportMatch) {
-        requireQuery();
+    if (payload.service === 'sync') {
+      const collectionMatch = pathname.match(/^\/collection\/([^/]+)$/);
+      if (method === 'get' && collectionMatch) {
+        requireQuery({ populate: 'true', format: '2.1.0', uid: 'false' });
         requireNoBody();
-        const collection = resolveCollection(String(exportMatch[1]));
+        const collection = resolveCollection(decodeURIComponent(String(collectionMatch[1])));
         if (!collection) return json({ error: 'not found' }, 404);
-        return json(exportCollection(collection));
+        return json(populatedCollection(collection));
       }
+    }
+    if (payload.service === 'collection') {
       if (method === 'get' && pathname === '/v3/collections') {
         requireQuery({ workspace: workspaceId });
         requireNoBody();
-        // Workspace ownership gate: the canonical collection lives in the workspace.
-        return json({ data: [{ id: smokeCollectionId }] });
+        // Workspace inventory: every collection the workspace owns, including run temps.
+        return json({ data: [...collections.values()].map((entry) => ({ id: entry.id, name: entry.name })) });
       }
       const itemsMatch = pathname.match(/^\/v3\/collections\/([^/]+)\/items$/);
       if (method === 'get' && itemsMatch) {
@@ -388,6 +422,12 @@ export function createPlatform(options: PlatformOptions = {}) {
       const collMatch = pathname.match(/^\/v3\/collections\/([^/]+)$/);
       if (collMatch) {
         const collection = resolveCollection(String(collMatch[1]));
+        if (method === 'get') {
+          requireQuery();
+          requireNoBody();
+          if (!collection) return json({ error: 'not found' }, 404);
+          return json({ data: { id: collection.id, name: collection.name } });
+        }
         if (method === 'patch') {
           requireQuery();
           requirePatch(

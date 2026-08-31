@@ -41,7 +41,7 @@ describe('contract: HTTP route manifest', () => {
     const manifest = loadManifest();
     const result = verify(manifest);
 
-    expect(manifest.routes).toHaveLength(15);
+    expect(manifest.routes).toHaveLength(16);
     expect(result.ok, result.errors.join('\n')).toBe(true);
     expect(result.errors).toEqual([]);
     expect(extractRoutesFromSource({ sourceRoot, ...EXTRACTION_CONFIG }).unattributed).toEqual([]);

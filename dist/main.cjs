@@ -40120,65 +40120,6 @@ function isAmbiguousCreateError(error2) {
   return error2.status === 408 || error2.status === 429 || error2.status >= 500;
 }
 var isAmbiguousMutationError = isAmbiguousCreateError;
-function v3BodyToV2(body) {
-  if (!body) return void 0;
-  const content = typeof body.content === "string" ? body.content : "";
-  return { mode: "raw", raw: content };
-}
-function v3AuthToV2(auth) {
-  const block = Array.isArray(auth) ? asRecord5(auth[0]) : asRecord5(auth);
-  if (!block) return void 0;
-  const type = typeof block.type === "string" ? block.type : "";
-  if (!type) return void 0;
-  const credentials = Array.isArray(block.credentials) ? block.credentials : [];
-  return { type, [type]: credentials };
-}
-function v3ScriptsToV2Events(scripts) {
-  return asArray(scripts).map((script) => {
-    const type = typeof script.type === "string" ? script.type : "";
-    const listen = type === "beforeRequest" || type === "http:beforeRequest" ? "prerequest" : type === "afterResponse" || type === "http:afterRequest" ? "test" : "";
-    if (!listen) return null;
-    const code = typeof script.code === "string" ? script.code : "";
-    return {
-      listen,
-      script: { exec: code.split("\n"), type: "text/javascript" }
-    };
-  }).filter((event) => Boolean(event));
-}
-function v3NodeToV2Item(node) {
-  const name = typeof node.name === "string" ? node.name : "";
-  const kind = String(node.$kind ?? "");
-  if (kind === "folder" || kind === "collection" || Array.isArray(node.items)) {
-    return { name, item: asArray(node.items).map(v3NodeToV2Item) };
-  }
-  const request = {
-    method: typeof node.method === "string" ? node.method : "GET",
-    url: typeof node.url === "string" ? node.url : ""
-  };
-  const headers = Array.isArray(node.headers) ? node.headers : [];
-  request.header = headers;
-  const body = v3BodyToV2(asRecord5(node.body));
-  if (body) request.body = body;
-  const auth = v3AuthToV2(asRecord5(node.auth));
-  if (auth) request.auth = auth;
-  const item = { name, request };
-  const events2 = v3ScriptsToV2Events(node.scripts);
-  if (events2.length > 0) item.event = events2;
-  return item;
-}
-function v3ExportToV2Collection(v3) {
-  const name = typeof v3.name === "string" ? v3.name : "";
-  const collection = {
-    info: { name, schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
-    item: asArray(v3.items).map(v3NodeToV2Item)
-  };
-  const auth = v3AuthToV2(v3.auth);
-  if (auth) collection.auth = auth;
-  if (Array.isArray(v3.variables)) collection.variable = v3.variables;
-  const events2 = v3ScriptsToV2Events(v3.scripts);
-  if (events2.length > 0) collection.event = events2;
-  return collection;
-}
 function v2UrlToRaw(url) {
   if (typeof url === "string") return url;
   const record = asRecord5(url);
@@ -40456,18 +40397,10 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
     for (let attempt = 0; attempt < 6; attempt += 1) {
       const listed = (await this.listSpecCollectionUids(specId)).filter((uid) => !pre.has(uid));
       const matches = [];
-      for (const uid of listed) {
-        try {
-          const exported = await this.gateway.requestJson({
-            service: "collection",
-            method: "get",
-            path: `/v3/collections/${bareModelId(uid)}/export`
-          });
-          const collection = asRecord5(asRecord5(exported?.data)?.collection) ?? asRecord5(exported?.data);
-          const name = typeof collection?.name === "string" ? collection.name : "";
-          if (name === ownedName) matches.push(uid);
-        } catch (error2) {
-          if (!(error2 instanceof HttpError && error2.status === 404)) throw error2;
+      if (listed.length > 0) {
+        const names = await this.readCollectionNames(listed);
+        for (const uid of listed) {
+          if (names.get(bareModelId(uid)) === ownedName) matches.push(uid);
         }
       }
       if (matches.length === 1) return matches[0] ?? null;
@@ -40480,6 +40413,37 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
     }
     return null;
   }
+  /**
+   * Resolve collection names for reconciliation from one workspace inventory
+   * snapshot (the only surface carrying the public uid), plus a light ROOT read
+   * for any owner-prefixed uid the inventory has not surfaced yet. Never uses
+   * Collection v3 `/export`: that projection is expensive and unstable for fresh
+   * roots. Keys are bare model ids so either uid form matches.
+   */
+  async readCollectionNames(uids) {
+    const names = /* @__PURE__ */ new Map();
+    if (this.workspaceId) {
+      for (const entry of await this.listWorkspaceCollectionsFor(this.workspaceId)) {
+        names.set(bareModelId(entry.id), entry.name);
+      }
+    }
+    for (const uid of uids) {
+      const key = bareModelId(uid);
+      if (names.has(key) || isBareCollectionUuid(uid)) continue;
+      try {
+        const root = await this.gateway.requestJson({
+          service: "collection",
+          method: "get",
+          path: `/v3/collections/${uid}`
+        });
+        const name = asRecord5(root?.data)?.name;
+        if (typeof name === "string") names.set(key, name);
+      } catch (error2) {
+        if (!(error2 instanceof HttpError && error2.status === 404)) throw error2;
+      }
+    }
+    return names;
+  }
   rememberOwnedTemporaryCollection(collectionUid) {
     const trimmed = String(collectionUid ?? "").trim();
     if (!trimmed) return;
@@ -40491,18 +40455,41 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
     if (!trimmed) return false;
     return this.ownedTemporaryCollectionIds.has(trimmed) || this.ownedTemporaryCollectionIds.has(bareModelId(trimmed));
   }
+  /**
+   * Fetch one complete v2.1 collection through a single retry-free populated
+   * Sync GET addressed by the full public uid. The snapshot must be a v2.1 model
+   * for the requested collection; malformed or foreign snapshots fail closed.
+   */
   async getCollection(collectionUid) {
-    const cid = bareModelId(collectionUid);
-    const exported = await this.gateway.requestJson({
-      service: "collection",
+    const wireUid = await this.resolveWireCollectionUid(collectionUid);
+    const response = await this.gateway.requestJson({
+      service: "sync",
       method: "get",
-      path: `/v3/collections/${cid}/export`
+      path: `/collection/${encodeURIComponent(wireUid)}`,
+      query: { populate: "true", format: "2.1.0", uid: "false" },
+      retry: "none",
+      fallback: "none"
     });
-    const v3 = asRecord5(asRecord5(exported?.data)?.collection) ?? asRecord5(exported?.data);
-    if (!v3) {
-      throw new Error(`Failed to export collection ${collectionUid}`);
+    const model = asRecord5(response?.data);
+    const info2 = asRecord5(model?.info);
+    if (!model || !info2 || typeof info2.name !== "string" || !Array.isArray(model.item)) {
+      throw new Error(
+        `COLLECTION_SNAPSHOT_INVALID: populated Sync read for collection ${collectionUid} did not return a v2.1 model`
+      );
     }
-    return v3ExportToV2Collection(v3);
+    const schema = String(info2.schema ?? "");
+    if (!/collection\/v2\.1\.0\//.test(schema)) {
+      throw new Error(
+        `COLLECTION_SNAPSHOT_INVALID: collection ${collectionUid} snapshot schema ${schema || "<missing>"} is not v2.1.0`
+      );
+    }
+    const observed = String(info2._postman_id ?? model.id ?? "").trim();
+    if (!observed || normalizeCollectionModelIdentity(observed) !== normalizeCollectionModelIdentity(wireUid)) {
+      throw new Error(
+        `COLLECTION_SNAPSHOT_INVALID: populated Sync read for collection ${collectionUid} returned a foreign snapshot`
+      );
+    }
+    return model;
   }
   async updateCollection(collectionUid, collection) {
     const desired = asRecord5(collection);
@@ -41024,15 +41011,12 @@ var PostmanGatewaySmokeClient = class _PostmanGatewaySmokeClient {
         return;
       }
       if (!isAmbiguousMutationError(error2)) throw error2;
-      try {
-        await this.gateway.request({
-          service: "collection",
-          method: "get",
-          path: `/v3/collections/${cid}/export`
-        });
-      } catch (readError) {
-        if (readError instanceof HttpError && readError.status === 404) return;
-        throw readError;
+      if (this.workspaceId) {
+        const target = normalizeCollectionModelIdentity(collectionUid);
+        const inventory = await this.listWorkspaceCollectionsFor(this.workspaceId);
+        if (!inventory.some((entry) => normalizeCollectionModelIdentity(entry.id) === target)) {
+          return;
+        }
       }
       throw error2;
     }

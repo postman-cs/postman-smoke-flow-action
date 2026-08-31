@@ -55,7 +55,7 @@ describe('contract: smoke-flow cassette replay', () => {
         .filter((key) => key.startsWith('proxy:'))
         .map((key) => key.split(' ')[0])
     );
-    expect([...services].sort()).toEqual(['proxy:collection', 'proxy:specification']);
+    expect([...services].sort()).toEqual(['proxy:collection', 'proxy:specification', 'proxy:sync']);
   }, 60_000);
 
   it('does not inherit ambient team input or emit telemetry', async () => {

@@ -46,95 +46,6 @@ function isAmbiguousCreateError(error: unknown): boolean {
 
 const isAmbiguousMutationError = isAmbiguousCreateError;
 
-/** v3 export body `{type:'json'|'text', content}` -> v2 `{mode:'raw', raw}`. */
-function v3BodyToV2(body: JsonRecord | null): JsonRecord | undefined {
-  if (!body) return undefined;
-  const content = typeof body.content === 'string' ? body.content : '';
-  return { mode: 'raw', raw: content };
-}
-
-/**
- * v3 IR auth -> v2 `{type, <type>:[...]}`. Per-item auth is a single
- * `{type, credentials}` object; collection-level auth round-trips as an ARRAY of
- * auth blocks (live-observed), so the first block is taken.
- */
-function v3AuthToV2(auth: unknown): JsonRecord | undefined {
-  const block = Array.isArray(auth) ? asRecord(auth[0]) : asRecord(auth);
-  if (!block) return undefined;
-  const type = typeof block.type === 'string' ? block.type : '';
-  if (!type) return undefined;
-  const credentials = Array.isArray(block.credentials) ? block.credentials : [];
-  return { type, [type]: credentials };
-}
-
-/**
- * v3 scripts -> v2 `event[]`. Item-level scripts use `beforeRequest`/
- * `afterResponse`; collection-root scripts use `http:beforeRequest`/
- * `http:afterRequest` (the only types the root accepts). Both map to the v2
- * `prerequest`/`test` listen names.
- */
-function v3ScriptsToV2Events(scripts: unknown): JsonRecord[] {
-  return asArray(scripts)
-    .map((script) => {
-      const type = typeof script.type === 'string' ? script.type : '';
-      const listen =
-        type === 'beforeRequest' || type === 'http:beforeRequest'
-          ? 'prerequest'
-          : type === 'afterResponse' || type === 'http:afterRequest'
-            ? 'test'
-            : '';
-      if (!listen) return null;
-      const code = typeof script.code === 'string' ? script.code : '';
-      return {
-        listen,
-        script: { exec: code.split('\n'), type: 'text/javascript' }
-      } as JsonRecord;
-    })
-    .filter((event): event is JsonRecord => Boolean(event));
-}
-
-/** Map one v3 export node (folder or http-request leaf) to a v2.1 collection item. */
-function v3NodeToV2Item(node: JsonRecord): JsonRecord {
-  const name = typeof node.name === 'string' ? node.name : '';
-  // Container node: a request folder/group. The v3 export marks folders as
-  // `$kind:'collection'` (NOT 'folder') with child requests under `items`; an
-  // http-request leaf has no `items` (it carries `examples`). Recurse on either
-  // signal so nested requests aren't lost as a `method:'GET', url:''` pseudo-leaf.
-  const kind = String(node.$kind ?? '');
-  if (kind === 'folder' || kind === 'collection' || Array.isArray(node.items)) {
-    return { name, item: asArray(node.items).map(v3NodeToV2Item) };
-  }
-  const request: JsonRecord = {
-    method: typeof node.method === 'string' ? node.method : 'GET',
-    url: typeof node.url === 'string' ? node.url : ''
-  };
-  const headers = Array.isArray(node.headers) ? node.headers : [];
-  request.header = headers;
-  const body = v3BodyToV2(asRecord(node.body));
-  if (body) request.body = body;
-  const auth = v3AuthToV2(asRecord(node.auth));
-  if (auth) request.auth = auth;
-  const item: JsonRecord = { name, request };
-  const events = v3ScriptsToV2Events(node.scripts);
-  if (events.length > 0) item.event = events;
-  return item;
-}
-
-/** Full v3 export `data.collection` -> v2.1 collection (info/item/auth/variable). */
-function v3ExportToV2Collection(v3: JsonRecord): JsonRecord {
-  const name = typeof v3.name === 'string' ? v3.name : '';
-  const collection: JsonRecord = {
-    info: { name, schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
-    item: asArray(v3.items).map(v3NodeToV2Item)
-  };
-  const auth = v3AuthToV2(v3.auth);
-  if (auth) collection.auth = auth;
-  if (Array.isArray(v3.variables)) collection.variable = v3.variables;
-  const events = v3ScriptsToV2Events(v3.scripts);
-  if (events.length > 0) collection.event = events;
-  return collection;
-}
-
 /** v2 request url (string or `{raw}`) -> raw string for a v3 create. */
 function v2UrlToRaw(url: unknown): string {
   if (typeof url === 'string') return url;
@@ -275,8 +186,9 @@ export interface PostmanGatewaySmokeClientOptions {
  *
  * - generate: `specification POST /specifications/:id/collections` + task poll,
  *   with run-unique naming, pre-run snapshot correlation, and no blind POST retry.
- * - read: `collection GET /v3/collections/:cid/export` -> v3 IR, adapted back to
- *   the v2.1 shape the resolver/transform/verify code consumes unchanged.
+ * - read: `sync GET /collection/:uid` (populated v2.1 snapshot, full public uid,
+ *   retry-free, fail-closed on identity/schema mismatch). Collection v3
+ *   `/export` is never used: its projection is unstable for fresh roots.
  * - update: workspace ownership gate, then deterministic in-place item
  *   reconciliation by name (fail-closed on duplicates). Folder/request creates
  *   opt out of blind transport retries and reconcile after ambiguous 5xx.
@@ -524,18 +436,10 @@ export class PostmanGatewaySmokeClient {
     for (let attempt = 0; attempt < 6; attempt += 1) {
       const listed = (await this.listSpecCollectionUids(specId)).filter((uid) => !pre.has(uid));
       const matches: string[] = [];
-      for (const uid of listed) {
-        try {
-          const exported = await this.gateway.requestJson<JsonRecord>({
-            service: 'collection',
-            method: 'get',
-            path: `/v3/collections/${bareModelId(uid)}/export`
-          });
-          const collection = asRecord(asRecord(exported?.data)?.collection) ?? asRecord(exported?.data);
-          const name = typeof collection?.name === 'string' ? collection.name : '';
-          if (name === ownedName) matches.push(uid);
-        } catch (error) {
-          if (!(error instanceof HttpError && error.status === 404)) throw error;
+      if (listed.length > 0) {
+        const names = await this.readCollectionNames(listed);
+        for (const uid of listed) {
+          if (names.get(bareModelId(uid)) === ownedName) matches.push(uid);
         }
       }
       if (matches.length === 1) return matches[0] ?? null;
@@ -547,6 +451,38 @@ export class PostmanGatewaySmokeClient {
       if (attempt < 5) await this.sleepImpl(Math.min(2000, 250 * 2 ** attempt));
     }
     return null;
+  }
+
+  /**
+   * Resolve collection names for reconciliation from one workspace inventory
+   * snapshot (the only surface carrying the public uid), plus a light ROOT read
+   * for any owner-prefixed uid the inventory has not surfaced yet. Never uses
+   * Collection v3 `/export`: that projection is expensive and unstable for fresh
+   * roots. Keys are bare model ids so either uid form matches.
+   */
+  private async readCollectionNames(uids: readonly string[]): Promise<Map<string, string>> {
+    const names = new Map<string, string>();
+    if (this.workspaceId) {
+      for (const entry of await this.listWorkspaceCollectionsFor(this.workspaceId)) {
+        names.set(bareModelId(entry.id), entry.name);
+      }
+    }
+    for (const uid of uids) {
+      const key = bareModelId(uid);
+      if (names.has(key) || isBareCollectionUuid(uid)) continue;
+      try {
+        const root = await this.gateway.requestJson<JsonRecord>({
+          service: 'collection',
+          method: 'get',
+          path: `/v3/collections/${uid}`
+        });
+        const name = asRecord(root?.data)?.name;
+        if (typeof name === 'string') names.set(key, name);
+      } catch (error) {
+        if (!(error instanceof HttpError && error.status === 404)) throw error;
+      }
+    }
+    return names;
   }
 
   private rememberOwnedTemporaryCollection(collectionUid: string): void {
@@ -565,18 +501,44 @@ export class PostmanGatewaySmokeClient {
     );
   }
 
+  /**
+   * Fetch one complete v2.1 collection through a single retry-free populated
+   * Sync GET addressed by the full public uid. The snapshot must be a v2.1 model
+   * for the requested collection; malformed or foreign snapshots fail closed.
+   */
   async getCollection(collectionUid: string): Promise<JsonRecord> {
-    const cid = bareModelId(collectionUid);
-    const exported = await this.gateway.requestJson<JsonRecord>({
-      service: 'collection',
+    const wireUid = await this.resolveWireCollectionUid(collectionUid);
+    const response = await this.gateway.requestJson<JsonRecord>({
+      service: 'sync',
       method: 'get',
-      path: `/v3/collections/${cid}/export`
+      path: `/collection/${encodeURIComponent(wireUid)}`,
+      query: { populate: 'true', format: '2.1.0', uid: 'false' },
+      retry: 'none',
+      fallback: 'none'
     });
-    const v3 = asRecord(asRecord(exported?.data)?.collection) ?? asRecord(exported?.data);
-    if (!v3) {
-      throw new Error(`Failed to export collection ${collectionUid}`);
+    const model = asRecord(response?.data);
+    const info = asRecord(model?.info);
+    if (!model || !info || typeof info.name !== 'string' || !Array.isArray(model.item)) {
+      throw new Error(
+        `COLLECTION_SNAPSHOT_INVALID: populated Sync read for collection ${collectionUid} did not return a v2.1 model`
+      );
     }
-    return v3ExportToV2Collection(v3);
+    const schema = String(info.schema ?? '');
+    if (!/collection\/v2\.1\.0\//.test(schema)) {
+      throw new Error(
+        `COLLECTION_SNAPSHOT_INVALID: collection ${collectionUid} snapshot schema ${schema || '<missing>'} is not v2.1.0`
+      );
+    }
+    const observed = String(info._postman_id ?? model.id ?? '').trim();
+    if (
+      !observed ||
+      normalizeCollectionModelIdentity(observed) !== normalizeCollectionModelIdentity(wireUid)
+    ) {
+      throw new Error(
+        `COLLECTION_SNAPSHOT_INVALID: populated Sync read for collection ${collectionUid} returned a foreign snapshot`
+      );
+    }
+    return model;
   }
 
   async updateCollection(collectionUid: string, collection: unknown): Promise<void> {
@@ -1176,15 +1138,14 @@ export class PostmanGatewaySmokeClient {
         return;
       }
       if (!isAmbiguousMutationError(error)) throw error;
-      try {
-        await this.gateway.request({
-          service: 'collection',
-          method: 'get',
-          path: `/v3/collections/${cid}/export`
-        });
-      } catch (readError) {
-        if (readError instanceof HttpError && readError.status === 404) return;
-        throw readError;
+      // Ambiguous outcome: prove absence from workspace inventory rather than
+      // re-projecting the collection through the unstable v3 export route.
+      if (this.workspaceId) {
+        const target = normalizeCollectionModelIdentity(collectionUid);
+        const inventory = await this.listWorkspaceCollectionsFor(this.workspaceId);
+        if (!inventory.some((entry) => normalizeCollectionModelIdentity(entry.id) === target)) {
+          return;
+        }
       }
       throw error;
     }

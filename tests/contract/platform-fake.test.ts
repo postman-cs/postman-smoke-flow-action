@@ -11,8 +11,9 @@ function proxy(platform: ReturnType<typeof createPlatform>, payload: unknown): P
 
 describe('platform fake fail-closed contract', () => {
   it.each([
-    ['service', { service: 'unknown', method: 'get', path: '/v3/collections/12345678-col-smoke/export' }],
-    ['method', { service: 'collection', method: 'post', path: '/v3/collections/12345678-col-smoke/export' }],
+    ['service', { service: 'unknown', method: 'get', path: '/v3/collections/12345678-col-smoke/items/' }],
+    ['method', { service: 'sync', method: 'post', path: '/collection/12345678-col-smoke' }],
+    ['snapshot query', { service: 'sync', method: 'get', path: '/collection/12345678-col-smoke' }],
     ['path', { service: 'collection', method: 'get', path: '/v3/collections/12345678-col-smoke/unmodeled' }],
     ['query', { service: 'specification', method: 'get', path: '/specifications/spec-contract/collections?unexpected=value' }],
     ['generation body', { service: 'specification', method: 'post', path: '/specifications/spec-contract/collections', body: { name: 'temp', unexpected: true } }],

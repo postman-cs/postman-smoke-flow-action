@@ -55,58 +55,78 @@ function makeClient(
 }
 
 describe('PostmanGatewaySmokeClient', () => {
-  it('getCollection exports v3 IR and adapts it to a v2.1 collection', async () => {
-    const v3Export = {
+  const V21_SCHEMA = 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json';
+
+  function syncQuery(call: Envelope | undefined): Record<string, unknown> {
+    const url = new URL(String(call?.path ?? ''), 'https://gateway.invalid');
+    const fromPath = Object.fromEntries(url.searchParams.entries());
+    const fromBody = (call as (Envelope & { query?: Record<string, unknown> }) | undefined)?.query ?? {};
+    return { ...fromPath, ...fromBody };
+  }
+
+  it('getCollection reads the populated Sync v2.1 snapshot by full public uid and returns it verbatim', async () => {
+    const snapshot = {
       data: {
-        collection: {
-          id: '55363555-abc',
-          name: 'Exp Collection',
-          $kind: 'collection',
-          variables: [{ key: 'baseUrl', value: 'https://x' }],
-          items: [
-            {
-              // Real export marks request folders as $kind:'collection' (not
-              // 'folder'); the adapter must still recurse into `items`.
-              $kind: 'collection',
-              name: 'Group',
-              items: [
-                {
-                  id: '55363555-leaf',
-                  name: 'Do Post',
-                  url: '{{baseUrl}}/post?q=1',
+        id: UUID,
+        info: { _postman_id: UUID, name: 'Snapshot Collection', schema: V21_SCHEMA },
+        item: [
+          {
+            name: 'Group',
+            item: [
+              {
+                name: 'Do Post',
+                request: {
                   method: 'POST',
-                  headers: [{ key: 'Content-Type', value: 'application/json' }],
-                  body: { type: 'json', content: '{"a":1}' },
-                  $kind: 'http-request',
-                  scripts: [
-                    { type: 'beforeRequest', code: 'console.log(1);' },
-                    { type: 'afterResponse', code: 'pm.test("x", () => {});' }
-                  ]
-                }
-              ]
-            }
-          ]
-        }
+                  url: '{{baseUrl}}/post?q=1',
+                  header: [{ key: 'Content-Type', value: 'application/json' }],
+                  body: { mode: 'raw', raw: '{"a":1}' }
+                },
+                event: [
+                  { listen: 'prerequest', script: { exec: ['console.log(1);'] } },
+                  { listen: 'test', script: { exec: ['pm.test("x", () => {});'] } }
+                ]
+              }
+            ]
+          }
+        ],
+        variable: [{ key: 'baseUrl', value: 'https://x' }]
       }
     };
-    const { client } = makeClient((env) => {
-      if (env.method === 'get' && env.path.endsWith('/export')) return jsonResponse(v3Export);
+    const { client, calls } = makeClient((env) => {
+      if (env.service === 'sync' && env.method === 'get') return jsonResponse(snapshot);
       return jsonResponse({});
     });
 
     const v2 = await client.getCollection(FULL);
-    expect((v2.info as J).name).toBe('Exp Collection');
-    const folder = (v2.item as J[])[0];
-    expect(folder.name).toBe('Group');
-    const leaf = (folder.item as J[])[0];
-    expect(leaf.name).toBe('Do Post');
-    const request = leaf.request as J;
-    expect(request.method).toBe('POST');
-    expect(request.url).toBe('{{baseUrl}}/post?q=1');
-    expect(request.body).toEqual({ mode: 'raw', raw: '{"a":1}' });
-    const events = leaf.event as J[];
-    expect(events.map((e) => e.listen)).toEqual(['prerequest', 'test']);
-    expect((events[0].script as J).exec).toEqual(['console.log(1);']);
+    expect(v2).toEqual(snapshot.data);
+    const read = calls.find((c) => c.service === 'sync');
+    expect(new URL(String(read?.path), 'https://gateway.invalid').pathname).toBe(`/collection/${FULL}`);
+    expect(syncQuery(read)).toEqual({ populate: 'true', format: '2.1.0', uid: 'false' });
+    expect(calls.some((c) => c.service === 'collection' && c.path.includes('/export'))).toBe(false);
+  });
+
+  it('getCollection fails closed on a foreign snapshot identity', async () => {
+    const { client } = makeClient(() =>
+      jsonResponse({
+        data: {
+          info: { _postman_id: '0f0f0f0f-1111-4222-8333-444455556666', name: 'Other', schema: V21_SCHEMA },
+          item: []
+        }
+      })
+    );
+    await expect(client.getCollection(FULL)).rejects.toThrow(/COLLECTION_SNAPSHOT_INVALID.*foreign/);
+  });
+
+  it('getCollection fails closed when the snapshot is not a v2.1 model', async () => {
+    const { client } = makeClient(() =>
+      jsonResponse({
+        data: {
+          info: { _postman_id: UUID, name: 'Legacy', schema: 'https://schema.getpostman.com/json/collection/v2.0.0/collection.json' },
+          item: []
+        }
+      })
+    );
+    await expect(client.getCollection(FULL)).rejects.toThrow(/COLLECTION_SNAPSHOT_INVALID.*v2\.1\.0/);
   });
 
   it('updateCollection deletes existing items then recreates curated leaves with scripts + collection patch', async () => {

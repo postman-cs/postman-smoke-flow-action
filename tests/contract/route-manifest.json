@@ -18,10 +18,18 @@
       "cassettes": ["tests/contract/cassettes/smoke-flow-wire.json"]
     },
     {
-      "id": "collection.export-collection",
+      "id": "collection.get-collection",
       "service": "collection",
       "method": "GET",
-      "path": "/v3/collections/{param}/export",
+      "path": "/v3/collections/{param}",
+      "classification": "live-only",
+      "reason": "Name fallback for an owner-prefixed uid the workspace inventory has not surfaced yet; the cassette scenario resolves every name from inventory."
+    },
+    {
+      "id": "sync.get-populated-collection",
+      "service": "sync",
+      "method": "GET",
+      "path": "/collection/{param}",
       "classification": "simulated",
       "cassettes": ["tests/contract/cassettes/smoke-flow-wire.json"]
     },

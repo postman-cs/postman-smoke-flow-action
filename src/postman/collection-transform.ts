@@ -36,9 +36,9 @@ export type GeneratedSmokeCollectionBuildOptions = {
    * adopts that final by exact `info.name`; a refresh that renames it via the
    * `/name` PATCH breaks election and triggers a fresh import/orphan cascade.
    * Carry `info.name` forward from the canonical target, not the generated
-   * source. `info.description` is carried forward defensively only — this
-   * client's v3 export does not surface it and its root PATCH does not write
-   * it, so any bootstrap marker there is preserved simply by never being touched.
+   * source. `info.description` is carried forward defensively — the root PATCH
+   * never writes it, so any bootstrap marker there is preserved simply by never
+   * being touched, whether or not the read snapshot surfaces it.
    */
   canonicalCollection?: JsonRecord;
 };
@@ -596,9 +596,9 @@ function preserveRequestEventsFromCollection(collection: JsonRecord, scriptSourc
  * Bootstrap elects the canonical Smoke final by exact `info.name`; this package
  * previously broke election by PATCHing `/name` to the flow-derived title.
  * `info.name` is therefore the operative field and must survive the rebuild.
- * `info.description` is carried forward defensively only — the v3 export path
- * does not surface it and the root PATCH does not write it, so the marker is
- * preserved simply by never being touched. Absent canonical fields stay absent.
+ * `info.description` is carried forward defensively — the root PATCH never
+ * writes it, so the marker is preserved simply by never being touched, whether
+ * or not the read snapshot surfaces it. Absent canonical fields stay absent.
  */
 function applyCanonicalCollectionIdentity(
   collection: JsonRecord,
