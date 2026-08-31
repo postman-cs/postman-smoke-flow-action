@@ -69,7 +69,8 @@ Tags are an **output** of passing run, never input. Never push release tags by h
 - `node scripts/release-cut.mjs --plan` reports pending cut (fetch tags first). `--execute` bumps, rebuilds `dist/`, runs typecheck/lint/test, commits, re-verifies committed bytes, then tags last.
 - Version comes from highest tag ever cut, not `package.json`. Existing tags are burnt and skipped, so failed cut never reuses or rewinds version.
 - Conventional-commit type picks bump; `chore`/`ci`/`build`/`test`/`style` alone cut nothing.
-- release commit lives only on tag. `main` requires pull requests.
+- release commit lives only on tag. `main` requires pull requests and green `ready` + `build-and-smoke` checks (admins included). Merge with `gh pr checks <n> --watch --fail-fast && gh pr merge <n> --merge --delete-branch`; never `--admin`.
+- `.githooks/pre-push` runs typecheck, lint, and test before every branch push besides dist ratchet.
 - `RELEASE_POLICY.md` holds full contract.
 
 ## Anti-Patterns
