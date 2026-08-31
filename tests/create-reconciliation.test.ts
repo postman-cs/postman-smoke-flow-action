@@ -53,17 +53,8 @@ function makeClient(
   return { client, calls, sleep };
 }
 
-function collectionExport(name: string, id: string): Response {
-  return jsonResponse({
-    data: {
-      collection: {
-        id,
-        name,
-        $kind: 'collection',
-        items: []
-      }
-    }
-  });
+function inventoryResponse(entries: Array<{ id: string; name: string }>): Response {
+  return jsonResponse({ data: entries });
 }
 
 describe('Wave 2 create reconciliation', () => {
@@ -97,12 +88,12 @@ describe('Wave 2 create reconciliation', () => {
         taskPolls += 1;
         return jsonResponse({ data: { 'task-owned': 'completed' } });
       }
-      if (env.service === 'collection' && env.method === 'get' && env.path.endsWith('/export')) {
-        const exportId = env.path.split('/')[3];
-        if (exportId === ownedUid) return collectionExport(ownedName, ownedUid);
-        if (exportId === foreignUid) return collectionExport('[Smoke][Temp] payments run-other', foreignUid);
-        if (exportId === preExisting) return collectionExport('[Smoke][Temp] payments stale', preExisting);
-        return collectionExport('unknown', String(exportId ?? ''));
+      if (env.service === 'collection' && env.method === 'get' && env.path.startsWith('/v3/collections/?workspace=')) {
+        return inventoryResponse([
+          { id: preExisting, name: '[Smoke][Temp] payments stale' },
+          { id: ownedUid, name: ownedName },
+          { id: foreignUid, name: '[Smoke][Temp] payments run-other' }
+        ]);
       }
       return jsonResponse({});
     });
@@ -164,11 +155,11 @@ describe('Wave 2 create reconciliation', () => {
         if (env.service === 'specification' && env.method === 'get' && env.path === '/tasks') {
           return jsonResponse({ data: { [`task-${runIdentity}`]: 'completed' } });
         }
-        if (env.service === 'collection' && env.method === 'get' && env.path.endsWith('/export')) {
-          const exportId = env.path.split('/')[3];
-          if (exportId === aOwned) return collectionExport('[Smoke][Temp] payments run-a', aOwned);
-          if (exportId === bOwned) return collectionExport('[Smoke][Temp] payments run-b', bOwned);
-          return collectionExport('other', String(exportId ?? ''));
+        if (env.service === 'collection' && env.method === 'get' && env.path.startsWith('/v3/collections/?workspace=')) {
+          return inventoryResponse([
+            { id: aOwned, name: '[Smoke][Temp] payments run-a' },
+            { id: bOwned, name: '[Smoke][Temp] payments run-b' }
+          ]);
         }
         if (env.service === 'collection' && env.method === 'delete') {
           deleted.push(env.path.split('/').pop() ?? '');
@@ -269,10 +260,11 @@ describe('Wave 2 create reconciliation', () => {
           data: generationPosts === 1 ? { 'task-failed-1': 'failed' } : { 'task-ok-2': 'completed' }
         });
       }
-      if (env.service === 'collection' && env.method === 'get' && env.path.endsWith('/export')) {
-        const exportId = env.path.split('/')[3];
-        if (exportId === firstUid) return collectionExport(baseName, firstUid);
-        if (exportId === secondUid) return collectionExport(retryName, secondUid);
+      if (env.service === 'collection' && env.method === 'get' && env.path.startsWith('/v3/collections/?workspace=')) {
+        return inventoryResponse([
+          { id: firstUid, name: baseName },
+          { id: secondUid, name: retryName }
+        ]);
       }
       if (env.service === 'collection' && env.method === 'delete') {
         deleted.push(env.path.split('/').pop() ?? '');
@@ -307,8 +299,8 @@ describe('Wave 2 create reconciliation', () => {
       if (env.service === 'specification' && env.method === 'get' && env.path === '/tasks') {
         return jsonResponse({ data: { 'task-missing-uid': 'completed' } });
       }
-      if (env.service === 'collection' && env.method === 'get' && env.path.endsWith('/export')) {
-        return collectionExport('[Smoke][Temp] payments run-other', '33333333-foreign-temp');
+      if (env.service === 'collection' && env.method === 'get' && env.path.startsWith('/v3/collections/?workspace=')) {
+        return inventoryResponse([{ id: '33333333-foreign-temp', name: '[Smoke][Temp] payments run-other' }]);
       }
       return jsonResponse({});
     });
@@ -371,7 +363,7 @@ describe('Wave 2 create reconciliation', () => {
     ).toHaveLength(1);
   });
 
-  it('does not retry when generated collection export fails after the task completes', async () => {
+  it('does not retry when the workspace inventory read fails after the task completes', async () => {
     const uid = 'aaaaaaaa-1111-4222-8333-444455556666';
     let generationPosts = 0;
     const { client, calls } = makeClient((env) => {
@@ -385,8 +377,8 @@ describe('Wave 2 create reconciliation', () => {
       if (env.service === 'specification' && env.method === 'get' && env.path === '/tasks') {
         return jsonResponse({ data: { 'task-ok-1': 'completed' } });
       }
-      if (env.service === 'collection' && env.method === 'get' && env.path.endsWith('/export')) {
-        return jsonResponse({ error: { message: 'export unavailable' } }, 503);
+      if (env.service === 'collection' && env.method === 'get' && env.path.startsWith('/v3/collections/?workspace=')) {
+        return jsonResponse({ error: { message: 'inventory unavailable' } }, 503);
       }
       return jsonResponse({});
     });

@@ -128,7 +128,7 @@ flows:
  * flow.yaml reshapes the canonical Smoke collection through the gateway, and
  * the temporary generated collection is deleted. It covers the surface
  * smoke-flow is uniquely responsible for: specification-service generation +
- * task poll + reconcile, v3 export -> v2 adaptation, per-item reconcile, and
+ * task poll + reconcile, populated Sync v2.1 snapshot read, per-item reconcile, and
  * the collection-level patch, all access-token-only.
  */
 export const SMOKE_FLOW_CASSETTE: SmokeFlowCassetteScenario = {

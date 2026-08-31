@@ -848,7 +848,7 @@ export function buildSmokeRunIdentity(env: NodeJS.ProcessEnv = process.env): str
 /**
  * Build the Smoke collection client. The reshape runs access-token-only through
  * the gateway (`PostmanGatewaySmokeClient`): generate via the specification
- * service, read via `GET /v3/collections/:cid/export`, and apply the curated
+ * service, read via the populated `sync GET /collection/:uid` snapshot, and apply the curated
  * reshape via v3 per-item create/patch + a collection-level patch — no PMAK.
  * A postman-api-key, when present, is only the AccessTokenProvider re-mint
  * credential (service-account access tokens expire); it is never used for the

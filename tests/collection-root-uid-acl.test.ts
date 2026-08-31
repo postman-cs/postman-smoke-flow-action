@@ -11,7 +11,7 @@ import { AccessTokenProvider } from '../src/lib/postman/token-provider.js';
  *
  *   PATCH /v3/collections/:id            bare=403 FORBIDDEN   full=200
  *   GET   /v3/collections/:id            bare=403 FORBIDDEN   full=200
- *   GET   /v3/collections/:id/export     bare=200             full=200
+ *   GET   sync /collection/:uid            full public uid only (populated v2.1 snapshot)
  *   DELETE /v3/collections/:id           bare=200             full=200
  */
 
@@ -20,6 +20,7 @@ const OWNER = '55363555';
 const FULL = `${OWNER}-${UUID}`;
 const WORKSPACE = 'ws-smoke-acl';
 
+const V21_SCHEMA = 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json';
 const FULL_PUBLIC_UID_RE =
   /^\d+-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
@@ -87,8 +88,13 @@ function aclEnforcingHandler(options: {
       return jsonResponse({ data: [] });
     }
 
-    if (env.service === 'collection' && /\/export$/.test(path)) {
-      return jsonResponse({ data: { collection: { name: 'Smoke', items: [] } } });
+    if (env.service === 'sync' && env.method === 'get' && path.startsWith('/collection/')) {
+      return jsonResponse({
+        data: {
+          info: { _postman_id: UUID, name: 'Smoke', schema: V21_SCHEMA },
+          item: []
+        }
+      });
     }
 
     const segment = rootSegment(path);
@@ -255,10 +261,12 @@ describe('PostmanGatewaySmokeClient collection ROOT ACL', () => {
     expect(calls).toEqual([]);
   });
 
-  it('keeps export and delete on bare model ids', async () => {
+  it('reads the populated Sync snapshot by full public uid and keeps delete on the bare model id', async () => {
     const { client, calls } = makeClient((env) => {
-      if (env.service === 'collection' && env.method === 'get' && env.path.endsWith('/export')) {
-        return jsonResponse({ data: { collection: { name: 'Smoke', items: [] } } });
+      if (env.service === 'sync' && env.method === 'get' && env.path.startsWith('/collection/')) {
+        return jsonResponse({
+          data: { info: { _postman_id: UUID, name: 'Smoke', schema: V21_SCHEMA }, item: [] }
+        });
       }
       if (env.service === 'collection' && env.method === 'delete') {
         return jsonResponse({ data: { id: UUID } });
@@ -269,9 +277,43 @@ describe('PostmanGatewaySmokeClient collection ROOT ACL', () => {
     await client.getCollection(FULL);
     await client.deleteCollection(FULL);
 
-    expect(calls.find((call) => call.method === 'get' && call.path.endsWith('/export'))?.path).toBe(
-      `/v3/collections/${UUID}/export`
-    );
+    const read = calls.find((call) => call.service === 'sync' && call.method === 'get');
+    expect(new URL(String(read?.path), 'https://gateway.invalid').pathname).toBe(`/collection/${FULL}`);
+    expect(calls.some((call) => call.path.includes('/export'))).toBe(false);
     expect(calls.find((call) => call.method === 'delete')?.path).toBe(`/v3/collections/${UUID}`);
+  });
+
+  it('resolves a bare model id through inventory before the populated Sync read', async () => {
+    const { client, calls } = makeClient((env) => {
+      if (env.service === 'collection' && env.path.startsWith('/v3/collections/?workspace=')) {
+        return jsonResponse({ data: [{ id: FULL, name: 'Smoke' }] });
+      }
+      if (env.service === 'sync' && env.method === 'get') {
+        return jsonResponse({
+          data: { info: { _postman_id: UUID, name: 'Smoke', schema: V21_SCHEMA }, item: [] }
+        });
+      }
+      return jsonResponse({ data: {} });
+    });
+
+    await client.getCollection(UUID);
+
+    const read = calls.find((call) => call.service === 'sync' && call.method === 'get');
+    expect(new URL(String(read?.path), 'https://gateway.invalid').pathname).toBe(`/collection/${FULL}`);
+  });
+
+  it('proves absence from inventory after an ambiguous delete instead of exporting', async () => {
+    const { client, calls } = makeClient((env) => {
+      if (env.service === 'collection' && env.method === 'delete') {
+        return jsonResponse({ error: { message: 'ESOCKETTIMEDOUT' } }, { status: 503 });
+      }
+      if (env.service === 'collection' && env.path.startsWith('/v3/collections/?workspace=')) {
+        return jsonResponse({ data: [] });
+      }
+      return jsonResponse({ data: {} });
+    });
+
+    await expect(client.deleteCollection(FULL)).resolves.toBeUndefined();
+    expect(calls.some((call) => call.path.includes('/export'))).toBe(false);
   });
 });
