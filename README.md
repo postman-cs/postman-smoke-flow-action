@@ -31,7 +31,7 @@ jobs:
           postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
           postman-region: us
 
-      - uses: postman-cs/postman-smoke-flow-action@v2
+      - uses: postman-cs/postman-smoke-flow-action@v3
         with:
           project-name: core-payments
           workspace-id: ${{ vars.POSTMAN_WORKSPACE_ID }}
@@ -82,7 +82,7 @@ jobs:
           postman-access-token: ${{ steps.postman_token.outputs.token }}
 
       - id: smoke_flow
-        uses: postman-cs/postman-smoke-flow-action@v2
+        uses: postman-cs/postman-smoke-flow-action@v3
         with:
           project-name: core-payments
           workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
@@ -117,7 +117,7 @@ Under `flow-mode: auto` (the default), the action resolves one effective flow pa
 When a valid manifest exists at the effective flow path, the action generates a temporary Smoke collection from the current spec, reshapes it to match the curated flow, injects [pre-request](https://learning.postman.com/docs/tests-and-scripts/write-scripts/pre-request-scripts/) and [test scripts](https://learning.postman.com/docs/tests-and-scripts/write-scripts/test-scripts/) from bindings and extracts, updates the canonical Smoke collection in place, and deletes the temporary collection. `flow-mode: curated` specifically requires an explicit, existing `flow-path`; in auto mode, `postman/flow.yaml` is also curated when `flow-path` is omitted. The manifest format is documented in [docs/flow-manifest.md](docs/flow-manifest.md). The exact pre-request and test scripts injected per step are documented in [docs/generated-tests.md](docs/generated-tests.md), with a committed example manifest at [examples/flow.yaml](examples/flow.yaml).
 
 ```yaml
-- uses: postman-cs/postman-smoke-flow-action@v2
+- uses: postman-cs/postman-smoke-flow-action@v3
   with:
     project-name: core-payments
     workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
@@ -166,7 +166,7 @@ smoke:
 Set `debug-dump-path` to write the transformed collection JSON to disk before the update call, then upload it as a workflow artifact for inspection. The path must be relative to the effective working directory and must not already exist; absolute paths, traversal, and symlinks are rejected.
 
 ```yaml
-- uses: postman-cs/postman-smoke-flow-action@v2
+- uses: postman-cs/postman-smoke-flow-action@v3
   with:
     project-name: core-payments
     workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
