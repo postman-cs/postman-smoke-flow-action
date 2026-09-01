@@ -1,9 +1,21 @@
 # Support
 
-Use GitHub issues for reproducible action or CLI problems. Include the action tag, runner type, Node.js version, region, whether flow-path was set, and redacted logs.
+## Getting help
 
-For onboarding credential setup, use postman-resolve-service-token-action first. When service-account minting is unavailable, use the Postman CLI credential store created by `postman login` as the fallback source.
+Open a GitHub issue for usage questions, reproducible failures, or documentation gaps in `postman-smoke-flow-action`.
 
-Do not include Postman API keys, access tokens, OAuth client secrets, collection JSON with live secrets, or debug dumps that contain runtime values. Rotate any credential that was posted publicly.
+Before opening an issue, check:
 
-For vulnerability reports or accidental secret exposure, follow [SECURITY.md](SECURITY.md).
+- The workflow pins the rolling major alias or an immutable tag shown in `README.md`; frozen older majors receive no fixes.
+- Credentials are supplied the way `README.md` documents (service-account Postman API key, access token from `postman-cs/postman-resolve-service-token-action`, region set for EU tenants).
+- The run reproduces on the latest release.
+
+Include in the issue:
+
+- The release tag in use.
+- The workflow snippet with secrets removed.
+- The failing step logs with tokens redacted.
+
+## Security reports
+
+Do not open public issues for vulnerabilities or leaked credentials. Follow [Security Policy](SECURITY.md).
