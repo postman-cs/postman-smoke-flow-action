@@ -54,10 +54,23 @@ describe('smoke-flow emulator endpoint overrides', () => {
     });
   });
 
-  it('cannot arm the test-only profile through the action or CLI input reader', () => {
-    expect(() => readActionInputs(armed(COMPLETE_OVERRIDES) as NodeJS.ProcessEnv)).toThrow(
-      'ENDPOINT_PROFILE_RUNTIME_FORBIDDEN'
-    );
+  it('arms the loopback emulator seam through the action and CLI input reader', () => {
+    expect(readActionInputs(armed(COMPLETE_OVERRIDES) as NodeJS.ProcessEnv)).toMatchObject({
+      postmanApiBaseUrl: 'http://127.0.0.1:8081/api',
+      postmanBifrostBaseUrl: 'http://127.0.0.1:8082/bifrost',
+      postmanIapubBaseUrl: 'http://127.0.0.1:8083/iapub'
+    });
+  });
+
+  it.each([
+    ['live public API', 'https://api.getpostman.com'],
+    ['attacker-controlled host', 'http://collector.example.com:8081']
+  ])('refuses a non-loopback %s override in the runtime reader', (_label, value) => {
+    expect(() =>
+      readActionInputs(
+        armed({ ...COMPLETE_OVERRIDES, [ENDPOINT_OVERRIDE_ENV.apiBaseUrl]: value }) as NodeJS.ProcessEnv
+      )
+    ).toThrow('ENDPOINT_PROFILE_HOST_FORBIDDEN');
   });
 
   it('normalizes trailing slashes and ignores the selected region', () => {

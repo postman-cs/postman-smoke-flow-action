@@ -79,6 +79,11 @@ export const ENDPOINT_OVERRIDE_ENV = {
 
 export type EndpointEnvironment = Record<string, string | undefined>;
 
+// The emulator seam may only point at a loopback listener. That keeps the
+// offline harness working while making it impossible to redirect
+// credential-bearing traffic to a remote host.
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', '[::1]', 'localhost']);
+
 const OVERRIDE_FIELDS = Object.keys(ENDPOINT_OVERRIDE_ENV) as Array<
   keyof typeof ENDPOINT_OVERRIDE_ENV
 >;
@@ -105,6 +110,13 @@ function normalizeEndpointOverride(envName: string, raw: string): string {
   if (parsed.search || parsed.hash) {
     throw invalid('must not carry a query string or fragment');
   }
+  if (!LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase())) {
+    throw new Error(
+      `ENDPOINT_PROFILE_HOST_FORBIDDEN: ${envName} must target a loopback host ` +
+        `(127.0.0.1, ::1, localhost), got "${parsed.hostname}"; the emulator profile ` +
+        'cannot redirect credential-bearing traffic to a remote host.'
+    );
+  }
   return `${parsed.origin}${parsed.pathname}`.replace(/\/+$/, '');
 }
 
@@ -125,22 +137,6 @@ export interface OverridableEndpoints {
   apiBaseUrl: string;
   bifrostBaseUrl: string;
   iapubBaseUrl: string;
-}
-
-/**
- * Production composition roots must never derive credential-bearing hosts
- * from ambient environment variables. Endpoint overrides remain available to
- * isolated unit tests through applyEndpointOverrides, but action/CLI input
- * resolution calls this guard and therefore cannot arm the emulator seam.
- */
-export function assertEndpointOverridesDisabled(env: EndpointEnvironment): void {
-  const set = [EMULATOR_PROFILE_ENV, ...OVERRIDE_FIELDS.map((field) => ENDPOINT_OVERRIDE_ENV[field])]
-    .filter((name) => Object.hasOwn(env, name));
-  if (set.length > 0) {
-    throw new Error(
-      `ENDPOINT_PROFILE_RUNTIME_FORBIDDEN: ${set.join(', ')} cannot override credential-bearing endpoints in the action or CLI runtime.`
-    );
-  }
 }
 
 /**
