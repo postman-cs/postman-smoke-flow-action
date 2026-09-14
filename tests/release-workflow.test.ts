@@ -80,15 +80,19 @@ function executeDispatchShell(ghToken: string): DispatchRunResult {
     chmodSync(ghPath, 0o755);
 
     const recordPath = join(workdir, 'gh-record.txt');
+    // The shell under test must stay hermetic: host shell-startup files leak
+    // through BASH_ENV/ENV, and a startup-injected `gh` function shadows the
+    // PATH stub below, turning this offline test into a live `gh api` call.
+    const childEnv: NodeJS.ProcessEnv = { ...process.env };
+    delete childEnv.BASH_ENV;
+    delete childEnv.ENV;
+    childEnv.PATH = `${workdir}:${process.env.PATH || ''}`;
+    childEnv.GH_TOKEN = ghToken;
+    childEnv.GITHUB_REPOSITORY = DISPATCH_REPOSITORY;
+    childEnv.GH_STUB_RECORD = recordPath;
     const stdout = execFileSync('bash', [join(workdir, 'dispatch.sh')], {
       encoding: 'utf8',
-      env: {
-        ...process.env,
-        PATH: `${workdir}:${process.env.PATH || ''}`,
-        GH_TOKEN: ghToken,
-        GITHUB_REPOSITORY: DISPATCH_REPOSITORY,
-        GH_STUB_RECORD: recordPath,
-      },
+      env: childEnv,
       cwd: workdir,
       timeout: 10000,
     }) as string;

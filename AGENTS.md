@@ -6,28 +6,38 @@ Reshapes generated Postman Smoke collection to match curated `flow.yaml`, w/ opt
 
 ```
 src/
-  index.ts                       # Action entry: reads inputs, applies flow, sets outputs
+  main.ts                        # Thin Action entry: runs runAction, fails the step on error
+  index.ts                       # Core: inputs, token mint, preflight, flow apply, outputs
   cli.ts                         # CLI adapter
-  main.ts                        # Core: load flow.yaml -> transform -> write collection
-  contracts.ts                   # I/O types
+  contracts.ts                   # I/O contract (required/optional inputs)
   types.ts                       # Shared flow + collection types
+  action-version.ts              # Embedded action version for telemetry
   flow/
     parser.ts                    # Parse curated flow.yaml
     resolver.ts                  # Resolve flow steps against generated Smoke collection
     validator.ts                 # Validate flow shape + references
+    derive.ts                    # Derive a flow from the OpenAPI spec (auto mode)
+    serializer.ts                # Persist a derived flow as the curated manifest
   postman/
     postman-gateway-smoke-client.ts # Live client: generate/read/reshape/delete via access-token gateway
-    postman-smoke-client.ts      # Legacy PMAK client; imported for method types only (Pick<...>), never instantiated
+    smoke-client-contract.ts     # SmokeCollectionClient interface the core depends on
+    collection-model-identity.ts # Normalize canonical collection identifiers
     collection-transform.ts      # Reorder/reshape requests, seed OAuth vars + per-request bearer auth
     scripts.ts                   # Injected pre-request/test scripts (chaining, OAuth2 token mint)
     credential-identity.ts       # iapub session-identity preflight + memoized consumerType for telemetry
   lib/
     cli-args.ts                  # CLI flag parsing
-    errors.ts, error-advice.ts   # ValidationError + user-facing remediation hints
+    errors.ts                    # ValidationError
     logging.ts                   # Reporter (stderr logs, stdout JSON in CLI mode)
-    paths.ts                     # Path resolution helpers
+    paths.ts                     # Workspace-relative path resolution + create-only writes
+    secrets.ts                   # Secret masking
+    repo-branch-decision.ts      # Branch-aware sync tiers
+    working-directory.ts         # working-directory activation
     postman/
       token-provider.ts          # AccessTokenProvider: holds access token, re-mints from PMAK on 401
+      base-urls.ts               # Region/stack endpoint profiles + override guard
+      pmak-diagnostics.ts        # Live-probed PMAK identity diagnosis for mint failures
+      app-version.ts             # Postman app version floor check
   @postman-cs/automation-core   # Shared gateway transport, retry, and HttpError
 tests/
 ```
