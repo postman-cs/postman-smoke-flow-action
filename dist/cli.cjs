@@ -41165,19 +41165,74 @@ var POSTMAN_ENDPOINT_PROFILES = {
   }
 };
 var EMULATOR_PROFILE_ENV = "POSTMAN_TEST_EMULATOR_PROFILE";
+var EMULATOR_PROFILE_NAME = "emulator";
 var ENDPOINT_OVERRIDE_ENV = {
   apiBaseUrl: "POSTMAN_TEST_API_BASE_URL",
   bifrostBaseUrl: "POSTMAN_TEST_BIFROST_BASE_URL",
   iapubBaseUrl: "POSTMAN_TEST_IAPUB_BASE_URL"
 };
+var LOOPBACK_HOSTS = /* @__PURE__ */ new Set(["127.0.0.1", "::1", "[::1]", "localhost"]);
 var OVERRIDE_FIELDS = Object.keys(ENDPOINT_OVERRIDE_ENV);
-function assertEndpointOverridesDisabled(env) {
-  const set = [EMULATOR_PROFILE_ENV, ...OVERRIDE_FIELDS.map((field) => ENDPOINT_OVERRIDE_ENV[field])].filter((name) => Object.hasOwn(env, name));
-  if (set.length > 0) {
+function readEndpointEnv(env, name) {
+  return String(env[name] ?? "").trim();
+}
+function normalizeEndpointOverride(envName, raw) {
+  const invalid = (reason) => new Error(`ENDPOINT_PROFILE_OVERRIDE_INVALID: ${envName} ${reason}`);
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw invalid("must be an absolute http(s) URL");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw invalid(`must use http or https, got "${parsed.protocol}"`);
+  }
+  if (parsed.username || parsed.password) {
+    throw invalid("must not embed credentials");
+  }
+  if (parsed.search || parsed.hash) {
+    throw invalid("must not carry a query string or fragment");
+  }
+  if (!LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase())) {
     throw new Error(
-      `ENDPOINT_PROFILE_RUNTIME_FORBIDDEN: ${set.join(", ")} cannot override credential-bearing endpoints in the action or CLI runtime.`
+      `ENDPOINT_PROFILE_HOST_FORBIDDEN: ${envName} must target a loopback host (127.0.0.1, ::1, localhost), got "${parsed.hostname}"; the emulator profile cannot redirect credential-bearing traffic to a remote host.`
     );
   }
+  return `${parsed.origin}${parsed.pathname}`.replace(/\/+$/, "");
+}
+function assertNoUnarmedOverrides(env) {
+  const set = OVERRIDE_FIELDS.map((field) => ENDPOINT_OVERRIDE_ENV[field]).filter(
+    (name) => Object.hasOwn(env, name)
+  );
+  if (set.length > 0) {
+    throw new Error(
+      `ENDPOINT_PROFILE_NOT_ARMED: ${set.join(", ")} set without ${EMULATOR_PROFILE_ENV}=${EMULATOR_PROFILE_NAME}; endpoint overrides are ignored unless the emulator profile is armed, so this would have hit live hosts.`
+    );
+  }
+}
+function applyEndpointOverrides(live, env = process.env) {
+  const profileName = readEndpointEnv(env, EMULATOR_PROFILE_ENV);
+  if (!profileName) {
+    assertNoUnarmedOverrides(env);
+    return live;
+  }
+  if (profileName !== EMULATOR_PROFILE_NAME) {
+    throw new Error(
+      `ENDPOINT_PROFILE_UNKNOWN: ${EMULATOR_PROFILE_ENV}="${profileName}"; supported values: ${EMULATOR_PROFILE_NAME}`
+    );
+  }
+  const resolved = {};
+  for (const field of OVERRIDE_FIELDS) {
+    const envName = ENDPOINT_OVERRIDE_ENV[field];
+    const raw = readEndpointEnv(env, envName);
+    if (!raw) {
+      throw new Error(
+        `ENDPOINT_PROFILE_OVERRIDE_MISSING: ${envName} is required when ${EMULATOR_PROFILE_ENV}=${EMULATOR_PROFILE_NAME}; the emulator profile never falls back to a live host.`
+      );
+    }
+    resolved[field] = normalizeEndpointOverride(envName, raw);
+  }
+  return { ...live, ...resolved };
 }
 
 // src/lib/postman/pmak-diagnostics.ts
@@ -42191,8 +42246,15 @@ function parseAuthConfig(value) {
   throw new Error("Invalid auth-config-json: supported auth types are oauth2 and apiKey.");
 }
 function readActionInputs(env = process.env) {
-  assertEndpointOverridesDisabled(env);
   const region = getInput2("postman-region", env);
+  const endpoints = applyEndpointOverrides(
+    {
+      apiBaseUrl: resolvePostmanApiBaseUrl(region),
+      bifrostBaseUrl: "https://bifrost-premium-https-v4.gw.postman.com",
+      iapubBaseUrl: resolvePostmanIapubBaseUrl(region)
+    },
+    env
+  );
   return {
     projectName: getInput2("project-name", env),
     workspaceId: getInput2("workspace-id", env),
@@ -42206,9 +42268,9 @@ function readActionInputs(env = process.env) {
       false
     ),
     postmanApiKey: getInput2("postman-api-key", env) || env.POSTMAN_API_KEY || "",
-    postmanApiBaseUrl: resolvePostmanApiBaseUrl(region),
-    postmanBifrostBaseUrl: "https://bifrost-premium-https-v4.gw.postman.com",
-    postmanIapubBaseUrl: resolvePostmanIapubBaseUrl(region),
+    postmanApiBaseUrl: endpoints.apiBaseUrl,
+    postmanBifrostBaseUrl: endpoints.bifrostBaseUrl,
+    postmanIapubBaseUrl: endpoints.iapubBaseUrl,
     authConfig: parseAuthConfig(getInput2("auth-config-json", env)),
     // Opt-in provider selection. The legacy boolean input is still honoured
     // (`true` -> the historical AWS helper) so existing callers keep working.
