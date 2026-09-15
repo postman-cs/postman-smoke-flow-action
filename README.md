@@ -1,10 +1,10 @@
-# Postman Onboarding: Smoke Flow
+# Postman Enterprise Automation: Smoke Flow
 
 [![CI](https://github.com/postman-cs/postman-smoke-flow-action/actions/workflows/ci.yml/badge.svg)](https://github.com/postman-cs/postman-smoke-flow-action/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/postman-cs/postman-smoke-flow-action?sort=semver)](https://github.com/postman-cs/postman-smoke-flow-action/releases) [![npm](https://img.shields.io/npm/v/%40postman-cs%2Fonboarding-smoke-flow)](https://www.npmjs.com/package/@postman-cs/onboarding-smoke-flow) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Reshapes the generated Postman Smoke collection into an ordered smoke journey using one effective flow path — explicit `flow-path`, or `postman/flow.yaml` when omitted. Under `flow-mode: auto`, a valid manifest at that path is curated; an absent manifest is derived deterministically from the OpenAPI spec at `spec-path` and can be persisted there for the next curated run — with optional runtime auth injection for [OAuth2](https://learning.postman.com/docs/use/send-requests/authorization/oauth-20/) and API keys.
 
-Part of the [Postman API Onboarding suite](https://github.com/postman-cs/postman-api-onboarding-action); the composite action's README has the full [action-picker table](https://github.com/postman-cs/postman-api-onboarding-action#which-action-should-i-use).
+Part of the [Postman Enterprise Automation Suite](https://github.com/postman-cs/postman-api-onboarding-action); the composite action's README has the full [action-picker table](https://github.com/postman-cs/postman-api-onboarding-action#which-action-should-i-use).
 
 - [Usage](#usage)
 - [Examples](#examples)
