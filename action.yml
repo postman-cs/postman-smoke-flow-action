@@ -1,5 +1,5 @@
-name: 'Postman Onboarding: Smoke Flow'
-description: Apply a curated flow.yaml to the generated Postman Smoke collection. Part of the Postman API Onboarding suite.
+name: 'Postman Enterprise Automation: Smoke Flow'
+description: Apply a curated flow.yaml to the generated Postman Smoke collection. Part of the Postman Enterprise Automation Suite.
 author: Postman
 branding:
   icon: zap

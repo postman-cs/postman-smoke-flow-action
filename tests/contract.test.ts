@@ -57,7 +57,7 @@ function parseMarkdownTableRowKeys(section: string): string[] {
 describe('postman-smoke-flow-action contract', () => {
   it('uses the expected action name and required inputs', () => {
     const manifest = loadManifest();
-    expect(manifest.name).toBe('Postman Onboarding: Smoke Flow');
+    expect(manifest.name).toBe('Postman Enterprise Automation: Smoke Flow');
     expect(manifest.inputs['flow-path']?.required).toBe(false);
     expect(manifest.inputs['working-directory']).toMatchObject({ required: false, default: '' });
     expect(manifest.inputs['smoke-collection-id']?.required).toBe(true);
