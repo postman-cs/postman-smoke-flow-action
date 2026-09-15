@@ -21,7 +21,7 @@ import {
 import type { SmokeCollectionClient } from './postman/smoke-client-contract.js';
 import { PostmanGatewaySmokeClient } from './postman/postman-gateway-smoke-client.js';
 import { AccessTokenProvider, mintAccessTokenIfNeeded } from './lib/postman/token-provider.js';
-import { assertEndpointOverridesDisabled } from './lib/postman/base-urls.js';
+import { applyEndpointOverrides } from './lib/postman/base-urls.js';
 import {
   getMemoizedSessionIdentity,
   runCredentialPreflight
@@ -192,8 +192,15 @@ function parseAuthConfig(value: string): SmokeAuthConfig | undefined {
 }
 
 export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionInputs {
-  assertEndpointOverridesDisabled(env);
   const region = getInput('postman-region', env);
+  const endpoints = applyEndpointOverrides(
+    {
+      apiBaseUrl: resolvePostmanApiBaseUrl(region),
+      bifrostBaseUrl: 'https://bifrost-premium-https-v4.gw.postman.com',
+      iapubBaseUrl: resolvePostmanIapubBaseUrl(region)
+    },
+    env
+  );
   return {
     projectName: getInput('project-name', env),
     workspaceId: getInput('workspace-id', env),
@@ -207,9 +214,9 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
       false
     ),
     postmanApiKey: getInput('postman-api-key', env) || env.POSTMAN_API_KEY || '',
-    postmanApiBaseUrl: resolvePostmanApiBaseUrl(region),
-    postmanBifrostBaseUrl: 'https://bifrost-premium-https-v4.gw.postman.com',
-    postmanIapubBaseUrl: resolvePostmanIapubBaseUrl(region),
+    postmanApiBaseUrl: endpoints.apiBaseUrl,
+    postmanBifrostBaseUrl: endpoints.bifrostBaseUrl,
+    postmanIapubBaseUrl: endpoints.iapubBaseUrl,
     authConfig: parseAuthConfig(getInput('auth-config-json', env)),
     // Opt-in provider selection. The legacy boolean input is still honoured
     // (`true` -> the historical AWS helper) so existing callers keep working.
