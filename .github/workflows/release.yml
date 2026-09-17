@@ -15,6 +15,7 @@ concurrency:
 jobs:
   classify:
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     permissions:
       contents: read
     outputs:
@@ -33,6 +34,7 @@ jobs:
     needs: classify
     if: ${{ needs.classify.outputs.release_kind == 'immutable' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 8
     permissions:
       contents: read
     steps:
@@ -93,6 +95,7 @@ jobs:
     needs: [classify, verify-package]
     if: ${{ needs.classify.outputs.release_kind == 'immutable' && needs.verify-package.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 13
     outputs:
       published: ${{ steps.npm-publish.outputs.published }}
     permissions:
@@ -177,6 +180,7 @@ jobs:
     needs: [classify, publish]
     if: ${{ needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     permissions:
       contents: write
     steps:
@@ -227,6 +231,7 @@ jobs:
     needs: [classify, publish, advance-major-alias]
     if: ${{ !cancelled() && needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success' && needs['advance-major-alias'].result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     permissions: {}
     steps:
       - name: Mint composite-scoped App token
@@ -258,6 +263,7 @@ jobs:
     if: ${{ needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success' }}
     continue-on-error: true
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     permissions:
       contents: read
     steps:
