@@ -47,6 +47,8 @@ export type ActionInputs = {
   flowPath?: string;
   flowMode: 'auto' | 'curated' | 'off';
   flowAllowDelete: boolean;
+  /** Derivation scope for flow-mode auto. Omitted means full. */
+  flowDeriveScope?: 'full' | 'read-only';
   postmanApiKey: string;
   postmanApiBaseUrl: string;
   postmanBifrostBaseUrl: string;
@@ -138,6 +140,9 @@ export type FlowApplySummary = {
     excludedDeleteCount: number;
     excludedUnresolvedPathParamCount: number;
     unresolvedParameterCount: number;
+    /** Present only when the flow was derived under flow-derive-scope=read-only. */
+    scope?: 'read-only';
+    excludedNonReadCount?: number;
     excludedOperationIds: string[];
   };
   warnings: string[];

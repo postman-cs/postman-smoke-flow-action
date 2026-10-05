@@ -39,6 +39,22 @@ import { ValidationError } from '../lib/errors.js';
  *     or exact-name producers elsewhere): the earliest base-order resource with
  *     all producers emitted goes next; a dependency cycle falls back to base
  *     order.
+ *  7. Scope (opt-in, flow-derive-scope=read-only): every non-GET operation is
+ *     excluded before ordering. Item-path parameters are fed from the first
+ *     element of the owning resource's list GET instead of a create response
+ *     (`GET /pets` -> `$.data[0].id` -> `GET /pets/{petId}`). Only object
+ *     envelopes are read (`data`, `items`, `results`, ... or a single
+ *     array-of-object property); identifier-shaped parameters also accept the
+ *     surrogate keys `id`, `guid`, and `uuid`. Producers are owner-scoped only.
+ *     The default scope (full) is byte-identical to the pre-scope behavior,
+ *     including the trace shape: scope fields appear only under read-only.
+ *
+ * TODO(read-only-scope-sunset): read-only scope is an interim escape hatch. Once the
+ * Postman CLI can filter a collection run by HTTP method, remove the GET-only
+ * filter here (and the flow-derive-scope input) in favor of run-time
+ * filtering, then revisit whether list-sourced chaining should stay in
+ * derivation or fold into the default scope as part of a smoke-flow cleanup.
+ * Search the repo for this tag to find every touch point.
  */
 
 export type DerivedFlowResult = {
@@ -60,11 +76,26 @@ export type DerivationTrace = {
   /** Steps dropped because a required path parameter had no producer in the spec. */
   excludedUnresolvedPathParamCount: number;
   unresolvedParameterCount: number;
+  /**
+   * Present only under scope read-only, so the default (full) trace and the
+   * public flow-apply-summary-json derivation payload keep their exact shape.
+   */
+  scope?: 'read-only';
+  /** Read-only scope only: non-GET operations dropped before ordering. */
+  excludedNonReadCount?: number;
 };
+
+/**
+ * `full` (default): create -> list -> read -> update chaining from create
+ * responses. `read-only`: GET operations only, with item-path identifiers
+ * extracted from the first element of the matching list response.
+ */
+export type DeriveScope = 'full' | 'read-only';
 
 export type DeriveOptions = {
   allowDelete?: boolean;
   flowName?: string;
+  scope?: DeriveScope;
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -82,6 +113,8 @@ export type SpecOperation = {
   requiredQueryParams: string[];
   requestBodyProps: string[];
   responseProps: Map<string, string>; // property name -> jsonPath
+  /** List GETs only: first-item property name -> jsonPath (`$.data[0].guid`). Read-only scope consumes it. */
+  listItemProps: Map<string, string>;
   specIndex: number;
 };
 
@@ -146,7 +179,11 @@ function collectRequiredQueryParams(
  * plus array-of-object unwrap (`$[0].id` style is NOT emitted -- top-level
  * arrays yield no extracts in v1 because item identity is ambiguous).
  */
-function collectResponseProps(document: JsonRecord, schema: JsonRecord | null): Map<string, string> {
+function collectResponseProps(
+  document: JsonRecord,
+  schema: JsonRecord | null,
+  rootPrefix = '$'
+): Map<string, string> {
   const found = new Map<string, { jsonPath: string; depth: number }>();
   const root = derefSchema(document, schema);
   if (!root) return new Map();
@@ -202,12 +239,89 @@ function collectResponseProps(document: JsonRecord, schema: JsonRecord | null): 
     }
   };
 
-  visit(root, '$', 0);
+  visit(root, rootPrefix, 0);
   const result = new Map<string, string>();
   for (const [key, entry] of found) {
     result.set(key, entry.jsonPath);
   }
   return result;
+}
+
+function schemaTypes(schema: JsonRecord | null): string[] {
+  const rawType = schema?.type;
+  if (Array.isArray(rawType)) return rawType.filter((entry): entry is string => typeof entry === 'string');
+  return typeof rawType === 'string' ? [rawType] : [];
+}
+
+/** Item schema of an array schema when the items are object-shaped; null otherwise. */
+function objectArrayItemSchema(document: JsonRecord, node: JsonRecord | null): JsonRecord | null {
+  const resolved = derefSchema(document, node);
+  if (!resolved || !schemaTypes(resolved).includes('array')) return null;
+  const item = derefSchema(document, asRecord(resolved.items));
+  if (!item) return null;
+  const objectLike =
+    schemaTypes(item).includes('object') || Boolean(asRecord(item.properties)) || Array.isArray(item.allOf);
+  return objectLike ? item : null;
+}
+
+/** Common pagination envelope keys, most conventional first. */
+const LIST_ENVELOPE_KEYS = ['data', 'items', 'results', 'content', 'records', 'values'];
+
+/**
+ * Read-only scope: locate the first item of a list response wrapped in an
+ * object envelope (`{ data: [...] }`, `{ items: [...] }`). Returns the item
+ * schema plus the jsonPath prefix that reaches the first element
+ * (`$.data[0]`). A conventional envelope key wins; otherwise exactly one
+ * array-of-object property must exist, so the choice is never ambiguous.
+ * Top-level array responses are not supported: the injected resolver only
+ * accepts `$.`-rooted paths.
+ */
+function findListItemSchema(
+  document: JsonRecord,
+  schema: JsonRecord | null
+): { prefix: string; item: JsonRecord } | null {
+  const root = derefSchema(document, schema);
+  if (!root) return null;
+  const envelopeProps = new Map<string, JsonRecord>();
+  const absorb = (node: JsonRecord | null, depth: number): void => {
+    const resolved = derefSchema(document, node);
+    if (!resolved || depth > MAX_REF_DEPTH) return;
+    if (Array.isArray(resolved.allOf)) {
+      for (const branch of resolved.allOf) absorb(asRecord(branch), depth + 1);
+    }
+    const props = asRecord(resolved.properties);
+    if (!props) return;
+    for (const key of Object.keys(props).sort()) {
+      const child = asRecord(props[key]);
+      if (child && !envelopeProps.has(key)) envelopeProps.set(key, child);
+    }
+  };
+  absorb(root, 0);
+  const arrayKeys = [...envelopeProps.keys()]
+    .filter((key) => objectArrayItemSchema(document, envelopeProps.get(key) ?? null))
+    .sort();
+  if (arrayKeys.length === 0) return null;
+  const key = LIST_ENVELOPE_KEYS.find((candidate) => arrayKeys.includes(candidate)) ??
+    (arrayKeys.length === 1 ? arrayKeys[0] : undefined);
+  if (!key) return null;
+  const item = objectArrayItemSchema(document, envelopeProps.get(key) ?? null);
+  return item ? { prefix: `$.${key}[0]`, item } : null;
+}
+
+/**
+ * Read-only scope: identifier property names a list item may carry for an
+ * item-path parameter, most specific first. Identifier-shaped parameters
+ * (`{petId}`, `{guid}`, `{orderUuid}`) also accept the common surrogate-key
+ * names `id`, `guid`, and `uuid`; any other parameter (`{slug}`) matches only
+ * its exact name, so a non-identifier is never bound to an id.
+ */
+function listIdentityCandidates(param: string, resourceSegment: string): string[] {
+  const candidates = parameterCandidates(param, resourceSegment);
+  if (!/(id|guid|uuid)$/i.test(param)) return candidates;
+  for (const surrogate of ['id', 'guid', 'uuid']) {
+    if (!candidates.includes(surrogate)) candidates.push(surrogate);
+  }
+  return candidates;
 }
 
 /**
@@ -344,6 +458,9 @@ export function collectOperations(document: JsonRecord): SpecOperation[] {
         operationId = `${operationId}-${suffix}`;
       }
       usedOperationIds.add(operationId);
+      const successSchema = pickSuccessResponseSchema(document, operation);
+      const listItem =
+        method.toLowerCase() === 'get' && !isItemPath ? findListItemSchema(document, successSchema) : null;
       operations.push({
         operationId,
         method: method.toUpperCase(),
@@ -353,7 +470,8 @@ export function collectOperations(document: JsonRecord): SpecOperation[] {
         pathParams: pathLevelParams,
         requiredQueryParams: collectRequiredQueryParams(document, pathItem, operation),
         requestBodyProps: collectRequestBodyProps(document, operation),
-        responseProps: collectResponseProps(document, pickSuccessResponseSchema(document, operation)),
+        responseProps: collectResponseProps(document, successSchema),
+        listItemProps: listItem ? collectResponseProps(document, listItem.item, listItem.prefix) : new Map(),
         specIndex: specIndex++
       });
     }
@@ -408,14 +526,33 @@ function stepKeyFor(op: SpecOperation, ordinal: number): string {
 
 export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions = {}): DerivedFlowResult {
   const warnings: FlowWarning[] = [];
-  const operations = collectOperations(document);
+  const scope: DeriveScope = options.scope ?? 'full';
+  const readOnly = scope === 'read-only';
+  const allOperations = collectOperations(document);
+  // TODO(read-only-scope-sunset): replace with Postman CLI method filtering when available.
+  // Read-only scope drops every non-GET operation up front, so ordering,
+  // producers, and dependency edges are computed over safe reads only.
+  const operations = readOnly ? allOperations.filter((op) => op.method === 'GET') : allOperations;
+  const nonReadOperationIds = readOnly
+    ? allOperations.filter((op) => op.method !== 'GET').map((op) => op.operationId)
+    : [];
+  // Read-only-only trace fields; spread into every trace so full-scope traces
+  // carry no new keys.
+  const scopeTrace: Pick<DerivationTrace, 'scope' | 'excludedNonReadCount'> = readOnly
+    ? { scope: 'read-only', excludedNonReadCount: nonReadOperationIds.length }
+    : {};
 
   if (operations.length === 0) {
-    warnings.push({ message: 'Flow derivation found no operations in the OpenAPI document; a smoke flow cannot be derived.' });
+    warnings.push({
+      message:
+        readOnly && allOperations.length > 0
+          ? 'Flow derivation under flow-derive-scope=read-only found no GET operations in the OpenAPI document; a smoke flow cannot be derived.'
+          : 'Flow derivation found no operations in the OpenAPI document; a smoke flow cannot be derived.'
+    });
     return {
       flow: null,
       warnings,
-      excludedOperationIds: [],
+      excludedOperationIds: [...nonReadOperationIds],
       trace: {
         resourceCount: 0,
         operationCount: 0,
@@ -424,7 +561,8 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
         bindingCount: 0,
         excludedDeleteCount: 0,
         excludedUnresolvedPathParamCount: 0,
-        unresolvedParameterCount: 0
+        unresolvedParameterCount: 0,
+        ...scopeTrace
       }
     };
   }
@@ -442,13 +580,48 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
     return a < b ? -1 : a > b ? 1 : 0;
   });
 
-  // Producer capability per resource: property names its collection-POST would
-  // publish as extracts (id-suffixed response properties).
+  // Read-only scope: item-path parameters each resource owns ({tractFipsId}
+  // under /tract-fips), keyed by owner collection path, sorted for determinism.
+  const ownedItemParams = new Map<string, PathParamRef[]>();
+  if (readOnly) {
+    for (const op of operations) {
+      for (const param of op.pathParams) {
+        const list = ownedItemParams.get(param.ownerPath) ?? [];
+        if (!list.some((entry) => entry.name === param.name)) list.push(param);
+        ownedItemParams.set(param.ownerPath, list);
+      }
+    }
+    for (const list of ownedItemParams.values()) {
+      list.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    }
+  }
+
+  // Read-only scope: which list-item property feeds an owned path parameter.
+  const listIdentityFor = (op: SpecOperation, param: PathParamRef): { prop: string; jsonPath: string } | undefined => {
+    for (const candidate of listIdentityCandidates(param.name, param.ownerSegment)) {
+      const jsonPath = op.listItemProps.get(candidate);
+      if (jsonPath) return { prop: candidate, jsonPath };
+    }
+    return undefined;
+  };
+
+  // Producer capability per resource. Full scope: property names its
+  // collection-POST would publish as extracts (id-suffixed response
+  // properties). Read-only scope: the owned path parameters its list GET can
+  // fill from the first list item.
   const publishable = new Map<string, Set<string>>();
   for (const [resource, list] of groups) {
     const props = new Set<string>();
     for (const op of list) {
-      if (op.method !== 'POST' || op.isItemPath) continue;
+      if (op.isItemPath) continue;
+      if (readOnly) {
+        if (op.method !== 'GET') continue;
+        for (const param of ownedItemParams.get(resource) ?? []) {
+          if (listIdentityFor(op, param)) props.add(param.name);
+        }
+        continue;
+      }
+      if (op.method !== 'POST') continue;
       for (const prop of op.responseProps.keys()) {
         if (/id$/i.test(prop) || prop === 'id') props.add(prop);
       }
@@ -520,7 +693,7 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
   // Producer registry: property name -> { stepKey, variable } from earlier steps.
   const producers = new Map<string, { stepKey: string; variable: string; operationId: string }>();
   const steps: FlowStep[] = [];
-  const excludedOperationIds: string[] = [];
+  const excludedOperationIds: string[] = [...nonReadOperationIds];
   let extractTotal = 0;
   let bindingTotal = 0;
   let unresolvedParameterCount = 0;
@@ -654,6 +827,24 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
       }
     }
 
+    // Read-only scope: a list GET publishes the identifier of its first item
+    // for each path parameter its resource owns. Producers register
+    // owner-scoped only, so one resource's list never feeds another
+    // resource's parameter.
+    if (readOnly && op.method === 'GET' && !op.isItemPath) {
+      for (const param of ownedItemParams.get(op.collectionPath) ?? []) {
+        const identity = listIdentityFor(op, param);
+        if (!identity) continue;
+        const scopedKey = `${op.collectionPath}::${param.name}`;
+        if (producers.has(scopedKey)) continue;
+        const variable = `${op.operationId}.${identity.prop}`;
+        if (!extract.some((entry) => entry.variable === variable)) {
+          extract.push({ variable, jsonPath: identity.jsonPath });
+        }
+        producers.set(scopedKey, { stepKey, variable, operationId: op.operationId });
+      }
+    }
+
     extractTotal += extract.length;
     bindingTotal += bindings.length;
     steps.push({
@@ -681,7 +872,8 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
         bindingCount: 0,
         excludedDeleteCount,
         excludedUnresolvedPathParamCount,
-        unresolvedParameterCount
+        unresolvedParameterCount,
+        ...scopeTrace
       }
     };
   }
@@ -706,7 +898,8 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
       bindingCount: bindingTotal,
       excludedDeleteCount,
       excludedUnresolvedPathParamCount,
-      unresolvedParameterCount
+      unresolvedParameterCount,
+      ...scopeTrace
     }
   };
 }

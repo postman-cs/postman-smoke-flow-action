@@ -213,6 +213,7 @@ export function readActionInputs(env: NodeJS.ProcessEnv = process.env): ActionIn
       getInput('flow-allow-delete', env),
       false
     ),
+    flowDeriveScope: parseFlowDeriveScope(getInput('flow-derive-scope', env)),
     postmanApiKey: getInput('postman-api-key', env) || env.POSTMAN_API_KEY || '',
     postmanApiBaseUrl: endpoints.apiBaseUrl,
     postmanBifrostBaseUrl: endpoints.bifrostBaseUrl,
@@ -630,6 +631,15 @@ export function parseFlowMode(raw: string | undefined): 'auto' | 'curated' | 'of
   throw new Error(`Invalid flow-mode: ${raw}. Expected auto, curated, or off.`);
 }
 
+// TODO(read-only-scope-sunset): remove with the flow-derive-scope input once the Postman
+// CLI supports method filtering (see src/flow/derive.ts).
+export function parseFlowDeriveScope(raw: string | undefined): 'full' | 'read-only' {
+  const normalized = String(raw ?? '').trim().toLowerCase();
+  if (!normalized || normalized === 'full') return 'full';
+  if (normalized === 'read-only') return 'read-only';
+  throw new Error(`Invalid flow-derive-scope: ${raw}. Expected full or read-only.`);
+}
+
 function deriveAutoFlow(inputs: ActionInputs, dependencies: SmokeFlowDependencies): DerivedFlowResult {
   const specPath = inputs.specPath?.trim();
   if (!specPath) {
@@ -655,12 +665,19 @@ function deriveAutoFlow(inputs: ActionInputs, dependencies: SmokeFlowDependencie
       }
     };
   }
-  const derived = deriveFlowFromSpecPath(specPath, { allowDelete: inputs.flowAllowDelete });
+  const derived = deriveFlowFromSpecPath(specPath, {
+    allowDelete: inputs.flowAllowDelete,
+    scope: inputs.flowDeriveScope ?? 'full'
+  });
   if (derived.flow) {
+    const scopeNote =
+      derived.trace.scope === 'read-only'
+        ? ` Scope read-only: ${derived.trace.excludedNonReadCount ?? 0} non-GET operation(s) excluded.`
+        : '';
     dependencies.core.info(
       `Derived smoke flow "${derived.flow.name}" from ${specPath}: ${derived.trace.derivedStepCount} step(s), ` +
         `${derived.trace.bindingCount} binding(s), ${derived.trace.extractCount} extract(s), ` +
-        `${derived.trace.excludedDeleteCount} DELETE operation(s) excluded.`
+        `${derived.trace.excludedDeleteCount} DELETE operation(s) excluded.${scopeNote}`
     );
   }
   return derived;

@@ -161,6 +161,9 @@ describe('derived flow end-to-end through runSmokeFlow', () => {
       expect(summary.derivation.derivedStepCount).toBe(2);
       expect(summary.derivation.excludedDeleteCount).toBe(1);
       expect(summary.derivation.excludedOperationIds).toEqual(['deletePayment']);
+      // Default scope keeps the public derivation payload shape unchanged.
+      expect(summary.derivation).not.toHaveProperty('scope');
+      expect(summary.derivation).not.toHaveProperty('excludedNonReadCount');
 
       // The derived flow persists as the curated manifest at the effective
       // default path, and the output points at it.

@@ -32,6 +32,10 @@ inputs:
     description: Whether derived flows may include DELETE operations whose identifiers are proven to originate from the same run's create steps. Defaults to false; curated flow.yaml manifests are unaffected.
     required: false
     default: "false"
+  flow-derive-scope:
+    description: Scope for flows derived under flow-mode auto. full (default) chains create -> list -> read -> update from create-response identifiers. read-only derives GET operations only and feeds item-path identifiers from the first item of the owning resource's list response, so no POST, PUT, PATCH, or DELETE is ever sent. Ignored for curated flow.yaml manifests.
+    required: false
+    default: full
   postman-api-key:
     description: Optional service-account API key. Only used to re-mint an expired postman-access-token; the collection reshape itself runs access-token-only through the Postman gateway.
     required: false
