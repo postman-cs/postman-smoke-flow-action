@@ -37431,7 +37431,7 @@ function deriveFlowFromSpec(document, options = {}) {
   const allOperations = collectOperations(document);
   const operations = readOnly ? allOperations.filter((op) => op.method === "GET") : allOperations;
   const nonReadOperationIds = readOnly ? allOperations.filter((op) => op.method !== "GET").map((op) => op.operationId) : [];
-  const excludedNonReadCount = nonReadOperationIds.length;
+  const scopeTrace = readOnly ? { scope: "read-only", excludedNonReadCount: nonReadOperationIds.length } : {};
   if (operations.length === 0) {
     warnings.push({
       message: readOnly && allOperations.length > 0 ? "Flow derivation under flow-derive-scope=read-only found no GET operations in the OpenAPI document; a smoke flow cannot be derived." : "Flow derivation found no operations in the OpenAPI document; a smoke flow cannot be derived."
@@ -37449,8 +37449,7 @@ function deriveFlowFromSpec(document, options = {}) {
         excludedDeleteCount: 0,
         excludedUnresolvedPathParamCount: 0,
         unresolvedParameterCount: 0,
-        scope,
-        excludedNonReadCount
+        ...scopeTrace
       }
     };
   }
@@ -37693,8 +37692,7 @@ function deriveFlowFromSpec(document, options = {}) {
         excludedDeleteCount,
         excludedUnresolvedPathParamCount,
         unresolvedParameterCount,
-        scope,
-        excludedNonReadCount
+        ...scopeTrace
       }
     };
   }
@@ -37718,8 +37716,7 @@ function deriveFlowFromSpec(document, options = {}) {
       excludedDeleteCount,
       excludedUnresolvedPathParamCount,
       unresolvedParameterCount,
-      scope,
-      excludedNonReadCount
+      ...scopeTrace
     }
   };
 }
@@ -42746,9 +42743,7 @@ function deriveAutoFlow(inputs, dependencies) {
         bindingCount: 0,
         excludedDeleteCount: 0,
         excludedUnresolvedPathParamCount: 0,
-        unresolvedParameterCount: 0,
-        scope: inputs.flowDeriveScope ?? "full",
-        excludedNonReadCount: 0
+        unresolvedParameterCount: 0
       }
     };
   }
@@ -42757,7 +42752,7 @@ function deriveAutoFlow(inputs, dependencies) {
     scope: inputs.flowDeriveScope ?? "full"
   });
   if (derived.flow) {
-    const scopeNote = derived.trace.scope === "read-only" ? ` Scope read-only: ${derived.trace.excludedNonReadCount} non-GET operation(s) excluded.` : "";
+    const scopeNote = derived.trace.scope === "read-only" ? ` Scope read-only: ${derived.trace.excludedNonReadCount ?? 0} non-GET operation(s) excluded.` : "";
     dependencies.core.info(
       `Derived smoke flow "${derived.flow.name}" from ${specPath}: ${derived.trace.derivedStepCount} step(s), ${derived.trace.bindingCount} binding(s), ${derived.trace.extractCount} extract(s), ${derived.trace.excludedDeleteCount} DELETE operation(s) excluded.${scopeNote}`
     );

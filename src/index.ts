@@ -659,9 +659,7 @@ function deriveAutoFlow(inputs: ActionInputs, dependencies: SmokeFlowDependencie
         bindingCount: 0,
         excludedDeleteCount: 0,
         excludedUnresolvedPathParamCount: 0,
-        unresolvedParameterCount: 0,
-        scope: inputs.flowDeriveScope ?? 'full',
-        excludedNonReadCount: 0
+        unresolvedParameterCount: 0
       }
     };
   }
@@ -672,7 +670,7 @@ function deriveAutoFlow(inputs: ActionInputs, dependencies: SmokeFlowDependencie
   if (derived.flow) {
     const scopeNote =
       derived.trace.scope === 'read-only'
-        ? ` Scope read-only: ${derived.trace.excludedNonReadCount} non-GET operation(s) excluded.`
+        ? ` Scope read-only: ${derived.trace.excludedNonReadCount ?? 0} non-GET operation(s) excluded.`
         : '';
     dependencies.core.info(
       `Derived smoke flow "${derived.flow.name}" from ${specPath}: ${derived.trace.derivedStepCount} step(s), ` +

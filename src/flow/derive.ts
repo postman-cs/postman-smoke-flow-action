@@ -46,7 +46,8 @@ import { ValidationError } from '../lib/errors.js';
  *     envelopes are read (`data`, `items`, `results`, ... or a single
  *     array-of-object property); identifier-shaped parameters also accept the
  *     surrogate keys `id`, `guid`, and `uuid`. Producers are owner-scoped only.
- *     The default scope (full) is byte-identical to the pre-scope behavior.
+ *     The default scope (full) is byte-identical to the pre-scope behavior,
+ *     including the trace shape: scope fields appear only under read-only.
  */
 
 export type DerivedFlowResult = {
@@ -68,10 +69,13 @@ export type DerivationTrace = {
   /** Steps dropped because a required path parameter had no producer in the spec. */
   excludedUnresolvedPathParamCount: number;
   unresolvedParameterCount: number;
-  /** Derivation scope the flow was built under. */
-  scope: DeriveScope;
-  /** Non-GET operations dropped because scope is read-only (always 0 under full). */
-  excludedNonReadCount: number;
+  /**
+   * Present only under scope read-only, so the default (full) trace and the
+   * public flow-apply-summary-json derivation payload keep their exact shape.
+   */
+  scope?: 'read-only';
+  /** Read-only scope only: non-GET operations dropped before ordering. */
+  excludedNonReadCount?: number;
 };
 
 /**
@@ -524,7 +528,11 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
   const nonReadOperationIds = readOnly
     ? allOperations.filter((op) => op.method !== 'GET').map((op) => op.operationId)
     : [];
-  const excludedNonReadCount = nonReadOperationIds.length;
+  // Read-only-only trace fields; spread into every trace so full-scope traces
+  // carry no new keys.
+  const scopeTrace: Pick<DerivationTrace, 'scope' | 'excludedNonReadCount'> = readOnly
+    ? { scope: 'read-only', excludedNonReadCount: nonReadOperationIds.length }
+    : {};
 
   if (operations.length === 0) {
     warnings.push({
@@ -546,8 +554,7 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
         excludedDeleteCount: 0,
         excludedUnresolvedPathParamCount: 0,
         unresolvedParameterCount: 0,
-        scope,
-        excludedNonReadCount
+        ...scopeTrace
       }
     };
   }
@@ -858,8 +865,7 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
         excludedDeleteCount,
         excludedUnresolvedPathParamCount,
         unresolvedParameterCount,
-        scope,
-        excludedNonReadCount
+        ...scopeTrace
       }
     };
   }
@@ -885,8 +891,7 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
       excludedDeleteCount,
       excludedUnresolvedPathParamCount,
       unresolvedParameterCount,
-      scope,
-      excludedNonReadCount
+      ...scopeTrace
     }
   };
 }

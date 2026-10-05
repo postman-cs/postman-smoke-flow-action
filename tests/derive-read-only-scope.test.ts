@@ -305,6 +305,25 @@ describe('deriveFlowFromSpec scope=read-only', () => {
     expect(result.excludedOperationIds).toEqual(['getAmbiguous', 'getBare']);
   });
 
+  it('keeps list endpoints with required query parameters and chains from them', () => {
+    const result = deriveFlowFromSpec(
+      spec('Filtered API', {
+        '/reports': {
+          get: {
+            operationId: 'listReports',
+            parameters: [{ name: 'tenant', in: 'query', required: true, schema: { type: 'string' } }],
+            responses: jsonResponse(envelope('data', { reportId: { type: 'string' } }))
+          }
+        },
+        '/reports/{reportId}': { get: { operationId: 'getReport', responses: jsonResponse({ type: 'object' }) } }
+      }),
+      { scope: 'read-only' }
+    );
+    expect(opIds(result.flow!.steps)).toEqual(['listReports', 'getReport']);
+    expect(step(result.flow!.steps, 'listReports').bindings).toEqual([{ fieldKey: 'tenant', source: 'example' }]);
+    expect(result.excludedOperationIds).toEqual([]);
+  });
+
   it('keeps required query parameters as example bindings', () => {
     const result = deriveFlowFromSpec(
       spec('Geo API', {
@@ -355,8 +374,9 @@ describe('deriveFlowFromSpec default scope is unchanged', () => {
     expect(explicit).toEqual(implicit);
     expect(opIds(implicit.flow!.steps)).toEqual(['createPet', 'listPets', 'getPet', 'updatePet']);
     expect(step(implicit.flow!.steps, 'listPets').extract).toEqual([]);
-    expect(implicit.trace.scope).toBe('full');
-    expect(implicit.trace.excludedNonReadCount).toBe(0);
+    // Full-scope traces keep their pre-scope shape: no new keys.
+    expect(implicit.trace).not.toHaveProperty('scope');
+    expect(implicit.trace).not.toHaveProperty('excludedNonReadCount');
     expect(implicit.excludedOperationIds).toEqual(['deletePet']);
   });
 });

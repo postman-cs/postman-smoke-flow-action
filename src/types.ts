@@ -140,8 +140,9 @@ export type FlowApplySummary = {
     excludedDeleteCount: number;
     excludedUnresolvedPathParamCount: number;
     unresolvedParameterCount: number;
-    scope: 'full' | 'read-only';
-    excludedNonReadCount: number;
+    /** Present only when the flow was derived under flow-derive-scope=read-only. */
+    scope?: 'read-only';
+    excludedNonReadCount?: number;
     excludedOperationIds: string[];
   };
   warnings: string[];

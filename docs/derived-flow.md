@@ -36,15 +36,17 @@ Derivation is a pure function of the spec bytes: same spec in, same flow out. No
 
 The default scope (`full`) chains identifiers from create responses, which means a derived flow sends POST and PUT/PATCH requests whose payloads come from generated examples. Services with business-rule validation on writes, or whose read endpoints are the only safe smoke surface, can opt into `flow-derive-scope: read-only` instead:
 
-1. **GET only.** Every non-GET operation is excluded before ordering. Excluded operations are listed in `excludedOperationIds` and counted in `excludedNonReadCount`; no warning is raised per operation, because the exclusion was requested. `flow-allow-delete` has no effect under this scope.
+1. **GET only.** Every non-GET operation is excluded before ordering. Excluded operations are listed in `excludedOperationIds` and counted in `excludedNonReadCount` (a read-only-only field, alongside `scope: read-only`); no warning is raised per operation, because the exclusion was requested. `flow-allow-delete` has no effect under this scope.
 2. **List-sourced identifiers.** A list operation (GET on a collection path) publishes the identifier of its first item for each path parameter its resource owns: `GET /pets` -> `$.data[0].id` -> `GET /pets/{petId}`. The list response must be an object envelope: a conventional array key wins (`data`, `items`, `results`, `content`, `records`, `values`), otherwise exactly one array-of-object property must exist. `$ref` and `allOf` are resolved on both the envelope and the item schema.
 3. **Identifier matching.** The item property is chosen by exact parameter name first, then the existing resource-id convention, then the surrogate keys `id`, `guid`, `uuid`. Surrogates apply only to identifier-shaped parameters (names ending in `id`, `guid`, or `uuid`), so `{slug}` binds only to a `slug` property.
 4. **Owner-scoped producers only.** A list publishes only for parameters owned by its own resource (`/accounts/{accountId}/orders` consumes `/accounts`' list). There is no cross-resource fallback, so one resource's list never feeds another resource's parameter.
 5. **Unchanged rules.** Required query parameters keep `source: example` bindings, path parameters with no producer still exclude their operation, ordering and determinism rules are identical, and the persisted manifest is a normal curated `flow.yaml`.
 
-Not covered in v1: top-level array list responses (the injected resolver only accepts `$.`-rooted paths) and list endpoints that require query parameters to return data. Those reads are excluded with the usual unresolved-path-parameter warning; curate them by hand or provide an envelope.
+Not covered in v1: top-level array list responses (the injected resolver only accepts `$.`-rooted paths). Their get-by-id reads have no producer and are excluded with the usual unresolved-path-parameter warning; curate them by hand or return an envelope.
 
-The default (`full`) scope is unchanged byte for byte.
+List endpoints with required query parameters are **kept**, not excluded: those parameters bind `source: example` (rule 6a), so the generated value is preserved. If that example does not return records in your environment, the chained read has no identifier at run time; curate those steps by hand.
+
+The default (`full`) scope is unchanged byte for byte, including the derivation trace and the `flow-apply-summary-json` `derivation` payload: `scope` and `excludedNonReadCount` appear only under `read-only`.
 
 ## Determinism guarantees
 
