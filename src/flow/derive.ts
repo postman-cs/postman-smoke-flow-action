@@ -48,6 +48,13 @@ import { ValidationError } from '../lib/errors.js';
  *     surrogate keys `id`, `guid`, and `uuid`. Producers are owner-scoped only.
  *     The default scope (full) is byte-identical to the pre-scope behavior,
  *     including the trace shape: scope fields appear only under read-only.
+ *
+ * TODO(read-only-scope-sunset): read-only scope is an interim escape hatch. Once the
+ * Postman CLI can filter a collection run by HTTP method, remove the GET-only
+ * filter here (and the flow-derive-scope input) in favor of run-time
+ * filtering, then revisit whether list-sourced chaining should stay in
+ * derivation or fold into the default scope as part of a smoke-flow cleanup.
+ * Search the repo for this tag to find every touch point.
  */
 
 export type DerivedFlowResult = {
@@ -522,6 +529,7 @@ export function deriveFlowFromSpec(document: JsonRecord, options: DeriveOptions 
   const scope: DeriveScope = options.scope ?? 'full';
   const readOnly = scope === 'read-only';
   const allOperations = collectOperations(document);
+  // TODO(read-only-scope-sunset): replace with Postman CLI method filtering when available.
   // Read-only scope drops every non-GET operation up front, so ordering,
   // producers, and dependency edges are computed over safe reads only.
   const operations = readOnly ? allOperations.filter((op) => op.method === 'GET') : allOperations;

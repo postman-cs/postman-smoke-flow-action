@@ -631,6 +631,8 @@ export function parseFlowMode(raw: string | undefined): 'auto' | 'curated' | 'of
   throw new Error(`Invalid flow-mode: ${raw}. Expected auto, curated, or off.`);
 }
 
+// TODO(read-only-scope-sunset): remove with the flow-derive-scope input once the Postman
+// CLI supports method filtering (see src/flow/derive.ts).
 export function parseFlowDeriveScope(raw: string | undefined): 'full' | 'read-only' {
   const normalized = String(raw ?? '').trim().toLowerCase();
   if (!normalized || normalized === 'full') return 'full';

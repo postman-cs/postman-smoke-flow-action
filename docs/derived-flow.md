@@ -34,6 +34,8 @@ Derivation is a pure function of the spec bytes: same spec in, same flow out. No
 
 ## Read-only scope (`flow-derive-scope: read-only`)
 
+> **Interim.** This scope is planned for removal once the Postman CLI can filter a collection run by HTTP method. At that point the GET-only filter moves to run time and this input is retired as part of a broader smoke-flow cleanup. Code touch points carry the `TODO(read-only-scope-sunset)` tag.
+
 The default scope (`full`) chains identifiers from create responses, which means a derived flow sends POST and PUT/PATCH requests whose payloads come from generated examples. Services with business-rule validation on writes, or whose read endpoints are the only safe smoke surface, can opt into `flow-derive-scope: read-only` instead:
 
 1. **GET only.** Every non-GET operation is excluded before ordering. Excluded operations are listed in `excludedOperationIds` and counted in `excludedNonReadCount` (a read-only-only field, alongside `scope: read-only`); no warning is raised per operation, because the exclusion was requested. `flow-allow-delete` has no effect under this scope.
