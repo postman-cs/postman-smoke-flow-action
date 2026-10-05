@@ -93,7 +93,7 @@ jobs:
           postman-region: us
 
       - id: repo_sync
-        uses: postman-cs/postman-repo-sync-action@v2
+        uses: postman-cs/postman-repo-sync-action@v3
         with:
           project-name: core-payments
           workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
