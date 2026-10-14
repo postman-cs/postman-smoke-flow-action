@@ -36840,6 +36840,7 @@ var smokeFlowActionContract = {
     "flow-path": { required: false },
     "flow-mode": { required: false, default: "auto" },
     "flow-allow-delete": { required: false, default: "false" },
+    "flow-derive-scope": { required: false, default: "full" },
     "postman-api-key": { required: false },
     "postman-region": { required: false, default: "us" },
     "auth-config-json": { required: false },
@@ -37056,7 +37057,7 @@ function collectRequiredQueryParams(document, pathItem, operation) {
   absorb(operation.parameters);
   return [...merged.values()].filter((param) => param.required).map((param) => param.name);
 }
-function collectResponseProps(document, schema) {
+function collectResponseProps(document, schema, rootPrefix = "$") {
   const found = /* @__PURE__ */ new Map();
   const root = derefSchema(document, schema);
   if (!root) return /* @__PURE__ */ new Map();
@@ -37094,12 +37095,59 @@ function collectResponseProps(document, schema) {
       visiting.delete(resolved);
     }
   };
-  visit(root, "$", 0);
+  visit(root, rootPrefix, 0);
   const result = /* @__PURE__ */ new Map();
   for (const [key, entry] of found) {
     result.set(key, entry.jsonPath);
   }
   return result;
+}
+function schemaTypes(schema) {
+  const rawType = schema?.type;
+  if (Array.isArray(rawType)) return rawType.filter((entry) => typeof entry === "string");
+  return typeof rawType === "string" ? [rawType] : [];
+}
+function objectArrayItemSchema(document, node) {
+  const resolved = derefSchema(document, node);
+  if (!resolved || !schemaTypes(resolved).includes("array")) return null;
+  const item = derefSchema(document, asRecord(resolved.items));
+  if (!item) return null;
+  const objectLike = schemaTypes(item).includes("object") || Boolean(asRecord(item.properties)) || Array.isArray(item.allOf);
+  return objectLike ? item : null;
+}
+var LIST_ENVELOPE_KEYS = ["data", "items", "results", "content", "records", "values"];
+function findListItemSchema(document, schema) {
+  const root = derefSchema(document, schema);
+  if (!root) return null;
+  const envelopeProps = /* @__PURE__ */ new Map();
+  const absorb = (node, depth) => {
+    const resolved = derefSchema(document, node);
+    if (!resolved || depth > MAX_REF_DEPTH) return;
+    if (Array.isArray(resolved.allOf)) {
+      for (const branch of resolved.allOf) absorb(asRecord(branch), depth + 1);
+    }
+    const props = asRecord(resolved.properties);
+    if (!props) return;
+    for (const key2 of Object.keys(props).sort()) {
+      const child2 = asRecord(props[key2]);
+      if (child2 && !envelopeProps.has(key2)) envelopeProps.set(key2, child2);
+    }
+  };
+  absorb(root, 0);
+  const arrayKeys = [...envelopeProps.keys()].filter((key2) => objectArrayItemSchema(document, envelopeProps.get(key2) ?? null)).sort();
+  if (arrayKeys.length === 0) return null;
+  const key = LIST_ENVELOPE_KEYS.find((candidate) => arrayKeys.includes(candidate)) ?? (arrayKeys.length === 1 ? arrayKeys[0] : void 0);
+  if (!key) return null;
+  const item = objectArrayItemSchema(document, envelopeProps.get(key) ?? null);
+  return item ? { prefix: `$.${key}[0]`, item } : null;
+}
+function listIdentityCandidates(param, resourceSegment) {
+  const candidates = parameterCandidates(param, resourceSegment);
+  if (!/(id|guid|uuid)$/i.test(param)) return candidates;
+  for (const surrogate of ["id", "guid", "uuid"]) {
+    if (!candidates.includes(surrogate)) candidates.push(surrogate);
+  }
+  return candidates;
 }
 function pickJsonMediaKey(content) {
   return Object.keys(content).sort().find((key) => key.includes("json"));
@@ -37198,6 +37246,8 @@ function collectOperations(document) {
         operationId = `${operationId}-${suffix}`;
       }
       usedOperationIds.add(operationId);
+      const successSchema = pickSuccessResponseSchema(document, operation);
+      const listItem = method.toLowerCase() === "get" && !isItemPath ? findListItemSchema(document, successSchema) : null;
       operations.push({
         operationId,
         method: method.toUpperCase(),
@@ -37207,7 +37257,8 @@ function collectOperations(document) {
         pathParams: pathLevelParams,
         requiredQueryParams: collectRequiredQueryParams(document, pathItem, operation),
         requestBodyProps: collectRequestBodyProps(document, operation),
-        responseProps: collectResponseProps(document, pickSuccessResponseSchema(document, operation)),
+        responseProps: collectResponseProps(document, successSchema),
+        listItemProps: listItem ? collectResponseProps(document, listItem.item, listItem.prefix) : /* @__PURE__ */ new Map(),
         specIndex: specIndex++
       });
     }
@@ -37246,13 +37297,20 @@ function stepKeyFor(op, ordinal) {
 }
 function deriveFlowFromSpec(document, options = {}) {
   const warnings = [];
-  const operations = collectOperations(document);
+  const scope = options.scope ?? "full";
+  const readOnly = scope === "read-only";
+  const allOperations = collectOperations(document);
+  const operations = readOnly ? allOperations.filter((op) => op.method === "GET") : allOperations;
+  const nonReadOperationIds = readOnly ? allOperations.filter((op) => op.method !== "GET").map((op) => op.operationId) : [];
+  const scopeTrace = readOnly ? { scope: "read-only", excludedNonReadCount: nonReadOperationIds.length } : {};
   if (operations.length === 0) {
-    warnings.push({ message: "Flow derivation found no operations in the OpenAPI document; a smoke flow cannot be derived." });
+    warnings.push({
+      message: readOnly && allOperations.length > 0 ? "Flow derivation under flow-derive-scope=read-only found no GET operations in the OpenAPI document; a smoke flow cannot be derived." : "Flow derivation found no operations in the OpenAPI document; a smoke flow cannot be derived."
+    });
     return {
       flow: null,
       warnings,
-      excludedOperationIds: [],
+      excludedOperationIds: [...nonReadOperationIds],
       trace: {
         resourceCount: 0,
         operationCount: 0,
@@ -37261,7 +37319,8 @@ function deriveFlowFromSpec(document, options = {}) {
         bindingCount: 0,
         excludedDeleteCount: 0,
         excludedUnresolvedPathParamCount: 0,
-        unresolvedParameterCount: 0
+        unresolvedParameterCount: 0,
+        ...scopeTrace
       }
     };
   }
@@ -37276,11 +37335,39 @@ function deriveFlowFromSpec(document, options = {}) {
     if (depth !== 0) return depth;
     return a < b ? -1 : a > b ? 1 : 0;
   });
+  const ownedItemParams = /* @__PURE__ */ new Map();
+  if (readOnly) {
+    for (const op of operations) {
+      for (const param of op.pathParams) {
+        const list = ownedItemParams.get(param.ownerPath) ?? [];
+        if (!list.some((entry) => entry.name === param.name)) list.push(param);
+        ownedItemParams.set(param.ownerPath, list);
+      }
+    }
+    for (const list of ownedItemParams.values()) {
+      list.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    }
+  }
+  const listIdentityFor = (op, param) => {
+    for (const candidate of listIdentityCandidates(param.name, param.ownerSegment)) {
+      const jsonPath = op.listItemProps.get(candidate);
+      if (jsonPath) return { prop: candidate, jsonPath };
+    }
+    return void 0;
+  };
   const publishable = /* @__PURE__ */ new Map();
   for (const [resource, list] of groups) {
     const props = /* @__PURE__ */ new Set();
     for (const op of list) {
-      if (op.method !== "POST" || op.isItemPath) continue;
+      if (op.isItemPath) continue;
+      if (readOnly) {
+        if (op.method !== "GET") continue;
+        for (const param of ownedItemParams.get(resource) ?? []) {
+          if (listIdentityFor(op, param)) props.add(param.name);
+        }
+        continue;
+      }
+      if (op.method !== "POST") continue;
       for (const prop of op.responseProps.keys()) {
         if (/id$/i.test(prop) || prop === "id") props.add(prop);
       }
@@ -37336,7 +37423,7 @@ function deriveFlowFromSpec(document, options = {}) {
   }
   const producers = /* @__PURE__ */ new Map();
   const steps = [];
-  const excludedOperationIds = [];
+  const excludedOperationIds = [...nonReadOperationIds];
   let extractTotal = 0;
   let bindingTotal = 0;
   let unresolvedParameterCount = 0;
@@ -37437,6 +37524,19 @@ function deriveFlowFromSpec(document, options = {}) {
         }
       }
     }
+    if (readOnly && op.method === "GET" && !op.isItemPath) {
+      for (const param of ownedItemParams.get(op.collectionPath) ?? []) {
+        const identity = listIdentityFor(op, param);
+        if (!identity) continue;
+        const scopedKey = `${op.collectionPath}::${param.name}`;
+        if (producers.has(scopedKey)) continue;
+        const variable = `${op.operationId}.${identity.prop}`;
+        if (!extract.some((entry) => entry.variable === variable)) {
+          extract.push({ variable, jsonPath: identity.jsonPath });
+        }
+        producers.set(scopedKey, { stepKey, variable, operationId: op.operationId });
+      }
+    }
     extractTotal += extract.length;
     bindingTotal += bindings.length;
     steps.push({
@@ -37462,7 +37562,8 @@ function deriveFlowFromSpec(document, options = {}) {
         bindingCount: 0,
         excludedDeleteCount,
         excludedUnresolvedPathParamCount,
-        unresolvedParameterCount
+        unresolvedParameterCount,
+        ...scopeTrace
       }
     };
   }
@@ -37485,7 +37586,8 @@ function deriveFlowFromSpec(document, options = {}) {
       bindingCount: bindingTotal,
       excludedDeleteCount,
       excludedUnresolvedPathParamCount,
-      unresolvedParameterCount
+      unresolvedParameterCount,
+      ...scopeTrace
     }
   };
 }
@@ -42158,6 +42260,7 @@ function readActionInputs(env = process.env) {
       getInput2("flow-allow-delete", env),
       false
     ),
+    flowDeriveScope: parseFlowDeriveScope(getInput2("flow-derive-scope", env)),
     postmanApiKey: getInput2("postman-api-key", env) || env.POSTMAN_API_KEY || "",
     postmanApiBaseUrl: endpoints.apiBaseUrl,
     postmanBifrostBaseUrl: endpoints.bifrostBaseUrl,
@@ -42506,6 +42609,12 @@ function parseFlowMode(raw) {
   if (normalized === "off") return "off";
   throw new Error(`Invalid flow-mode: ${raw}. Expected auto, curated, or off.`);
 }
+function parseFlowDeriveScope(raw) {
+  const normalized = String(raw ?? "").trim().toLowerCase();
+  if (!normalized || normalized === "full") return "full";
+  if (normalized === "read-only") return "read-only";
+  throw new Error(`Invalid flow-derive-scope: ${raw}. Expected full or read-only.`);
+}
 function deriveAutoFlow(inputs, dependencies) {
   const specPath = inputs.specPath?.trim();
   if (!specPath) {
@@ -42529,10 +42638,14 @@ function deriveAutoFlow(inputs, dependencies) {
       }
     };
   }
-  const derived = deriveFlowFromSpecPath(specPath, { allowDelete: inputs.flowAllowDelete });
+  const derived = deriveFlowFromSpecPath(specPath, {
+    allowDelete: inputs.flowAllowDelete,
+    scope: inputs.flowDeriveScope ?? "full"
+  });
   if (derived.flow) {
+    const scopeNote = derived.trace.scope === "read-only" ? ` Scope read-only: ${derived.trace.excludedNonReadCount ?? 0} non-GET operation(s) excluded.` : "";
     dependencies.core.info(
-      `Derived smoke flow "${derived.flow.name}" from ${specPath}: ${derived.trace.derivedStepCount} step(s), ${derived.trace.bindingCount} binding(s), ${derived.trace.extractCount} extract(s), ${derived.trace.excludedDeleteCount} DELETE operation(s) excluded.`
+      `Derived smoke flow "${derived.flow.name}" from ${specPath}: ${derived.trace.derivedStepCount} step(s), ${derived.trace.bindingCount} binding(s), ${derived.trace.extractCount} extract(s), ${derived.trace.excludedDeleteCount} DELETE operation(s) excluded.${scopeNote}`
     );
   }
   return derived;

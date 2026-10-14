@@ -32,6 +32,24 @@ Derivation is a pure function of the spec bytes: same spec in, same flow out. No
 8. **Missing operationIds.** Operations without an `operationId` get a deterministic synthetic one (`get-items` for `GET /items`), which resolves against generated request names by the method-plus-path fallback when `spec-path` is provided (it always is, in derived mode).
 9. **Zero-step derivation.** Derivation that yields zero flow steps — because the spec has no operations, or because every operation is excluded (for example, a DELETE-only spec under the default `flow-allow-delete: false`) — is a **hard error**. The action or CLI fails and does **not** fall back to the uncurated refresh. The error names the cause, includes any derivation warnings, and states the caller's options: fix the spec or exclusions, provide `flow-path`, or explicitly set `flow-mode: off`.
 
+## Read-only scope (`flow-derive-scope: read-only`)
+
+> **Interim.** This scope is planned for removal once the Postman CLI can filter a collection run by HTTP method. At that point the GET-only filter moves to run time and this input is retired as part of a broader smoke-flow cleanup. Code touch points carry the `TODO(read-only-scope-sunset)` tag.
+
+The default scope (`full`) chains identifiers from create responses, which means a derived flow sends POST and PUT/PATCH requests whose payloads come from generated examples. Services with business-rule validation on writes, or whose read endpoints are the only safe smoke surface, can opt into `flow-derive-scope: read-only` instead:
+
+1. **GET only.** Every non-GET operation is excluded before ordering. Excluded operations are listed in `excludedOperationIds` and counted in `excludedNonReadCount` (a read-only-only field, alongside `scope: read-only`); no warning is raised per operation, because the exclusion was requested. `flow-allow-delete` has no effect under this scope.
+2. **List-sourced identifiers.** A list operation (GET on a collection path) publishes the identifier of its first item for each path parameter its resource owns: `GET /pets` -> `$.data[0].id` -> `GET /pets/{petId}`. The list response must be an object envelope: a conventional array key wins (`data`, `items`, `results`, `content`, `records`, `values`), otherwise exactly one array-of-object property must exist. `$ref` and `allOf` are resolved on both the envelope and the item schema.
+3. **Identifier matching.** The item property is chosen by exact parameter name first, then the existing resource-id convention, then the surrogate keys `id`, `guid`, `uuid`. Surrogates apply only to identifier-shaped parameters (names ending in `id`, `guid`, or `uuid`), so `{slug}` binds only to a `slug` property.
+4. **Owner-scoped producers only.** A list publishes only for parameters owned by its own resource (`/accounts/{accountId}/orders` consumes `/accounts`' list). There is no cross-resource fallback, so one resource's list never feeds another resource's parameter.
+5. **Unchanged rules.** Required query parameters keep `source: example` bindings, path parameters with no producer still exclude their operation, ordering and determinism rules are identical, and the persisted manifest is a normal curated `flow.yaml`.
+
+Not covered in v1: top-level array list responses (the injected resolver only accepts `$.`-rooted paths). Their get-by-id reads have no producer and are excluded with the usual unresolved-path-parameter warning; curate them by hand or return an envelope.
+
+List endpoints with required query parameters are **kept**, not excluded: those parameters bind `source: example` (rule 6a), so the generated value is preserved. If that example does not return records in your environment, the chained read has no identifier at run time; curate those steps by hand.
+
+The default (`full`) scope is unchanged byte for byte, including the derivation trace and the `flow-apply-summary-json` `derivation` payload: `scope` and `excludedNonReadCount` appear only under `read-only`.
+
 ## Determinism guarantees
 
 - Path/property iteration uses sorted key order wherever ordering is not defined by the rules above.
@@ -53,6 +71,7 @@ Derived runs persist the applied flow as a curated `flow.yaml` manifest at the e
 ## What derivation does not do (v1)
 
 - It does not execute or reorder DELETEs without the explicit input flag.
+- Under `flow-derive-scope: read-only`, it does not send any POST, PUT, PATCH, or DELETE.
 - It does not emit extracts from top-level array responses (item identity is ambiguous), nor from array-valued response properties; OpenAPI 3.1 nullable unions such as `type: ['array','null']` are resolved to their non-null member before that exclusion applies.
 - It does not infer request body payloads — generated examples are preserved.
 - It does not mutate baseline or contract collections, exactly like curated mode.
