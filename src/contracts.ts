@@ -8,6 +8,7 @@ export const smokeFlowActionContract = {
     'flow-path': { required: false },
     'flow-mode': { required: false, default: 'auto' },
     'flow-allow-delete': { required: false, default: 'false' },
+    'flow-derive-scope': { required: false, default: 'full' },
     'postman-api-key': { required: false },
     'postman-region': { required: false, default: 'us' },
     'auth-config-json': { required: false },

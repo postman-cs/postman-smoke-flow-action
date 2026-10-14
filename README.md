@@ -93,7 +93,7 @@ jobs:
           postman-region: us
 
       - id: repo_sync
-        uses: postman-cs/postman-repo-sync-action@v2
+        uses: postman-cs/postman-repo-sync-action@v3
         with:
           project-name: core-payments
           workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
@@ -110,7 +110,7 @@ jobs:
 
 ### Derive a flow automatically (default)
 
-Under `flow-mode: auto` (the default), the action resolves one effective flow path: explicit `flow-path`, or `postman/flow.yaml` when omitted. A valid manifest already at that path is curated; an invalid manifest is a hard error and is never derived over. When the path is absent and `spec-path` is set, the action derives a deterministic smoke flow from the OpenAPI document: operations are grouped per resource, ordered create -> list -> read -> update, and chained by matching create-response ID properties to later path parameters (`POST /payments` returns `paymentId`; `GET /payments/{paymentId}` binds it). DELETE operations are excluded unless `flow-allow-delete: 'true'` is set and the deleted ID is proven to come from the same run's create step. If the spec has no operations or every operation is excluded, derivation fails with a hard error rather than falling back to the uncurated refresh. After a successful derived apply, the action creates `flow.yaml` at the same effective path unless `persist-derived-flow: false`; run 2 then finds it and converges to curated mode. The full rule set is in [docs/derived-flow.md](docs/derived-flow.md). `flow-mode: off` restores the plain uncurated refresh.
+Under `flow-mode: auto` (the default), the action resolves one effective flow path: explicit `flow-path`, or `postman/flow.yaml` when omitted. A valid manifest already at that path is curated; an invalid manifest is a hard error and is never derived over. When the path is absent and `spec-path` is set, the action derives a deterministic smoke flow from the OpenAPI document: operations are grouped per resource, ordered create -> list -> read -> update, and chained by matching create-response ID properties to later path parameters (`POST /payments` returns `paymentId`; `GET /payments/{paymentId}` binds it). DELETE operations are excluded unless `flow-allow-delete: 'true'` is set and the deleted ID is proven to come from the same run's create step. If the spec has no operations or every operation is excluded, derivation fails with a hard error rather than falling back to the uncurated refresh. After a successful derived apply, the action creates `flow.yaml` at the same effective path unless `persist-derived-flow: false`; run 2 then finds it and converges to curated mode. Set `flow-derive-scope: read-only` to derive GET operations only, chaining list responses into get-by-id requests (`GET /pets` -> `$.data[0].id` -> `GET /pets/{petId}`) so no write is ever sent. The full rule set is in [docs/derived-flow.md](docs/derived-flow.md). `flow-mode: off` restores the plain uncurated refresh.
 
 ### Apply a curated flow.yaml
 
@@ -215,6 +215,7 @@ See [docs/cli.md](docs/cli.md) for GitLab CI, Bitbucket Pipelines, Azure DevOps,
 | `flow-path` | Optional path relative to the effective working directory for the flow.yaml manifest. Defaults to postman/flow.yaml. Under flow-mode auto the action runs curated when a manifest exists at the effective path, otherwise derives a smoke flow from spec-path and persists it there; without spec-path (or under flow-mode off) the canonical Smoke collection is refreshed from the generated spec collection without flow curation. | no |  |
 | `flow-mode` | Flow selection policy. auto (default) runs curated when a flow.yaml exists at the effective path (flow-path or postman/flow.yaml) and otherwise derives a deterministic smoke flow from spec-path, persisting it to that path; curated requires flow-path; off disables curation entirely and refreshes the canonical Smoke collection from the generated spec collection. | no | `auto` |
 | `flow-allow-delete` | Whether derived flows may include DELETE operations whose identifiers are proven to originate from the same run's create steps. Defaults to false; curated flow.yaml manifests are unaffected. | no | `false` |
+| `flow-derive-scope` | Scope for flows derived under flow-mode auto. full (default) chains create -> list -> read -> update from create-response identifiers. read-only derives GET operations only and feeds item-path identifiers from the first item of the owning resource's list response, so no POST, PUT, PATCH, or DELETE is ever sent. Ignored for curated flow.yaml manifests. | no | `full` |
 | `postman-api-key` | Optional service-account API key. Only used to re-mint an expired postman-access-token; the collection reshape itself runs access-token-only through the Postman gateway. | no |  |
 | `postman-region` | Postman data residency region for public API calls. Supported values are us and eu. | no | `us` |
 | `auth-config-json` | Advanced low-level Smoke runtime auth JSON, usually generated by onboarding templates from smoke.apiKey or smoke.oauth config. Supports OAuth2 client credentials and API key auth. | no |  |
