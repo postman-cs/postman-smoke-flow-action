@@ -23,6 +23,7 @@
     "verify:dist": "npm run build && npm run verify:dist:assert",
     "docs:tables": "node scripts/render-action-tables.mjs",
     "docs:pins": "node scripts/check-doc-pins.mjs",
+    "docs:pins:write": "node scripts/check-doc-pins.mjs --write",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "record:cassettes": "RECORD_FAKE_CASSETTES=1 vitest run tests/contract/record-fake-cassettes.test.ts",
